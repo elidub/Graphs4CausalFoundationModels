@@ -10,7 +10,7 @@ An SCM has three components:
 
 - Noise distributions in causal_prior/noise_distributions. The basic interface for a noise variable can be found in causal_prior/noise_distributions/DistributionInterface.py. Currently, the main class to sample noise is causal_prior/noise_distributions/MixedDist_RandomSTD.py that, once instatiated, allows to sample noise. 
 
-To sample an SCM, a config, specifying distributions over all hyperparameters (of the graph sampling, mechanisms sampling and noise distributions) is needed. An example for such a config can be found in causal_prior/scm/Basic_Configs.py. This config is passed to a the class SCMHyperparameterSampler in causal_prior/scm/SCMHyperparameterSampler.py, which sample a hyperparameter dictionary according to the config. Such a dictionary can be passed to causal_prior/scm/SCMBuilder.py to build and return an SCM.Data from this SCM can be sampled via: 
+To sample an SCM, a config, specifying distributions over all hyperparameters (of the graph sampling, mechanisms sampling and noise distributions) is needed. An example for such a config can be found in causal_prior/ExampleConfigs/Basic_Configs.py. This config is passed to a the class SCMHyperparameterSampler in causal_prior/scm/SCMHyperparameterSampler.py, which sample a hyperparameter dictionary according to the config. Such a dictionary can be passed to causal_prior/scm/SCMBuilder.py to build and return an SCM.Data from this SCM can be sampled via: 
 
 1. `N_SAMPLES = 123` # Number of samples to draw
 2. `scm.sample_exogenous(N_SAMPLES)` # sample the exogenous noise 

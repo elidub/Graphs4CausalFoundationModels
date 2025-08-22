@@ -1,11 +1,11 @@
 from priors.causal_prior.scm.InspectSCMSamples import InspectSCMSamples
 from priors.causal_prior.scm.SCMHyperparameterSampler import SCMHyperparameterSampler
 from priors.causal_prior.scm.SCMBuilder import SCMBuilder
-from priors.causal_prior.scm.Basic_Configs import default_sampling_config 
+from priors.causal_prior.ExampleConfigs.Basic_Configs import default_sampling_config 
 
 
 def main():
-    BATCH_SIZE = 256
+    N_SAMPLES = 256
     seed = 128
     config = default_sampling_config
 
@@ -17,12 +17,12 @@ def main():
     scm = builder.build()
 
     # Sample both exogenous and endogenous noise before generating data
-    scm.sample_exogenous(num_samples=BATCH_SIZE)
-    scm.sample_endogenous_noise(num_samples=BATCH_SIZE)
+    scm.sample_exogenous(num_samples=N_SAMPLES)
+    scm.sample_endogenous_noise(num_samples=N_SAMPLES)
 
-    r = scm.propagate(num_samples=BATCH_SIZE)  # this is just to demonstrate how one dataset can be sampled
+    r = scm.propagate(num_samples=N_SAMPLES)  # this is just to demonstrate how one dataset can be sampled
 
-    inspector = InspectSCMSamples(scm=scm, batch_size=BATCH_SIZE, reduce="mean", device="cpu")
+    inspector = InspectSCMSamples(scm=scm, batch_size=N_SAMPLES, reduce="mean", device="cpu")
     inspector.full_report(
         n_boot=2000,
         alpha=0.05,
