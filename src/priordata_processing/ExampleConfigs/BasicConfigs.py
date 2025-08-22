@@ -14,7 +14,7 @@ default_dataset_config = {
         "value": 1000
     },
     "max_number_features": { #the maximum number of samples in each dataset (rest is zero-padded)
-        "value": 100
+        "value": 101
     },
     "number_samples_per_dataset": { # DISTRIBUTION over the number of non-zero samples in each tabular datase
         "distribution": "uniform",

@@ -57,6 +57,6 @@ class PurelyObservationalDataset(Dataset):
 
         dataset = scm.propagate(num_samples=number_samples_per_dataset) 
 
-        dataset = self.priodata_processor.process(dataset)
+        data, metadata = self.priodata_processor.process(dataset)
 
-        return dataset
+        return data
