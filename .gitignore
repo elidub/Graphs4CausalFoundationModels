@@ -1,0 +1,9 @@
+src/CausalPriorFitting.egg-info/dependency_links.txt
+src/CausalPriorFitting.egg-info/PKG-INFO
+src/CausalPriorFitting.egg-info/SOURCES.txt
+src/CausalPriorFitting.egg-info/top_level.txt
+
+# all .pyc files
+*.pyc
+
+__pycache__
