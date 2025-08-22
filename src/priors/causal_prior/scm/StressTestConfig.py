@@ -24,7 +24,7 @@ except ImportError:
 
 from priors.causal_prior.scm.SCMHyperparameterSampler import SCMHyperparameterSampler
 from priors.causal_prior.scm.SCMBuilder import SCMBuilder
-from priors.causal_prior.scm.Basic_Configs import default_sampling_config
+from priors.causal_prior.ExampleConfigs.Basic_Configs import default_sampling_config
 
 
 @dataclass
