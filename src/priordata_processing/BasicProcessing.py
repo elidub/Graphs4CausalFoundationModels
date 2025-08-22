@@ -41,6 +41,7 @@ class BasicProcessing:
         self, 
         max_num_samples: int,
         max_num_features: int,
+        train_fraction: float = 0.5,
         dropout_prob: float = 0.0,
         transformation_type: str = 'standardize',
         shuffle_data: bool = True,
@@ -50,6 +51,7 @@ class BasicProcessing:
         """Initialize the BasicProcessing instance with configuration parameters."""
         self.max_num_samples = max_num_samples
         self.max_num_features = max_num_features
+        self.train_fraction = train_fraction
         self.dropout_prob = dropout_prob
         self.transformation_type = transformation_type
         self.shuffle_data = shuffle_data
@@ -59,69 +61,93 @@ class BasicProcessing:
         # Don't set global seed in __init__ - do it per process call
     
     def process(
-        self, 
-        dataset: Dict[int, torch.Tensor], 
+        self,
+        dataset: Dict[int, torch.Tensor],
         mode: str = 'fast'
-    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, Any]]:
         """
-        Process the input dataset according to the specified pipeline.
+        Process the input dataset according to the specified pipeline, split into train/test sets.
         
         Args:
             dataset (Dict[int, torch.Tensor]): Input dataset with format {feature_index: tensor(N_SAMPLES, 1)}
             mode (str): Processing mode - 'fast' for speed optimization or 'safe' for extensive validation
-            
         Returns:
-            Tuple[torch.Tensor, Dict[str, Any]]: 
-                - Processed tensor of shape (max_num_samples, max_num_features)
+            Tuple[Dict[str, torch.Tensor], Dict[str, Any]]: 
+                - Dictionary with keys 'X_train', 'Y_train', 'X_test', 'Y_test'
                 - Metadata dictionary containing processing information
-                
-        Raises:
-            ValueError: If mode is not 'fast' or 'safe', or if dataset is invalid
-            RuntimeError: If processing fails due to data inconsistencies
         """
         # Set random seed at the start of each process call for reproducibility
         if self.random_seed is not None:
             torch.manual_seed(self.random_seed)
             np.random.seed(self.random_seed)
             random.seed(self.random_seed)
-        
+
         if mode not in ['fast', 'safe']:
             raise ValueError(f"Mode must be 'fast' or 'safe', got '{mode}'")
-            
+
         # Input validation based on mode
         if mode == 'safe':
             self._validate_input_safe(dataset)
         else:
             self._validate_input_fast(dataset)
-        
+
         # Store original metadata
         original_num_features = len(dataset)
         original_num_samples = list(dataset.values())[0].shape[0]
-        
+
         # Step 0: Transform data into tensor
         data_tensor, feature_indices = self._dict_to_tensor(dataset, mode)
-        
+
         # Step 1: Randomly decide target feature
         target_idx = self._select_target_feature(feature_indices, mode)
-        
+        target_col = feature_indices.index(target_idx)
+
         # Step 2: Shuffle the data (features and samples)
         if self.shuffle_data:
             data_tensor, feature_indices = self._shuffle_data(data_tensor, feature_indices, mode)
-        
+            # Update target_col after shuffling features
+            target_col = feature_indices.index(target_idx)
+
         # Step 3: Drop out some features
         if self.dropout_prob > 0:
             data_tensor, feature_indices = self._dropout_features(data_tensor, feature_indices, mode)
-        
+            # If target feature dropped, pick a new one
+            if target_idx not in feature_indices:
+                target_idx = self._select_target_feature(feature_indices, mode)
+            target_col = feature_indices.index(target_idx)
+
         # Step 4: Pre-process features
         data_tensor, transformation_params = self._transform_features(data_tensor, mode)
-        
+
         # Step 5: Pad data with zeros
         padded_tensor = self._pad_data(data_tensor, mode)
-        
-        # Step 6: Create metadata dictionary
+
+        # Step 6: Train/test split
+        num_samples = padded_tensor.shape[0]
+        train_size = int(num_samples * self.train_fraction)
+        X = padded_tensor
+        Y = padded_tensor[:, target_col].reshape(-1, 1)
+
+        # Remove target column from X
+        X_no_target = torch.cat([X[:, :target_col], X[:, target_col+1:]], dim=1)
+
+        X_train = X_no_target[:train_size]
+        Y_train = Y[:train_size]
+        X_test = X_no_target[train_size:]
+        Y_test = Y[train_size:]
+
+        output = {
+            'X_train': X_train,
+            'Y_train': Y_train,
+            'X_test': X_test,
+            'Y_test': Y_test
+        }
+
+        # Step 7: Create metadata dictionary
         metadata = {
             'feature_names': feature_indices,
             'target_feature': target_idx,
+            'target_col': target_col,
             'transformation_type': self.transformation_type,
             'transformation_params': transformation_params,
             'original_num_samples': original_num_samples,
@@ -131,10 +157,13 @@ class BasicProcessing:
             'padding_start_sample': data_tensor.shape[0],
             'padding_start_feature': data_tensor.shape[1],
             'dropout_prob': self.dropout_prob,
-            'shuffle_applied': self.shuffle_data
+            'shuffle_applied': self.shuffle_data,
+            'train_fraction': self.train_fraction,
+            'X_shape': X_no_target.shape,
+            'Y_shape': Y.shape
         }
-        
-        return padded_tensor, metadata
+
+        return output, metadata
     
     def _validate_input_fast(self, dataset: Dict[int, torch.Tensor]) -> None:
         """Fast input validation with minimal checks."""
