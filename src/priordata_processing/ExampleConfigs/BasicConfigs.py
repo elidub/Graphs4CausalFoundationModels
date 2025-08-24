@@ -8,7 +8,7 @@ that follow the rigorous pattern established by SCMHyperparameterSampler.
 # Example configurations following the rigorous pattern
 default_dataset_config = {
     "dataset_size": {  # actual number of elements in the meta-dataset (torch.dataset), i.e. number of tabular datasets in the torch.dataset!
-        "value": 100_000
+        "value": 100_000_000
     },
     "max_number_samples": { #the maximum number of samples in each dataset (rest is zero-padded)
         "value": 1000

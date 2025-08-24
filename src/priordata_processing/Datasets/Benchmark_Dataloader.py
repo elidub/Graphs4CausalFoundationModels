@@ -11,7 +11,7 @@ from typing import Dict, List
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from MakePurelyObservationalDataset import MakePurelyObservationalDataset
+from priordata_processing.Datasets.MakePurelyObservationalDataset import MakePurelyObservationalDataset
 from priors.causal_prior.ExampleConfigs.Basic_Configs import default_sampling_config as prior_config
 from priordata_processing.ExampleConfigs.BasicConfigs import default_dataset_config as dataset_config
 from priordata_processing.ExampleConfigs.BasicConfigs import default_preprocessing_config as preprocessing_config
@@ -38,12 +38,13 @@ class DataloaderBenchmark:
         self.dataloader = dataloader
         self.verbose = verbose
         
-    def benchmark_batch_loading(self, num_batches: int = 10) -> Dict[str, float]:
+    def benchmark_batch_loading(self, num_batches: int = 10, warmup_batches: int = 3) -> Dict[str, float]:
         """
         Benchmark batch loading performance using the pre-configured dataloader.
         
         Args:
             num_batches: Number of batches to load for benchmarking
+            warmup_batches: Number of warmup batches to run before timing (for multiprocessing setup)
             
         Returns:
             Dictionary containing timing statistics:
@@ -58,14 +59,47 @@ class DataloaderBenchmark:
             - 'ci_upper': Upper bound of 95% bootstrap CI for average time
         """
         if self.verbose:
-            print(f"Benchmarking dataloader with num_batches={num_batches}")
+            print(f"Benchmarking dataloader with num_batches={num_batches}, warmup_batches={warmup_batches}")
         
-        # Measure loading times
+        # Create iterator from dataloader
+        dataloader_iter = iter(self.dataloader)
+        
+        # Warmup phase - run warmup batches without timing
+        if warmup_batches > 0:
+            if self.verbose:
+                print("Running warmup batches to initialize multiprocessing...")
+            
+            warmup_progress = tqdm(
+                range(warmup_batches),
+                desc="Warmup batches",
+                unit="batch",
+                disable=not self.verbose
+            )
+            
+            for i in warmup_progress:
+                try:
+                    # Load batch but don't time it
+                    batch = next(dataloader_iter)
+                    # Ensure the batch is actually accessed to force full loading
+                    if isinstance(batch, dict):
+                        for value in batch.values():
+                            if hasattr(value, 'shape'):
+                                _ = value.shape
+                    elif hasattr(batch, 'shape'):
+                        _ = batch.shape
+                except StopIteration:
+                    if self.verbose:
+                        print(f"Warning: Only {i} warmup batches available")
+                    break
+            
+            warmup_progress.close()
+            if self.verbose:
+                print("Warmup complete. Starting actual benchmark...")
+        
+        # Measure loading times for actual benchmark
         batch_times = []
         
         start_total = time.time()
-        
-        # Create iterator from dataloader
         dataloader_iter = iter(self.dataloader)
         
         # Create progress bar
@@ -201,9 +235,11 @@ if __name__ == "__main__":
     Define the dataloader in main and then benchmark it.
     """
     # Configuration parameters
-    BATCH_SIZE = 64
-    NUM_WORKERS = 4
-    PREFETCH_FACTOR = 8
+    BATCH_SIZE = 128
+    NUM_WORKERS = 1
+    PREFETCH_FACTOR = 2
+    NUM_BATCHES = 1_000
+    WARMUP = 100
     SHUFFLE = True
     
     print("Creating example dataset for benchmarking...")
@@ -239,9 +275,9 @@ if __name__ == "__main__":
     print("DATALOADER BENCHMARK WITH 95% BOOTSTRAP CIs")
     print("="*60)
     
-    # Benchmark the dataloader
-    results = benchmark.benchmark_batch_loading(num_batches=50)
-    
+    # Benchmark the dataloader with warmup
+    results = benchmark.benchmark_batch_loading(num_batches=NUM_BATCHES, warmup_batches=WARMUP)
+
     print("\n" + "="*60)
     print("BENCHMARK COMPLETE!")
     print("="*60)
