@@ -1,0 +1,39 @@
+000 (16394527.000.000) 2025-08-24 09:43:06 Job submitted from host: <10.15.2.1:9618?PrivAddr=%3c172.22.0.101:9618%3fsock%3dschedd_2825_4b22%3e&PrivNet=internal.cluster.is.localnet&addrs=10.15.2.1-9618&alias=sched.cluster.is.localnet&noUDP&sock=schedd_2825_4b22>
+...
+040 (16394527.000.000) 2025-08-24 09:43:18 Started transferring input files
+	Transferring to host: <172.22.2.110:9618?addrs=172.22.2.110-9618&alias=g110.internal.cluster.is.localnet&noUDP&sock=slot1_2_5238_650e_13627>
+...
+040 (16394527.000.000) 2025-08-24 09:43:20 Finished transferring input files
+...
+001 (16394527.000.000) 2025-08-24 09:43:22 Job executing on host: <172.22.2.110:9618?addrs=172.22.2.110-9618&alias=g110.internal.cluster.is.localnet&noUDP&sock=startd_5040_9969>
+...
+006 (16394527.000.000) 2025-08-24 09:43:31 Image size of job updated: 47464
+	3  -  MemoryUsage of job (MB)
+	2980  -  ResidentSetSize of job (KB)
+...
+006 (16394527.000.000) 2025-08-24 09:48:23 Image size of job updated: 2502092104
+	3  -  MemoryUsage of job (MB)
+	2980  -  ResidentSetSize of job (KB)
+...
+040 (16394527.000.000) 2025-08-24 09:48:25 Started transferring output files
+...
+040 (16394527.000.000) 2025-08-24 09:48:25 Finished transferring output files
+...
+005 (16394527.000.000) 2025-08-24 09:48:25 Job terminated.
+	(1) Normal termination (return value 0)
+		Usr 0 01:40:54, Sys 0 01:59:09  -  Run Remote Usage
+		Usr 0 00:00:00, Sys 0 00:00:00  -  Run Local Usage
+		Usr 0 01:40:54, Sys 0 01:59:09  -  Total Remote Usage
+		Usr 0 00:00:00, Sys 0 00:00:00  -  Total Local Usage
+	7866384  -  Run Bytes Sent By Job
+	2570743040  -  Run Bytes Received By Job
+	7866384  -  Total Bytes Sent By Job
+	2570743040  -  Total Bytes Received By Job
+	Partitionable Resources :      Usage  Request Allocated 
+	   Cpus                 :      49.89       64        64 
+	   Disk (KB)            : 8705541    20971520  23136794 
+	   Gpus (Average)       :                   0         0 
+	   Memory (MB)          :       3      262144    262144 
+
+	Job terminated of its own accord at 2025-08-24T07:48:23Z with exit-code 0.
+...
