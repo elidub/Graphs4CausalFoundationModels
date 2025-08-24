@@ -11,7 +11,7 @@ when_to_transfer_output = ON_EXIT
 
 request_cpus = 2
 request_memory = 16GB
-request_disk = 15GB
+request_disk = 20GB
 request_gpus = 0
 
 +JobDescription = "DataLoader Benchmark - Medium"

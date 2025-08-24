@@ -1,19 +1,19 @@
 universe   = vanilla
 executable = run_benchmark.sh
-arguments  = small
-output     = Logs/small_job.out
-error      = Logs/small_job.err
-log        = Logs/small_job.log
+arguments  = cpu_8
+output     = Logs/cpu_8_job.out
+error      = Logs/cpu_8_job.err
+log        = Logs/cpu_8_job.log
 
 transfer_input_files = ../../../../venv.zip, ../../../../CausalPriorFitting
 should_transfer_files = Yes
 when_to_transfer_output = ON_EXIT
 
-request_cpus = 1
-request_memory = 8GB
+request_cpus = 8
+request_memory = 32GB
 request_disk = 20GB
 request_gpus = 0
 
-+JobDescription = "DataLoader Benchmark - Small"
++JobDescription = "DataLoader Benchmark - 8 CPU Scaling"
 
 queue
