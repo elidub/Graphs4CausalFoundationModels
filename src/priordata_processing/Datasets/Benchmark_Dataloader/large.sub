@@ -1,0 +1,19 @@
+universe   = vanilla
+executable = run_benchmark.sh
+arguments  = large
+output     = Logs/large_job.out
+error      = Logs/large_job.err
+log        = Logs/large_job.log
+
+transfer_input_files = ../../../../venv.zip, ../../../../CausalPriorFitting
+should_transfer_files = Yes
+when_to_transfer_output = ON_EXIT
+
+request_cpus = 4
+request_memory = 32GB
+request_disk = 20GB
+request_gpus = 0
+
++JobDescription = "DataLoader Benchmark - Large"
+
+queue

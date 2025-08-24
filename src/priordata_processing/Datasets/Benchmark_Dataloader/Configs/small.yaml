@@ -1,0 +1,15 @@
+# Small benchmark configuration - suitable for quick tests
+benchmark:
+  batch_size: 32
+  num_workers: 1
+  prefetch_factor: 2
+  num_batches: 100
+  warmup: 10
+  shuffle: true
+
+# HTCondor job settings
+htcondor:
+  request_cpus: 1
+  request_memory: "8GB"
+  request_disk: "10GB"
+  description: "Small benchmark for quick testing"

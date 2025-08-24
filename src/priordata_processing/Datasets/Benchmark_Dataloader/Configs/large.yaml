@@ -1,0 +1,15 @@
+# Large benchmark configuration - high throughput testing
+benchmark:
+  batch_size: 128
+  num_workers: 4
+  prefetch_factor: 4
+  num_batches: 1000
+  warmup: 50
+  shuffle: true
+
+# HTCondor job settings
+htcondor:
+  request_cpus: 4
+  request_memory: "32GB"
+  request_disk: "20GB"
+  description: "Large benchmark for high throughput testing"

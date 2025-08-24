@@ -1,0 +1,19 @@
+universe   = vanilla
+executable = run_benchmark.sh
+arguments  = high_memory
+output     = Logs/high_memory_job.out
+error      = Logs/high_memory_job.err
+log        = Logs/high_memory_job.log
+
+transfer_input_files = ../../../../venv.zip, ../../../../CausalPriorFitting
+should_transfer_files = Yes
+when_to_transfer_output = ON_EXIT
+
+request_cpus = 8
+request_memory = 64GB
+request_disk = 25GB
+request_gpus = 0
+
++JobDescription = "DataLoader Benchmark - High Memory"
+
+queue

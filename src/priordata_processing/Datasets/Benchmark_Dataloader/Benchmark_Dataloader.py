@@ -229,18 +229,64 @@ class DataloaderBenchmark:
         print(f"  Batches loaded: {results['num_batches']}")
 
 
+def load_config(config_name):
+    """Load configuration from YAML file."""
+    import yaml
+    import os
+    
+    config_file = f"Configs/{config_name}.yaml"
+    
+    if not os.path.exists(config_file):
+        raise FileNotFoundError(f"Config file {config_file} not found")
+    
+    with open(config_file, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    return config
+
+
 if __name__ == "__main__":
     """
-    Example usage of the DataloaderBenchmark class.
-    Define the dataloader in main and then benchmark it.
+    Run benchmark with specified config or default settings.
+    Usage: python Benchmark_Dataloader.py [config_name]
     """
-    # Configuration parameters
-    BATCH_SIZE = 128
-    NUM_WORKERS = 1
-    PREFETCH_FACTOR = 2
-    NUM_BATCHES = 1_000
-    WARMUP = 100
-    SHUFFLE = True
+    import sys
+    
+    # Load config from YAML or use defaults
+    if len(sys.argv) > 1:
+        config_name = sys.argv[1]
+        print(f"Loading configuration from: {config_name}.yaml")
+        try:
+            config = load_config(config_name)
+            benchmark_config = config['benchmark']
+            
+            BATCH_SIZE = benchmark_config['batch_size']
+            NUM_WORKERS = benchmark_config['num_workers']
+            PREFETCH_FACTOR = benchmark_config['prefetch_factor']
+            NUM_BATCHES = benchmark_config['num_batches']
+            WARMUP = benchmark_config['warmup']
+            SHUFFLE = benchmark_config['shuffle']
+            
+            print(f"Loaded config: {config_name}")
+        except Exception as e:
+            print(f"Error loading config {config_name}: {e}")
+            print("Using default configuration...")
+            # Default configuration parameters
+            BATCH_SIZE = 128
+            NUM_WORKERS = 1
+            PREFETCH_FACTOR = 2
+            NUM_BATCHES = 1_000
+            WARMUP = 100
+            SHUFFLE = True
+    else:
+        print("No config specified, using default configuration...")
+        # Default configuration parameters
+        BATCH_SIZE = 128
+        NUM_WORKERS = 1
+        PREFETCH_FACTOR = 2
+        NUM_BATCHES = 1_000
+        WARMUP = 100
+        SHUFFLE = True
     
     print("Creating example dataset for benchmarking...")
     
