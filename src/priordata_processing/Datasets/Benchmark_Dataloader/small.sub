@@ -5,7 +5,7 @@ output     = Logs/small_job.out
 error      = Logs/small_job.err
 log        = Logs/small_job.log
 
-transfer_input_files = ../../../../venv.zip, ../../../../CausalPriorFitting
+transfer_input_files = ../../../../../venv.zip, ../../../../../CausalPriorFitting
 should_transfer_files = Yes
 when_to_transfer_output = ON_EXIT
 

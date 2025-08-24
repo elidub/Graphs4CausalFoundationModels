@@ -5,7 +5,7 @@ output     = Logs/cpu_96_job.out
 error      = Logs/cpu_96_job.err
 log        = Logs/cpu_96_job.log
 
-transfer_input_files = ../../../../venv.zip, ../../../../CausalPriorFitting
+transfer_input_files = ../../../../../venv.zip, ../../../../../CausalPriorFitting
 should_transfer_files = Yes
 when_to_transfer_output = ON_EXIT
 

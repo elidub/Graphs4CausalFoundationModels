@@ -5,7 +5,7 @@ output     = Logs/high_memory_job.out
 error      = Logs/high_memory_job.err
 log        = Logs/high_memory_job.log
 
-transfer_input_files = ../../../../venv.zip, ../../../../CausalPriorFitting
+transfer_input_files = ../../../../../venv.zip, ../../../../../CausalPriorFitting
 should_transfer_files = Yes
 when_to_transfer_output = ON_EXIT
 
