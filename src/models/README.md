@@ -1,0 +1,1 @@
+This folder contains the actual model that is fitted on the synthetic data. 
