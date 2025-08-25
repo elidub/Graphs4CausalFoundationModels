@@ -31,6 +31,7 @@ class TwoWayBlock(nn.Module):
 
         self.samp_attn = nn.MultiheadAttention(embed_dim=dim, num_heads=heads_samp, batch_first=True)
         self.ln_samp = nn.LayerNorm(dim)
+        self.heads_samp = heads_samp
 
         self.mlp = MLP(dim, hidden_mult=4, dropout=dropout)
         self.ln_mlp = nn.LayerNorm(dim)
@@ -49,10 +50,11 @@ class TwoWayBlock(nn.Module):
         # sample-attention (within column)
         x_col = x.permute(0, 2, 1, 3).contiguous().reshape(B * L, S, D)
         
-        # Expand the mask for all feature columns if provided
+        # Expand the mask for all feature columns and attention heads if provided
         if sample_attn_mask is not None:
             # The mask needs to be expanded for each feature column (B * L copies)
-            expanded_mask = sample_attn_mask.unsqueeze(0).expand(B * L, -1, -1)
+            # and for each attention head (heads_samp copies)
+            expanded_mask = sample_attn_mask.unsqueeze(0).expand(B * L * self.heads_samp, -1, -1)
             x2, _ = self.samp_attn(x_col, x_col, x_col, attn_mask=expanded_mask, need_weights=False)
         else:
             x2, _ = self.samp_attn(x_col, x_col, x_col, need_weights=False)
@@ -76,13 +78,11 @@ class SimplePFNRegressor(nn.Module):
         depth: int = 8,
         heads_feat: int = 8,
         heads_samp: int = 8,
-        num_bins: int = 64,
         dropout: float = 0.0,
     ):
         super().__init__()
         self.num_features = num_features
         self.d_model = d_model
-        self.num_bins = num_bins
 
         # Per-cell encoders
         self.value_encoder = nn.Linear(1, d_model)
@@ -102,8 +102,8 @@ class SimplePFNRegressor(nn.Module):
             for _ in range(depth)
         ])
 
-        # Output head
-        self.reg_head = nn.Linear(d_model, num_bins)
+        # Output head - single regression value
+        self.regression_head = nn.Linear(d_model, 1)
 
     @staticmethod
     def _build_sample_attn_mask(N: int, M: int, device: torch.device) -> torch.Tensor:
@@ -158,19 +158,18 @@ class SimplePFNRegressor(nn.Module):
 
         label_pos = self.num_features
         h_test = x[:, N:, label_pos, :]
-        bin_logits = self.reg_head(h_test)
-        return {"bin_logits": bin_logits}
+        predictions = self.regression_head(h_test).squeeze(-1)  # (B, M)
+        return {"predictions": predictions}
 
 
 if __name__ == "__main__":
     torch.manual_seed(0)
     B, N, M, num_feat = 2, 16, 5, 7
-    K = 32
 
     Xtr = torch.randn(B, N, num_feat)
     Xte = torch.randn(B, M, num_feat)
     ytr = torch.randn(B, N)
 
-    model = SimplePFNRegressor(num_features=num_feat, d_model=128, depth=4, heads_feat=4, heads_samp=4, num_bins=K, dropout=0.1)
+    model = SimplePFNRegressor(num_features=num_feat, d_model=128, depth=4, heads_feat=4, heads_samp=4, dropout=0.1)
     out = model(Xtr, ytr, Xte)
-    print('bin_logits:', out['bin_logits'].shape)
+    print('predictions:', out['predictions'].shape)
