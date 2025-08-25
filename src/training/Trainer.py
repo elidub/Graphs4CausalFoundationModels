@@ -69,9 +69,50 @@ class SimplePFNLightningModule(pl.LightningModule):
         return self.model(x)
     
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        y_pred = self.model(x)
-        loss = self.criterion(y_pred, y)
+        # Handle SimplePFN format
+        if isinstance(batch, dict):
+            if 'X_train' in batch and 'Y_train' in batch and 'X_test' in batch and 'Y_test' in batch:
+                # SimplePFN format
+                X_train = batch['X_train']
+                Y_train = batch['Y_train']
+                X_test = batch['X_test']
+                Y_test = batch['Y_test']
+                
+                # Forward pass through SimplePFN
+                predictions = self.model(X_train, Y_train, X_test)
+                
+                # SimplePFN returns a dict, get the predictions
+                y_pred = predictions['predictions'] if isinstance(predictions, dict) else predictions
+                y_true = Y_test.squeeze(-1) if Y_test.dim() > 2 else Y_test  # Ensure same shape as y_pred
+                
+            else:
+                # Standard format - handle as before
+                if 'data' in batch and 'target' in batch:
+                    x, y = batch['data'], batch['target']
+                elif 'x' in batch and 'y' in batch:
+                    x, y = batch['x'], batch['y']
+                elif 'features' in batch and 'labels' in batch:
+                    x, y = batch['features'], batch['labels']
+                else:
+                    # Use the first two values
+                    keys = list(batch.keys())
+                    x, y = batch[keys[0]], batch[keys[1]]
+                y_pred = self.model(x)
+                y_true = y
+        elif hasattr(batch, '__len__') and len(batch) == 2:
+            x, y = batch
+            y_pred = self.model(x)
+            y_true = y
+        elif hasattr(batch, '__len__') and len(batch) > 2:
+            # If batch has more items, assume first is x and last is y
+            x = batch[0]
+            y = batch[-1]
+            y_pred = self.model(x)
+            y_true = y
+        else:
+            raise ValueError(f"Unsupported batch structure: {type(batch)}")
+            
+        loss = self.criterion(y_pred, y_true)
         
         # Log metrics
         self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=True)
@@ -79,21 +120,62 @@ class SimplePFNLightningModule(pl.LightningModule):
         # Store for epoch-end aggregation
         self.training_step_outputs.append({
             'loss': loss.detach(),
-            'y_true': y.detach(),
+            'y_true': y_true.detach(),
             'y_pred': y_pred.detach()
         })
         
         return loss
     
     def validation_step(self, batch, batch_idx):
-        x, y = batch
-        y_pred = self.model(x)
-        loss = self.criterion(y_pred, y)
+        # Handle SimplePFN format (same logic as training_step)
+        if isinstance(batch, dict):
+            if 'X_train' in batch and 'Y_train' in batch and 'X_test' in batch and 'Y_test' in batch:
+                # SimplePFN format
+                X_train = batch['X_train']
+                Y_train = batch['Y_train']
+                X_test = batch['X_test']
+                Y_test = batch['Y_test']
+                
+                # Forward pass through SimplePFN
+                predictions = self.model(X_train, Y_train, X_test)
+                
+                # SimplePFN returns a dict, get the predictions
+                y_pred = predictions['predictions'] if isinstance(predictions, dict) else predictions
+                y_true = Y_test.squeeze(-1) if Y_test.dim() > 2 else Y_test  # Ensure same shape as y_pred
+                
+            else:
+                # Standard format
+                if 'data' in batch and 'target' in batch:
+                    x, y = batch['data'], batch['target']
+                elif 'x' in batch and 'y' in batch:
+                    x, y = batch['x'], batch['y']
+                elif 'features' in batch and 'labels' in batch:
+                    x, y = batch['features'], batch['labels']
+                else:
+                    # Use the first two values
+                    keys = list(batch.keys())
+                    x, y = batch[keys[0]], batch[keys[1]]
+                y_pred = self.model(x)
+                y_true = y
+        elif hasattr(batch, '__len__') and len(batch) == 2:
+            x, y = batch
+            y_pred = self.model(x)
+            y_true = y
+        elif hasattr(batch, '__len__') and len(batch) > 2:
+            # If batch has more items, assume first is x and last is y
+            x = batch[0]
+            y = batch[-1]
+            y_pred = self.model(x)
+            y_true = y
+        else:
+            raise ValueError(f"Unsupported batch structure: {type(batch)}")
+            
+        loss = self.criterion(y_pred, y_true)
         
         # Calculate additional metrics
         with torch.no_grad():
-            mse = torch.mean((y_pred - y) ** 2)
-            mae = torch.mean(torch.abs(y_pred - y))
+            mse = torch.mean((y_pred - y_true) ** 2)
+            mae = torch.mean(torch.abs(y_pred - y_true))
         
         # Log metrics
         self.log('val_loss', loss, prog_bar=True, on_step=False, on_epoch=True)
@@ -105,7 +187,7 @@ class SimplePFNLightningModule(pl.LightningModule):
             'loss': loss.detach(),
             'mse': mse.detach(),
             'mae': mae.detach(),
-            'y_true': y.detach(),
+            'y_true': y_true.detach(),
             'y_pred': y_pred.detach()
         })
         

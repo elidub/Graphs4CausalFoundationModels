@@ -210,7 +210,10 @@ class SetupTraining:
             self.setup_trainer()
         
         print("\n🚀 Starting training...")
-        trained_model = self.trainer.fit(resume_from_checkpoint=resume_from_checkpoint)
+        if resume_from_checkpoint:
+            trained_model = self.trainer.fit(ckpt_path=resume_from_checkpoint)
+        else:
+            trained_model = self.trainer.fit()
         print("✅ Training completed!")
         
         return trained_model

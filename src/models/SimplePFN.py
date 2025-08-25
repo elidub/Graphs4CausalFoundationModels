@@ -131,7 +131,16 @@ class SimplePFNRegressor(nn.Module):
         return feat_enc
 
     def _encode_labels(self, y_train: torch.Tensor, M: int) -> torch.Tensor:
-        B, N = y_train.shape
+        
+        # Handle both 2D (B, N) and 3D (B, N, 1) input shapes
+        if y_train.dim() == 3:
+            # If y_train is (B, N, 1), squeeze the last dimension
+            y_train = y_train.squeeze(-1)
+        
+        try:
+            B, N = y_train.shape
+        except Exception as e:
+            B = len(y_train)
         # train encodings
         lab_train = self.label_value_encoder(y_train.unsqueeze(-1))
         # add positional encoding for train-y-column
@@ -148,8 +157,8 @@ class SimplePFNRegressor(nn.Module):
         device = X_train.device
 
         feat_enc = self._encode_features(X_train, X_test)
-        lab_enc = self._encode_labels(y_train, M).unsqueeze(2)
-        x = torch.cat([feat_enc, lab_enc], dim=2)
+        lab_enc = self._encode_labels(y_train, M)
+        x = torch.cat([feat_enc, lab_enc.unsqueeze(2)], dim=2)
 
         samp_mask = self._build_sample_attn_mask(N, M, device)
 
