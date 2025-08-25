@@ -2,10 +2,13 @@ from __future__ import annotations
 from typing import Dict, Any, Optional, List
 import torch
 import torch.distributions as dist
-from abc import ABC, abstractmethod
+import sys
+import os
 
 from priors.causal_prior.scm.SCMBuilder import SCMBuilder
 
+# Import from the main utils module (not training.utils)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 from utils import FixedSampler, TorchDistributionSampler, CategoricalSampler, DiscreteUniformSampler, DistributionSampler
 
 

@@ -2,10 +2,15 @@ from __future__ import annotations
 from typing import Dict, Any
 import torch
 import torch.distributions as dist
+import sys
+import os
 
 from priors.causal_prior.scm.SCMSampler import SCMSampler
 from priordata_processing.BasicProcessing import BasicProcessing
 from priordata_processing.Datasets.PurelyObservationalDataset import PurelyObservationalDataset
+
+# Import from the main utils module (not training.utils)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from utils import FixedSampler, TorchDistributionSampler, CategoricalSampler, DiscreteUniformSampler
 
 
