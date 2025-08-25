@@ -41,7 +41,7 @@ def load_yaml_config(config_path: str) -> Dict[str, Any]:
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     
-    print(f"✓ Loaded config: {config_path.name}")
+    print(f"[OK] Loaded config: {config_path.name}")
     return config
 
 
@@ -72,9 +72,9 @@ def convert_yaml_to_training_format(yaml_config: Dict[str, Any]) -> tuple:
     
     if 'num_features' not in model_config:
         model_config['num_features'] = expected_features
-        print(f"✓ Auto-set num_features = {expected_features} (max_features - 1)")
+        print(f"[OK] Auto-set num_features = {expected_features} (max_features - 1)")
     elif model_config['num_features'] != expected_features:
-        print(f"⚠ Warning: num_features={model_config['num_features']} but expected {expected_features}")
+        print(f"[WARN] num_features={model_config['num_features']} but expected {expected_features}")
     
     return model_config, data_config, training_config
 
@@ -92,23 +92,23 @@ def main():
         print("=== SimplePFN Training Runner ===")
         yaml_config = load_yaml_config(args.config_path)
         model_config, data_config, training_config = convert_yaml_to_training_format(yaml_config)
-        
+
         # Print experiment info
         exp_name = yaml_config.get('experiment_name', 'unnamed_experiment')
         description = yaml_config.get('description', 'No description provided')
-        print(f"✓ Experiment: {exp_name}")
-        print(f"✓ Description: {description}")
-        
+        print(f"[OK] Experiment: {exp_name}")
+        print(f"[OK] Description: {description}")
+
         # Print key settings
-        print(f"✓ Model features: {model_config.get('num_features', 'unknown')}")
-        print(f"✓ Training steps: {training_config.get('max_steps', {}).get('value', 'unknown')}")
-        print(f"✓ Batch size: {training_config.get('batch_size', {}).get('value', 'unknown')}")
-        print(f"✓ Device: {training_config.get('device', {}).get('value', 'unknown')}")
-        
+        print(f"[OK] Model features: {model_config.get('num_features', 'unknown')}")
+        print(f"[OK] Training steps: {training_config.get('max_steps', {}).get('value', 'unknown')}")
+        print(f"[OK] Batch size: {training_config.get('batch_size', {}).get('value', 'unknown')}")
+        print(f"[OK] Device: {training_config.get('device', {}).get('value', 'unknown')}")
+
         if args.dry_run:
-            print("✓ Dry run completed - config loaded successfully")
+            print("[OK] Dry run completed - config loaded successfully")
             return
-        
+
         # Initialize and run training
         print("\n=== Starting Training ===")
         setup = SetupTraining(
@@ -116,24 +116,24 @@ def main():
             data_config=data_config,
             training_config=training_config
         )
-        
-        print(f"✓ Model: {type(setup.model).__name__}")
-        print(f"✓ Dataset size: {len(setup.train_dataset)}")
-        
+
+        print(f"[OK] Model: {type(setup.model).__name__}")
+        print(f"[OK] Dataset size: {len(setup.train_dataset)}")
+
         # Run training
         trained_model = setup.run_training()
-        
+
         # Save model if training completed
         save_dir = training_config.get('save_dir', {}).get('value', './models')
         save_path = Path(save_dir) / f"{exp_name}_final.pth"
         save_path.parent.mkdir(parents=True, exist_ok=True)
         setup.save_model(str(save_path))
-        
-        print(f"✓ Training completed successfully!")
-        print(f"✓ Model saved: {save_path}")
-        
+
+        print(f"[OK] Training completed successfully!")
+        print(f"[OK] Model saved: {save_path}")
+
     except Exception as e:
-        print(f"✗ Error: {e}")
+        print(f"ERROR: {e}")
         sys.exit(1)
 
 

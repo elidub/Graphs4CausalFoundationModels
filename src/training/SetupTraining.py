@@ -108,7 +108,7 @@ class SetupTraining:
             print(f"Creating test dataset with seed {test_seed}...")
             self.test_dataset = dataset_generator.create_dataset(seed=test_seed)
         
-        print(f"✓ Datasets created:")
+        print(f"[OK] Datasets created:")
         print(f"  - Training: {len(self.train_dataset)} samples")
         if self.val_dataset:
             print(f"  - Validation: {len(self.val_dataset)} samples")
@@ -140,7 +140,7 @@ class SetupTraining:
         total_params = sum(p.numel() for p in self.model.parameters())
         trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         
-        print(f"✓ Model created:")
+        print(f"[OK] Model created:")
         print(f"  - Total parameters: {total_params:,}")
         print(f"  - Trainable parameters: {trainable_params:,}")
     
@@ -185,7 +185,7 @@ class SetupTraining:
             wandb_notes=training_params.get('wandb_notes', ''),
         )
         
-        print("✓ Trainer configured:")
+        print("[OK] Trainer configured:")
         print(f"  - Experiment: {training_params.get('experiment_name', 'default_experiment')}")
         print(f"  - Learning rate: {training_params.get('learning_rate', 1e-3)}")
         print(f"  - Batch size: {training_params.get('batch_size', 32)}")
@@ -209,12 +209,12 @@ class SetupTraining:
         if self.trainer is None:
             self.setup_trainer()
         
-        print("\n🚀 Starting training...")
+        print("\n Starting training...")
         if resume_from_checkpoint:
             trained_model = self.trainer.fit(ckpt_path=resume_from_checkpoint)
         else:
             trained_model = self.trainer.fit()
-        print("✅ Training completed!")
+        print("Training completed!")
         
         return trained_model
     
@@ -255,7 +255,7 @@ class SetupTraining:
         
         print("\n🔮 Generating predictions...")
         predictions = self.trainer.predict(dataset)
-        print(f"✓ Generated {len(predictions)} predictions")
+        print(f"[OK] Generated {len(predictions)} predictions")
         
         return predictions
     
@@ -270,7 +270,7 @@ class SetupTraining:
             raise RuntimeError("Trainer not initialized. Run training first.")
         
         self.trainer.save_model(path)
-        print(f"✓ Model saved to {path}")
+        print(f"[OK] Model saved to {path}")
     
     def get_training_history(self) -> Dict[str, list]:
         """

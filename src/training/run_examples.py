@@ -20,27 +20,27 @@ def run_experiment(config_name: str, dry_run: bool = False):
     run_script = training_dir / "run.py"
     
     if not config_path.exists():
-        print(f"❌ Config not found: {config_path}")
+        print(f"[ERROR] Config not found: {config_path}")
         return False
-    
+
     if not run_script.exists():
-        print(f"❌ Run script not found: {run_script}")
+        print(f"[ERROR] Run script not found: {run_script}")
         return False
-    
+
     # Build command
     cmd = [sys.executable, str(run_script), str(config_path)]
     if dry_run:
         cmd.append("--dry-run")
-    
-    print(f"🚀 Running: {' '.join(cmd)}")
-    
+
+    print(f"[INFO] Running: {' '.join(cmd)}")
+
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        print("✅ Success!")
+        print("[OK] Success!")
         print(result.stdout)
         return True
     except subprocess.CalledProcessError as e:
-        print("❌ Failed!")
+        print("[ERROR] Failed!")
         print(e.stdout)
         print(e.stderr)
         return False
@@ -65,7 +65,7 @@ def main():
     print("# run_experiment('early_test1', dry_run=False)")
     
     # Uncomment this line to run actual training:
-    # run_experiment("early_test1", dry_run=False)
+    run_experiment("early_test1", dry_run=False)
 
 if __name__ == "__main__":
     main()
