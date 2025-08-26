@@ -9,6 +9,9 @@ is synthetic and generated on-the-fly. We may train for just one "epoch" but wit
 many synthetic samples per step.
 """
 
+import os
+import multiprocessing as mp
+from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -17,7 +20,14 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping as PLEarlyStopping
 from pytorch_lightning.loggers import WandbLogger
-import os
+
+# Set multiprocessing start method for stability in cluster environments
+if mp.get_start_method(allow_none=True) != 'spawn':
+    try:
+        mp.set_start_method('spawn', force=True)
+    except RuntimeError:
+        # Already set, ignore
+        pass
 import time
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
@@ -333,8 +343,154 @@ class Trainer:
         # Setup device
         if device == 'auto':
             self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        elif device == 'gpu':
+            # Handle 'gpu' specification - use cuda if available
+            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         else:
             self.device = device
+            
+        # Setup precision for Lightning
+        if precision == '16':
+            self.precision = '16-mixed'  # Lightning format
+        else:
+            self.precision = precision
+        
+        # Setup save directory
+        self.save_dir = Path(save_dir)
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize Lightning components
+        self.lightning_module = None
+        self.trainer = None
+        self.logger = None
+        
+        # Training history
+        self.history = {
+            'train_loss': [],
+            'val_loss': [],
+            'lr': []
+        }
+    
+    def _get_safe_num_workers(self) -> int:
+        """
+        Determine safe number of workers based on environment detection.
+        Returns conservative worker count to avoid multiprocessing issues.
+        """
+        if self.num_workers == 0:
+            return 0
+            
+        # Check for problematic environments
+        is_htcondor = os.environ.get('_CONDOR_SLOT') is not None
+        is_slurm = os.environ.get('SLURM_JOB_ID') is not None
+        is_limited_env = any([is_htcondor, is_slurm])
+        
+        if is_limited_env:
+            # Conservative approach for cluster environments
+            max_workers = min(2, self.num_workers)
+            print(f"Detected cluster environment, limiting workers to {max_workers}")
+            return max_workers
+        else:
+            # Use requested workers in normal environments
+            return self.num_workers
+    
+    def _create_safe_dataloader(self, dataset, shuffle=False, drop_last=False, safe_num_workers=None):
+        """
+        Create DataLoader with automatic fallback to fewer workers if multiprocessing fails.
+        """
+        if safe_num_workers is None:
+            safe_num_workers = self._get_safe_num_workers()
+        
+        # Try with requested workers first
+        for num_workers in [safe_num_workers, 1, 0]:
+            try:
+                print(f"Attempting DataLoader with {num_workers} workers...")
+                
+                loader = DataLoader(
+                    dataset,
+                    batch_size=self.batch_size,
+                    shuffle=shuffle,
+                    num_workers=num_workers,
+                    pin_memory=self.device == 'cuda' and num_workers == 0,
+                    persistent_workers=num_workers > 0,
+                    multiprocessing_context='spawn' if num_workers > 0 else None,
+                    prefetch_factor=2 if num_workers > 0 else None,
+                    drop_last=drop_last,
+                    timeout=30 if num_workers > 0 else 0
+                )
+                
+                # Test the loader by getting one batch
+                test_iter = iter(loader)
+                next(test_iter)
+                print(f"✅ DataLoader working with {num_workers} workers")
+                return loader
+                
+            except Exception as e:
+                print(f"❌ DataLoader failed with {num_workers} workers: {e}")
+                if num_workers == 0:
+                    # If even single-threaded fails, something is seriously wrong
+                    raise RuntimeError(f"DataLoader failed even with 0 workers: {e}")
+                continue
+        
+        raise RuntimeError("Could not create a working DataLoader")
+    
+    def _setup_lightning_trainer(self):
+        """
+        Setup PyTorch Lightning trainer with callbacks and logger.
+        """
+        # Setup logger
+        if self.wandb_project:
+            self.logger = WandbLogger(
+                project=self.wandb_project,
+                name=self.experiment_name,
+                save_dir=str(self.save_dir),
+                tags=self.wandb_tags,
+                notes=self.wandb_notes
+            )
+        else:
+            # Use default CSVLogger when no wandb specified
+            self.logger = True  # Lightning default logger
+        
+        # Setup callbacks
+        callbacks = []
+        
+        # Model checkpointing
+        checkpoint_callback = ModelCheckpoint(
+            dirpath=self.save_dir / 'checkpoints',
+            filename='{step}-{train_loss:.4f}',
+            save_top_k=3,
+            monitor='train_loss',
+            mode='min',
+            save_last=True,
+            every_n_train_steps=self.checkpoint_every_n_steps,
+        )
+        callbacks.append(checkpoint_callback)
+        
+        # Early stopping
+        if self.val_dataset and self.early_stopping_patience > 0:
+            early_stop_callback = PLEarlyStopping(
+                monitor='val_loss',
+                patience=self.early_stopping_patience,
+                mode='min',
+                verbose=True,
+            )
+            callbacks.append(early_stop_callback)
+        
+        # Setup trainer
+        self.trainer = pl.Trainer(
+            max_epochs=self.max_epochs,
+            max_steps=self.max_steps,
+            accelerator='gpu' if self.device == 'cuda' else 'cpu',
+            devices=1,
+            precision=self.precision,
+            gradient_clip_val=self.gradient_clip_val,
+            log_every_n_steps=self.log_every_n_steps,
+            callbacks=callbacks,
+            logger=self.logger,
+            default_root_dir=str(self.save_dir),
+            enable_checkpointing=True,
+            enable_progress_bar=True,
+            enable_model_summary=True,
+        )
             
         # Setup precision for Lightning
         if precision == '16':
@@ -437,25 +593,25 @@ class Trainer:
         # Setup trainer
         self._setup_lightning_trainer()
         
-        # Create data loaders
-        train_loader = DataLoader(
-            self.train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-            pin_memory=self.device == 'cuda',
-            persistent_workers=self.num_workers > 0
+        # Smart worker detection for different environments
+        safe_num_workers = self._get_safe_num_workers()
+        print(f"Using {safe_num_workers} workers (requested: {self.num_workers})")
+        
+        # Create data loaders with environment-aware safety and fallback
+        train_loader = self._create_safe_dataloader(
+            self.train_dataset, 
+            shuffle=True, 
+            drop_last=True,
+            safe_num_workers=safe_num_workers
         )
         
         val_loader = None
         if self.val_dataset:
-            val_loader = DataLoader(
+            val_loader = self._create_safe_dataloader(
                 self.val_dataset,
-                batch_size=self.batch_size,
                 shuffle=False,
-                num_workers=self.num_workers,
-                pin_memory=self.device == 'cuda',
-                persistent_workers=self.num_workers > 0
+                drop_last=False,
+                safe_num_workers=safe_num_workers
             )
         
         # Train the model
@@ -499,7 +655,10 @@ class Trainer:
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=self.device == 'cuda'
+            pin_memory=self.device == 'cuda',
+            persistent_workers=self.num_workers > 0,
+            multiprocessing_context='spawn' if self.num_workers > 0 else None,
+            prefetch_factor=2 if self.num_workers > 0 else None
         )
         
         # Run evaluation
@@ -542,8 +701,12 @@ class Trainer:
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=self.device == 'cuda'
+            pin_memory=self.device == 'cuda',
+            persistent_workers=self.num_workers > 0,
+            multiprocessing_context='spawn' if self.num_workers > 0 else None,
+            prefetch_factor=2 if self.num_workers > 0 else None
         )
+    
         
         # Run prediction
         if self.trainer is None:

@@ -45,9 +45,9 @@ scm_config:
   mlp_nonlins:
     value: "tabicl"  # Use TabICL activation functions
   mlp_num_hidden_layers:
-    value: 1  # Fixed single hidden layer (instead of 0-2 distribution) for simplicity
+    value: 0  # Fixed single hidden layer (instead of 0-2 distribution) for simplicity
   mlp_hidden_dim:
-    value: 32  # Fixed medium size (from choices [8,16,32,64])
+    value: 8  # Fixed medium size (from choices [8,16,32,64])
   mlp_activation_mode:
     value: "pre"  # Apply activations before adding noise
   mlp_node_shape:
@@ -105,7 +105,7 @@ scm_config:
 # Controls how synthetic datasets are created from the SCMs
 dataset_config:
   dataset_size:
-    value: 100  # Very small meta-dataset (vs default 100M) for quick testing
+    value: 100000  # size of meta-dataset
   max_number_samples:
     value: 1000  # Maximum samples per individual dataset (keep default)
   max_number_features:
@@ -179,7 +179,7 @@ training_config:
   batch_size:
     value: 4   # Small batch size for memory efficiency (vs debug's 8)
   num_workers:
-    value: 0   # No multiprocessing for simplicity and debugging
+    value: 2   # Use 2 workers with spawn context for stability in HTCondor
     
   # Training Control
   # ----------------
@@ -191,7 +191,7 @@ training_config:
   # Hardware Configuration
   # ----------------------
   device:
-    value: "cpu"  # CPU training for initial testing (vs debug's "cpu")
+    value: "gpu"  # gpu vs cpu
   precision:
     value: "32"   # Full precision for numerical stability (vs debug's "32")
     
