@@ -1,0 +1,234 @@
+# ===============================================================================
+# Early Test 1 Configuration - First Pipeline Test
+# ===============================================================================
+# This configuration serves as the initial end-to-end test of the SimplePFN
+# training pipeline. It uses minimal settings based on default configurations
+# to ensure quick execution while testing all components.
+#
+# Based on:
+# - default_sampling_config (SCM generation)
+# - default_dataset_config & default_preprocessing_config (data processing)  
+# - small_simplepfn_config (model architecture)
+# - debug_config (training parameters)
+# ===============================================================================
+
+experiment_name: "early_test1"
+description: "First pipeline test - debug scale with fixed seeds for reproducibility"
+
+# ===============================================================================
+# SCM Configuration (Structural Causal Model Generation)
+# ===============================================================================
+# Based on default_sampling_config from priors/causal_prior/ExampleConfigs/Basic_Configs.py
+# Generates synthetic causal graphs and mechanisms for the datasets
+scm_config:
+  # Graph Structure Parameters
+  # -------------------------
+  num_nodes:
+    distribution: "discrete_uniform"
+    distribution_parameters: {low: 3, high: 8}
+  graph_edge_prob:
+    distribution: "beta"
+    distribution_parameters: {alpha: 2, beta: 3}
+  graph_seed:
+    distribution: "discrete_uniform"
+    distribution_parameters: {low: 0, high: 100000000}
+  
+  # Mechanism Type Selection
+  # ------------------------
+  xgboost_prob:
+    distribution: "uniform"
+    distribution_parameters: {low: 0.0, high: 0.3}
+  mechanism_seed:
+    distribution: "discrete_uniform"
+    distribution_parameters: {low: 0, high: 100000000}
+    
+  # MLP Mechanism Hyperparameters
+  # ------------------------------
+  mlp_nonlins:
+    value: "tabicl"
+  mlp_num_hidden_layers:
+    distribution: "discrete_uniform"
+    distribution_parameters: {low: 0, high: 2}
+  mlp_hidden_dim:
+    distribution: "categorical"
+    distribution_parameters: {choices: [8, 16, 32, 64]}
+  mlp_activation_mode:
+    value: "pre"
+  mlp_node_shape:
+    value: [1]
+    
+  # XGBoost Mechanism Hyperparameters
+  # ----------------------------------
+  xgb_num_hidden_layers:
+    value: 0
+  xgb_hidden_dim:
+    distribution: "categorical"
+    distribution_parameters: {choices: [0, 16, 32, 64]}
+  xgb_activation_mode:
+    distribution: "categorical"
+    distribution_parameters: {choices: ["pre", "post"]}
+  xgb_node_shape:
+    value: [1]
+  xgb_n_training_samples:
+    distribution: "discrete_uniform"
+    distribution_parameters: {low: 100, high: 500}
+  xgb_add_noise:
+    value: false
+    
+  # Noise Distribution Parameters
+  # -----------------------------
+  random_additive_std:
+    value: true
+  exo_std_distribution:
+    distribution: "categorical"
+    distribution_parameters: {choices: ["gamma", "pareto"], probabilities: [1.0, 0.0]}
+  endo_std_distribution:
+    distribution: "categorical"
+    distribution_parameters: {choices: ["gamma", "pareto"], probabilities: [1.0, 0.0]}
+    
+  # Random Standard Deviation Parameters
+  exo_std_mean:
+    distribution: "lognormal"
+    distribution_parameters: {mean: 0.0, std: 0.5}
+  exo_std_std:
+    distribution: "uniform"
+    distribution_parameters: {low: 0.3, high: 1.0}
+  endo_std_mean:
+    distribution: "lognormal"
+    distribution_parameters: {mean: -1.0, std: 0.3}
+  endo_std_std:
+    distribution: "uniform"
+    distribution_parameters: {low: 0.1, high: 0.5}
+    
+  # SCM Implementation Settings
+  # ---------------------------
+  scm_fast:
+    value: true
+  use_exogenous_mechanisms:
+    value: true
+  mechanism_generator_seed:
+    distribution: "discrete_uniform"
+    distribution_parameters: {low: 0, high: 100000000}
+
+# ===============================================================================
+# Dataset Configuration (Data Generation)
+# ===============================================================================
+# Based on default_dataset_config from priordata_processing/ExampleConfigs/BasicConfigs.py
+# Controls how synthetic datasets are created from the SCMs
+dataset_config:
+  dataset_size:
+    value: 100000  # size of meta-dataset
+  max_number_samples:
+    value: 100  # Maximum samples per individual dataset (keep default)
+  max_number_features:
+    value: 10  # Much smaller feature space (vs default 101) for faster processing
+  number_samples_per_dataset:
+    # Distribution over actual samples per dataset (within max_number_samples)
+    distribution: "uniform"
+    distribution_parameters: {low: 50, high: 99}  # Smaller range for testing
+  seed:
+    distribution: "discrete_uniform"
+    distribution_parameters: {low: 0, high: 100000000}
+
+# ===============================================================================
+# Preprocessing Configuration (Data Processing)
+# ===============================================================================
+# Based on default_preprocessing_config from priordata_processing/ExampleConfigs/BasicConfigs.py
+# Controls how raw datasets are transformed for model input
+preprocessing_config:
+  train_fraction:
+    value: 0.7  # 70% training, 30% test (vs default 50-50)
+  dropout_prob:
+    value: 0.1  # Feature dropout probability for regularization
+  transformation_type:
+    value: "standardize"  # Normalization method (vs "yeo_johnson")
+  shuffle_data:
+    value: true  # Shuffle samples and features
+  target_feature:
+    value: null  # Randomly select target feature (vs fixed selection)
+  random_seed:
+    distribution: "discrete_uniform"
+    distribution_parameters: {low: 0, high: 100000000}
+
+# ===============================================================================
+# Model Configuration (SimplePFN Architecture)
+# ===============================================================================
+# Based on small_simplepfn_config from models/ExampleConfigs/SimplePFN_Configs.py
+# Defines the transformer architecture for in-context learning
+model_config:
+  # Core Architecture Parameters
+  # ----------------------------
+  d_model: 8      # Embedding dimension (smaller than small config's 128 for speed)
+  depth: 1       # Number of transformer blocks (vs small config's 4 for speed)
+  heads_feat: 2    # Attention heads for feature-wise attention (within rows)
+  heads_samp: 2    # Attention heads for sample-wise attention (within columns)
+  dropout: 0.1     # Dropout probability for regularization
+  
+  # Critical Parameter (automatically calculated)
+  # ---------------------------------------------
+  num_features: 9  # MUST be max_number_features - 1 (10-1=9)
+                   # One feature becomes the target, leaving 9 input features
+
+# ===============================================================================
+# Training Configuration (PyTorch Lightning Setup)
+# ===============================================================================
+# Based on debug_config from training/configs.py
+# Controls the training process, logging, and hardware utilization
+training_config:
+  # Core Training Parameters
+  # ------------------------
+  learning_rate:
+    value: 0.001  # Adam learning rate (from debug_config)
+  weight_decay:
+    value: 0.0001  # L2 regularization weight (from debug_config)
+  max_steps:
+    value: 10  # Very short training for early testing (vs debug's 100)
+  max_epochs:
+    value: 1   # Single epoch (standard for synthetic data)
+  eta_min:
+    value: 0.000001  # Minimum learning rate for scheduler
+    
+  # Data Loading Parameters
+  # -----------------------
+  batch_size:
+    value: 2   # Reduce memory pressure for multiprocessing segfault testing
+  num_workers:
+    value: 4   # Use 4 workers (half of requested CPUs) for stable multiprocessing
+    
+  # Training Control
+  # ----------------
+  early_stopping_patience:
+    value: 0   # Disable early stopping (no validation setup needed)
+  gradient_clip_val:
+    value: 1.0  # Gradient clipping for training stability
+    
+  # Hardware Configuration
+  # ----------------------
+  device:
+    value: "cpu"  # Use CPU since we're not requesting GPUs in Condor
+  precision:
+    value: "32"   # Full precision for numerical stability (vs debug's "32")
+    
+  # Experiment Organization
+  # -----------------------
+  experiment_name:
+    value: "early_test2"  # Matches top-level experiment name
+  save_dir:
+    value: "./experiments/FirstTests/logs/early_test2"  # Organized logging structure
+  log_every_n_steps:
+    value: 5   # Frequent logging for debugging (from debug_config)
+    
+  # Model Checkpointing
+  # -------------------
+  checkpoint_every_n_steps:
+    value: 25  # Save model every 25 steps (from debug_config)
+    
+  # Weights & Biases Integration
+  # ----------------------------
+  wandb_project:
+    value: null  # Disable W&B for early testing (vs debug's "simplepfn-debug")
+  wandb_tags:
+    value: ["early_test", "debug", "first_run"]  # Tags for experiment tracking
+  wandb_notes:
+    value: "First end-to-end pipeline test with minimal configuration"
+
