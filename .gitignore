@@ -6,4 +6,7 @@ src/CausalPriorFitting.egg-info/top_level.txt
 # all .pyc files
 *.pyc
 
+*.err
+*.log
+*.out
 __pycache__
