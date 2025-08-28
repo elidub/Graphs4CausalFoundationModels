@@ -26,7 +26,7 @@ from priordata_processing.Datasets.MakePurelyObservationalDataset import MakePur
 from models.SimplePFN import SimplePFNRegressor
 
 # Default config path
-DEFAULT_CONFIG_PATH = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/configs/early_test2.yaml"
+DEFAULT_CONFIG_PATH = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/configs/early_test.yaml"
 
 
 class SimplePFNTrainer:
