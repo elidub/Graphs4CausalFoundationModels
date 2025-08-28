@@ -4,14 +4,17 @@ output     = logs/simple_pfn_$(ClusterId).$(ProcId).out
 error      = logs/simple_pfn_$(ClusterId).$(ProcId).err
 log        = logs/simple_pfn_$(ClusterId).$(ProcId).log
 
-transfer_input_files = ../../src, ../../pyproject.toml, ../../requirements.txt, ../../setup.py, ../../../venv.zip, run_simple.sh
+transfer_input_files = ../../src, ../../pyproject.toml, ../../requirements.txt, ../../setup.py, ../../../venv.zip, run_simple.sh, configs/early_test.yaml
 should_transfer_files = Yes
 when_to_transfer_output = ON_EXIT
 
-request_gpus = 1
-request_cpus = 32
+request_gpus   = 1
 request_memory = 64GB
-request_disk = 15GB
+request_cpus   = 40
+request_disk   = 32GB
+
+requirements = (CUDAGlobalMemoryMb >= 40000)
+
 
 # Force HTCondor to use RSS (resident set size) instead of virtual memory
 #environment = "CONDOR_MEMORY_LIMIT_TYPE=RSS"
