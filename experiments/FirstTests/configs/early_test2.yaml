@@ -31,7 +31,7 @@ scm_config:
     distribution_parameters: {alpha: 2, beta: 3}
   graph_seed:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 0, high: 100000000}
+    distribution_parameters: {low: 0, high: 100000}
   
   # Mechanism Type Selection
   # ------------------------
@@ -40,7 +40,7 @@ scm_config:
     distribution_parameters: {low: 0.0, high: 0.3}
   mechanism_seed:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 0, high: 100000000}
+    distribution_parameters: {low: 0, high: 100000}
     
   # MLP Mechanism Hyperparameters
   # ------------------------------
@@ -48,10 +48,10 @@ scm_config:
     value: "tabicl"
   mlp_num_hidden_layers:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 0, high: 2}
+    distribution_parameters: {low: 0, high: 1}
   mlp_hidden_dim:
     distribution: "categorical"
-    distribution_parameters: {choices: [8, 16, 32, 64]}
+    distribution_parameters: {choices: [8,8]}
   mlp_activation_mode:
     value: "pre"
   mlp_node_shape:
@@ -108,7 +108,7 @@ scm_config:
     value: true
   mechanism_generator_seed:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 0, high: 100000000}
+    distribution_parameters: {low: 0, high: 100000}
 
 # ===============================================================================
 # Dataset Configuration (Data Generation)
@@ -128,7 +128,7 @@ dataset_config:
     distribution_parameters: {low: 50, high: 99}  # Smaller range for testing
   seed:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 0, high: 100000000}
+    distribution_parameters: {low: 0, high: 100000}
 
 # ===============================================================================
 # Preprocessing Configuration (Data Processing)
@@ -148,7 +148,7 @@ preprocessing_config:
     value: null  # Randomly select target feature (vs fixed selection)
   random_seed:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 0, high: 100000000}
+    distribution_parameters: {low: 0, high: 100000}
 
 # ===============================================================================
 # Model Configuration (SimplePFN Architecture)
@@ -158,10 +158,10 @@ preprocessing_config:
 model_config:
   # Core Architecture Parameters
   # ----------------------------
-  d_model: 8      # Embedding dimension (smaller than small config's 128 for speed)
-  depth: 1       # Number of transformer blocks (vs small config's 4 for speed)
-  heads_feat: 2    # Attention heads for feature-wise attention (within rows)
-  heads_samp: 2    # Attention heads for sample-wise attention (within columns)
+  d_model: 64      # Moderately sized embedding dimension
+  depth: 3         # Number of transformer blocks
+  heads_feat: 4    # Attention heads for feature-wise attention
+  heads_samp: 4    # Attention heads for sample-wise attention
   dropout: 0.1     # Dropout probability for regularization
   
   # Critical Parameter (automatically calculated)
@@ -182,7 +182,7 @@ training_config:
   weight_decay:
     value: 0.0001  # L2 regularization weight (from debug_config)
   max_steps:
-    value: 10  # Very short training for early testing (vs debug's 100)
+    value: 100  # Very short training for early testing (vs debug's 100)
   max_epochs:
     value: 1   # Single epoch (standard for synthetic data)
   eta_min:
@@ -191,9 +191,9 @@ training_config:
   # Data Loading Parameters
   # -----------------------
   batch_size:
-    value: 2   # Reduce memory pressure for multiprocessing segfault testing
+    value: 128   # Reduce memory pressure for multiprocessing segfault testing
   num_workers:
-    value: 4   # Use 4 workers (half of requested CPUs) for stable multiprocessing
+    value: 32  # Match the number of requested CPUs
     
   # Training Control
   # ----------------
@@ -205,7 +205,7 @@ training_config:
   # Hardware Configuration
   # ----------------------
   device:
-    value: "cpu"  # Use CPU since we're not requesting GPUs in Condor
+    value: "cuda"  # Use CPU since we're not requesting GPUs in Condor
   precision:
     value: "32"   # Full precision for numerical stability (vs debug's "32")
     

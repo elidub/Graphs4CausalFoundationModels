@@ -34,8 +34,7 @@ scm_config:
   # ------------------------
   xgboost_prob:
     # Probability of using XGBoost mechanisms vs MLP mechanisms
-    distribution: "uniform"
-    distribution_parameters: {low: 0.0, high: 0.3}
+    value: 1
   mechanism_seed:
     value: 123  # Fixed seed for reproducible mechanism assignment
     
@@ -144,10 +143,10 @@ preprocessing_config:
 model_config:
   # Core Architecture Parameters
   # ----------------------------
-  d_model: 64      # Embedding dimension (smaller than small config's 128 for speed)
-  depth: 2         # Number of transformer blocks (vs small config's 4 for speed)
-  heads_feat: 4    # Attention heads for feature-wise attention (within rows)
-  heads_samp: 4    # Attention heads for sample-wise attention (within columns)
+  d_model: 8      # Embedding dimension (smaller than small config's 128 for speed)
+  depth: 1       # Number of transformer blocks (vs small config's 4 for speed)
+  heads_feat: 2    # Attention heads for feature-wise attention (within rows)
+  heads_samp: 2    # Attention heads for sample-wise attention (within columns)
   dropout: 0.1     # Dropout probability for regularization
   
   # Critical Parameter (automatically calculated)
@@ -168,7 +167,7 @@ training_config:
   weight_decay:
     value: 0.0001  # L2 regularization weight (from debug_config)
   max_steps:
-    value: 50  # Very short training for early testing (vs debug's 100)
+    value: 10  # Very short training for early testing (vs debug's 100)
   max_epochs:
     value: 1   # Single epoch (standard for synthetic data)
   eta_min:
@@ -177,9 +176,9 @@ training_config:
   # Data Loading Parameters
   # -----------------------
   batch_size:
-    value: 4   # Small batch size for memory efficiency (vs debug's 8)
+    value: 2   # Reduce memory pressure for multiprocessing segfault testing
   num_workers:
-    value: 2   # Use 2 workers with spawn context for stability in HTCondor
+    value: 4   # Use 4 workers (half of requested CPUs) for stable multiprocessing
     
   # Training Control
   # ----------------
@@ -191,7 +190,7 @@ training_config:
   # Hardware Configuration
   # ----------------------
   device:
-    value: "gpu"  # gpu vs cpu
+    value: "cpu"  # Use CPU since we're not requesting GPUs in Condor
   precision:
     value: "32"   # Full precision for numerical stability (vs debug's "32")
     

@@ -1,0 +1,23 @@
+universe   = vanilla
+executable = test_dataloader.sh
+output     = logs/dataloader_default_$(ClusterId).$(ProcId).out
+error      = logs/dataloader_default_$(ClusterId).$(ProcId).err
+log        = logs/dataloader_default_$(ClusterId).$(ProcId).log
+
+transfer_input_files = ../../src, ../../pyproject.toml, ../../requirements.txt, ../../setup.py, ../../../venv.zip, test_dataloader.sh
+should_transfer_files = Yes
+when_to_transfer_output = ON_EXIT
+
+request_gpus = 0
+request_cpus = 2
+request_memory = 16GB
+request_disk = 10GB
+
+# Force HTCondor to use RSS (resident set size) instead of virtual memory
+environment = "CONDOR_MEMORY_LIMIT_TYPE=RSS"
+
+# Add job monitoring - for dataloader testing with default configs
+periodic_hold = (ResidentSetSize > (16 * 1024 * 1024))
+periodic_hold_reason = "Job exceeded 16GB RSS memory limit"
+
+queue

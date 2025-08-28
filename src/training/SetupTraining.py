@@ -231,7 +231,7 @@ class SetupTraining:
         if self.trainer is None:
             raise RuntimeError("Trainer not initialized. Run training first.")
         
-        print("\n📊 Evaluating model...")
+        print("\n Evaluating model...")
         metrics = self.trainer.evaluate(dataset=dataset)
         
         print("Evaluation results:")
@@ -253,7 +253,7 @@ class SetupTraining:
         if self.trainer is None:
             raise RuntimeError("Trainer not initialized. Run training first.")
         
-        print("\n🔮 Generating predictions...")
+        print("\n Generating predictions...")
         predictions = self.trainer.predict(dataset)
         print(f"[OK] Generated {len(predictions)} predictions")
         

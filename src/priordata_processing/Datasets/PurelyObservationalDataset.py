@@ -59,4 +59,9 @@ class PurelyObservationalDataset(Dataset):
 
         data, metadata = self.priodata_processor.process(dataset)
 
-        return data
+        X_train = data['X_train'].cpu().numpy()
+        y_train = data['Y_train'].cpu().numpy()
+        X_test = data['X_test'].cpu().numpy()
+        y_test = data['Y_test'].cpu().numpy()
+
+        return X_train, y_train, X_test, y_test

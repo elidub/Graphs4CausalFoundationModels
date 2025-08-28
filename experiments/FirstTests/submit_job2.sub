@@ -1,0 +1,30 @@
+universe   = vanilla
+executable = run_test2.sh
+output     = logs/test_job_$(ClusterId).$(ProcId).out
+error      = logs/test_job_$(ClusterId).$(ProcId).err
+log        = logs/test_job_$(ClusterId).$(ProcId).log
+
+transfer_input_files = ../../src, ../../pyproject.toml, ../../requirements.txt, ../../setup.py, ../../../venv.zip, run_test.sh, configs/, ../../experiments/FirstTests/configs/early_test2.yaml
+should_transfer_files = Yes
+when_to_transfer_output = ON_EXIT
+
+request_cpus = 4
+request_memory = 32GB
+request_disk = 16GB
+request_gpus = 0
+
+
+# Force HTCondor to use RSS (resident set size) instead of virtual memory
+# Add debugging for memory tracking
+#environment = "CONDOR_MEMORY_LIMIT_TYPE=RSS _CONDOR_MEMORY_DEBUG=1"
+
+# Add job monitoring
+#periodic_hold = (ResidentSetSize > (64 * 1024 * 1024))
+
+#periodic_hold_reason = "Job exceeded 64GB RSS memory limit"
+
++JobDescription = "test training"
+
+arguments = early_test2.yaml
+
+queue

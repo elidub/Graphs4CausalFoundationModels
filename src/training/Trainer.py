@@ -1,12 +1,5 @@
 """
 Core training implementation for SimplePFN models using PyTorch Lightning.
-
-This module contains the low-level Trainer class that handles the actual training loop.
-It takes explicit parameters like model, datasets, and hyperparameters directly.
-
-Note: For PFN training, we focus on training steps rather than epochs since all data 
-is synthetic and generated on-the-fly. We may train for just one "epoch" but with 
-many synthetic samples per step.
 """
 
 import os
@@ -21,13 +14,32 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping as PLEarlyStopping
 from pytorch_lightning.loggers import WandbLogger
 
-# Set multiprocessing start method for stability in cluster environments
-if mp.get_start_method(allow_none=True) != 'spawn':
+# Set multiprocessing sharing strategy for cluster compatibility
+os.environ.setdefault('TORCH_MULTIPROCESSING_SHARING_STRATEGY', 'file_system')
+try:
+    torch.multiprocessing.set_sharing_strategy('file_system')
+except Exception:
+    pass
+
+
+def _worker_init_fn(worker_id):
+    """Initialize DataLoader workers with basic environment setup."""
     try:
-        mp.set_start_method('spawn', force=True)
-    except RuntimeError:
-        # Already set, ignore
+        import os
+        import numpy as np
+        
+        # Basic thread limiting
+        os.environ['OMP_NUM_THREADS'] = '1'
+        os.environ['MKL_NUM_THREADS'] = '1'
+        
+        # Set random seed
+        torch.manual_seed(torch.initial_seed() + worker_id)
+        np.random.seed(torch.initial_seed() % (2**32 - 1) + worker_id)
+        
+    except Exception:
         pass
+
+
 import time
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
@@ -370,68 +382,85 @@ class Trainer:
             'val_loss': [],
             'lr': []
         }
+        
+        # Track DataLoaders for cleanup
+        self._active_dataloaders = []
+    
+    def __del__(self):
+        """Ensure proper cleanup when Trainer is destroyed."""
+        self.cleanup()
+    
+    def cleanup(self):
+        """
+        Properly clean up DataLoaders and resources to prevent multiprocessing errors.
+        """
+        # Clean up any active DataLoaders
+        for loader in self._active_dataloaders:
+            try:
+                if hasattr(loader, '_iterator') and loader._iterator is not None:
+                    if hasattr(loader._iterator, '_shutdown_workers'):
+                        loader._iterator._shutdown_workers()
+                    del loader._iterator
+            except Exception:
+                pass  # Ignore cleanup errors
+        
+        self._active_dataloaders.clear()
+        
+        # Clean up Lightning components
+        if self.trainer is not None:
+            try:
+                # Ensure all processes are properly terminated
+                if hasattr(self.trainer, 'strategy') and hasattr(self.trainer.strategy, 'teardown'):
+                    self.trainer.strategy.teardown()
+            except Exception:
+                pass
+    
+    def _register_dataloader(self, loader):
+        """Register a DataLoader for cleanup tracking."""
+        self._active_dataloaders.append(loader)
+        return loader
     
     def _get_safe_num_workers(self) -> int:
-        """
-        Determine safe number of workers based on environment detection.
-        Returns conservative worker count to avoid multiprocessing issues.
-        """
+        """Determine safe number of workers based on environment."""
         if self.num_workers == 0:
             return 0
             
-        # Check for problematic environments
-        is_htcondor = os.environ.get('_CONDOR_SLOT') is not None
-        is_slurm = os.environ.get('SLURM_JOB_ID') is not None
-        is_limited_env = any([is_htcondor, is_slurm])
-        
-        if is_limited_env:
-            # Conservative approach for cluster environments
-            max_workers = min(2, self.num_workers)
-            print(f"Detected cluster environment, limiting workers to {max_workers}")
-            return max_workers
-        else:
-            # Use requested workers in normal environments
-            return self.num_workers
+        # Use the requested number of workers - let the user decide
+        return self.num_workers
     
     def _create_safe_dataloader(self, dataset, shuffle=False, drop_last=False, safe_num_workers=None):
-        """
-        Create DataLoader with automatic fallback to fewer workers if multiprocessing fails.
-        """
+        """Create DataLoader with simple fallback to fewer workers if needed."""
         if safe_num_workers is None:
             safe_num_workers = self._get_safe_num_workers()
         
-        # Try with requested workers first
-        for num_workers in [safe_num_workers, 1, 0]:
+        # Try with workers, fallback to single-threaded if it fails
+        for num_workers in [safe_num_workers, 0]:
             try:
-                print(f"Attempting DataLoader with {num_workers} workers...")
-                
                 loader = DataLoader(
                     dataset,
                     batch_size=self.batch_size,
                     shuffle=shuffle,
                     num_workers=num_workers,
-                    pin_memory=self.device == 'cuda' and num_workers == 0,
+                    pin_memory=False,
                     persistent_workers=num_workers > 0,
-                    multiprocessing_context='spawn' if num_workers > 0 else None,
-                    prefetch_factor=2 if num_workers > 0 else None,
+                    worker_init_fn=_worker_init_fn if num_workers > 0 else None,
                     drop_last=drop_last,
-                    timeout=30 if num_workers > 0 else 0
+                    timeout=30 if num_workers > 0 else 0,
                 )
                 
-                # Test the loader by getting one batch
+                # Test the loader
                 test_iter = iter(loader)
                 next(test_iter)
-                print(f"✅ DataLoader working with {num_workers} workers")
-                return loader
+                del test_iter
+                
+                return self._register_dataloader(loader)
                 
             except Exception as e:
-                print(f"❌ DataLoader failed with {num_workers} workers: {e}")
                 if num_workers == 0:
-                    # If even single-threaded fails, something is seriously wrong
-                    raise RuntimeError(f"DataLoader failed even with 0 workers: {e}")
+                    raise RuntimeError(f"DataLoader failed even with single-threaded mode: {e}")
                 continue
         
-        raise RuntimeError("Could not create a working DataLoader")
+        raise RuntimeError("DataLoader creation failed")
     
     def _setup_lightning_trainer(self):
         """
@@ -634,6 +663,10 @@ class Trainer:
                     self.history[key].append(float(value))
         
         print("Training completed!")
+        
+        # Clean up DataLoaders to prevent multiprocessing errors
+        self.cleanup()
+        
         return self.model
     
     def evaluate(self, dataset: torch.utils.data.Dataset) -> Dict[str, float]:
@@ -649,17 +682,18 @@ class Trainer:
         if self.lightning_module is None:
             raise RuntimeError("Model must be trained first. Call fit() before evaluate().")
         
-        # Create data loader
-        eval_loader = DataLoader(
+        # Create data loader with proper multiprocessing context
+        spawn_context = mp.get_context('spawn') if self.num_workers > 0 else None
+        eval_loader = self._register_dataloader(DataLoader(
             dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=self.device == 'cuda',
+            pin_memory=(self.device == 'cuda') and (self.num_workers > 0),
             persistent_workers=self.num_workers > 0,
-            multiprocessing_context='spawn' if self.num_workers > 0 else None,
-            prefetch_factor=2 if self.num_workers > 0 else None
-        )
+            multiprocessing_context=spawn_context,
+            worker_init_fn=_worker_init_fn if self.num_workers > 0 else None,
+        ))
         
         # Run evaluation
         if self.trainer is None:
@@ -695,17 +729,18 @@ class Trainer:
         if self.lightning_module is None:
             raise RuntimeError("Model must be trained first. Call fit() before predict().")
         
-        # Create data loader
-        pred_loader = DataLoader(
+        # Create data loader with proper multiprocessing context
+        spawn_context = mp.get_context('spawn') if self.num_workers > 0 else None
+        pred_loader = self._register_dataloader(DataLoader(
             dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=self.device == 'cuda',
+            pin_memory=(self.device == 'cuda') and (self.num_workers > 0),
             persistent_workers=self.num_workers > 0,
-            multiprocessing_context='spawn' if self.num_workers > 0 else None,
-            prefetch_factor=2 if self.num_workers > 0 else None
-        )
+            multiprocessing_context=spawn_context,
+            worker_init_fn=_worker_init_fn if self.num_workers > 0 else None,
+        ))
     
         
         # Run prediction

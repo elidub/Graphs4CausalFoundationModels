@@ -487,10 +487,10 @@ if __name__ == "__main__":
         print(f"✓ Metadata keys: {len(metadata)} keys")
         
         print("\n" + "="*60)
-        print("🎉 Rigorous MakePurelyObservationalDataset works correctly!")
+        print("Rigorous MakePurelyObservationalDataset works correctly!")
         print("="*60)
         
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         import traceback
         traceback.print_exc()

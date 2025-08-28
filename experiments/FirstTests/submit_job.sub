@@ -1,6 +1,5 @@
 universe   = vanilla
 executable = run_test.sh
-arguments  = 
 output     = logs/test_job_$(ClusterId).$(ProcId).out
 error      = logs/test_job_$(ClusterId).$(ProcId).err
 log        = logs/test_job_$(ClusterId).$(ProcId).log
@@ -9,16 +8,17 @@ transfer_input_files = ../../src, ../../pyproject.toml, ../../requirements.txt, 
 should_transfer_files = Yes
 when_to_transfer_output = ON_EXIT
 
-# Request GPU
-request_gpus = 1
-
-# Match only nodes with V100s (optional but precise)
-#requirements = (CUDADeviceName == "NVIDIA H100 80GB HBM3")
-
+request_gpus = 0
 request_cpus = 4
-request_memory = 64GB
+request_memory = 128GB
 request_disk = 20GB
 
-# Optional: bid
-# condor_submit_bid 10000 job.sub
+# Force HTCondor to use RSS (resident set size) instead of virtual memory
+# Add debugging for memory tracking
+environment = "CONDOR_MEMORY_LIMIT_TYPE=RSS _CONDOR_MEMORY_DEBUG=1"
+
+# Add job monitoring
+periodic_hold = (ResidentSetSize > (64 * 1024 * 1024))
+periodic_hold_reason = "Job exceeded 64GB RSS memory limit"
+
 queue
