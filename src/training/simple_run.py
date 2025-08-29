@@ -25,6 +25,14 @@ from models.SimplePFN import SimplePFNRegressor
 from simplepfn_trainer import SimplePFNTrainer
 from training_utils import load_yaml_config, extract_config_values, get_device, determine_input_size
 
+# Weights & Biases for experiment tracking
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+    print("WARNING: wandb not available - experiment tracking disabled")
+
 
 def main():
     """Main entry point for SimplePFN training with YAML config."""
@@ -53,6 +61,60 @@ def main():
         preprocessing_config = config.get('preprocessing_config', {})
         model_config = extract_config_values(config.get('model_config', {}))
         training_config = extract_config_values(config.get('training_config', {}))
+        
+        # Extract wandb config directly from training_config
+        wandb_config = extract_config_values({
+            k: v for k, v in config.get('training_config', {}).items() 
+            if k.startswith('wandb_')
+        })
+        
+        # Debug: Print wandb config
+        print(f"\nDEBUG WANDB CONFIG:")
+        for key, value in wandb_config.items():
+            print(f"   {key}: {value}")
+        
+        # Initialize Weights & Biases if enabled
+        wandb_run = None
+        if WANDB_AVAILABLE and wandb_config.get('wandb_project'):
+            print(f"\nINITIALIZING WEIGHTS & BIASES:")
+            print(f"   Project: {wandb_config.get('wandb_project')}")
+            print(f"   Offline mode: {wandb_config.get('wandb_offline', False)}")
+            
+            # Check for API key
+            import os
+            if 'WANDB_API_KEY' in os.environ:
+                print(f"   API key: Found ({'***' + os.environ['WANDB_API_KEY'][-4:]})")
+            else:
+                print(f"   API key: Not found in environment")
+            
+            try:
+                wandb_run = wandb.init(
+                    project=wandb_config.get('wandb_project'),
+                    name=wandb_config.get('wandb_run_name', config.get('experiment_name')),
+                    tags=wandb_config.get('wandb_tags', []),
+                    notes=wandb_config.get('wandb_notes', ''),
+                    mode='offline' if wandb_config.get('wandb_offline', False) else 'online',
+                    config={
+                        'experiment_name': config.get('experiment_name'),
+                        'description': config.get('description'),
+                        **model_config,
+                        **training_config,
+                        'scm_config': scm_config,
+                        'dataset_config': dataset_config,
+                        'preprocessing_config': preprocessing_config
+                    }
+                )
+                print(f"   Wandb initialized successfully!")
+                print(f"   Run URL: {wandb_run.get_url()}")
+            except Exception as e:
+                print(f"   Wandb initialization failed: {e}")
+                wandb_run = None
+        else:
+            print(f"\nWANDB DISABLED:")
+            if not WANDB_AVAILABLE:
+                print("   Reason: wandb not installed")
+            else:
+                print("   Reason: wandb_project not set in config")
 
         print(f"\nEXPERIMENT INFO:")
         print(f"   Name: {config.get('experiment_name', 'unnamed')}")
@@ -139,10 +201,12 @@ def main():
             dataloader=dataloader,
             learning_rate=training_config.get("learning_rate", 1e-3),
             max_steps=training_config.get("max_steps", 10),
-            device=device
+            device=device,
+            wandb_run=wandb_run  # Pass wandb run for logging
         )
         print(f"   Learning rate: {training_config.get('learning_rate', 1e-3)}")
         print(f"   Max steps: {training_config.get('max_steps', 10)}")
+        print(f"   Wandb logging: {'enabled' if wandb_run else 'disabled'}")
         print(f"   Trainer initialized")
         
         # Start training
@@ -154,6 +218,12 @@ def main():
         print("SimplePFN Training Complete!")
         print("   Training completed successfully!")
         print("=" * 60)
+        
+        # Finish wandb run
+        if wandb_run:
+            wandb.finish()
+            print("   Wandb run finished successfully!")
+            
         return trained_model
         
     except Exception as e:
@@ -166,6 +236,12 @@ def main():
         import traceback
         traceback.print_exc()
         print("=" * 60)
+        
+        # Clean up wandb on failure
+        if 'wandb_run' in locals() and wandb_run:
+            wandb.finish(exit_code=1)
+            print("   Wandb run terminated due to error")
+            
         return None
 
 

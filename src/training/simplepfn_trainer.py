@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import time
 from torch.utils.data import DataLoader
+from typing import Optional
 
 
 class SimplePFNTrainer:
@@ -18,13 +19,15 @@ class SimplePFNTrainer:
         dataloader: DataLoader,
         learning_rate: float = 1e-3,
         max_steps: int = 1000,
-        device: str = "cpu"
+        device: str = "cpu",
+        wandb_run: Optional[object] = None
     ):
         self.model = model
         self.dataloader = dataloader
         self.learning_rate = learning_rate
         self.max_steps = max_steps
         self.device = device
+        self.wandb_run = wandb_run
         
         # Move model to device
         self.model = self.model.to(device)
@@ -125,9 +128,19 @@ class SimplePFNTrainer:
             batch_time = batch_end_time - batch_start_time
             batch_times.append(batch_time)
             
+            # Log to Weights & Biases
+            if self.wandb_run:
+                self.wandb_run.log({
+                    'train/loss': loss.item(),
+                    'train/step_time': batch_time,
+                    'train/batch_size': X_train.shape[0],
+                    'train/global_step': self.global_step
+                }, step=self.global_step)
+            
             # Print progress - more frequent at start, less frequent later
             if step <= 10 or step % max(1, self.max_steps // 10) == 0:
-                print(f"   Step {step:4d}/{self.max_steps} | Loss: {loss.item():.6f} | Time: {batch_time:.3f}s | Batch size: {X_train.shape[0]}")
+                wandb_status = "" if self.wandb_run else ""
+                print(f"   Step {step:4d}/{self.max_steps} | Loss: {loss.item():.6f} | Time: {batch_time:.3f}s | Batch size: {X_train.shape[0]} {wandb_status}")
         
         # End total timing
         total_end_time = time.time()
@@ -148,5 +161,19 @@ class SimplePFNTrainer:
             print(f"   Final loss: {losses[-1]:.6f}")
             print(f"   Loss reduction: {((losses[0] - losses[-1])/losses[0]*100):.2f}%")
             print(f"   Average loss: {sum(losses)/len(losses):.6f}")
+        
+        # Log final summary to Weights & Biases
+        if self.wandb_run and len(losses) > 0 and len(batch_times) > 0:
+            self.wandb_run.log({
+                'summary/total_training_time': total_time,
+                'summary/steps_completed': len(batch_times),
+                'summary/avg_step_time': sum(batch_times)/len(batch_times),
+                'summary/steps_per_second': len(batch_times)/total_time,
+                'summary/initial_loss': losses[0],
+                'summary/final_loss': losses[-1],
+                'summary/loss_reduction_percent': ((losses[0] - losses[-1])/losses[0]*100),
+                'summary/average_loss': sum(losses)/len(losses)
+            })
+            print(f"   Training metrics logged to Weights & Biases!")
         
         return self.model
