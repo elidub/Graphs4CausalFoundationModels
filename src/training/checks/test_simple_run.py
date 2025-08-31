@@ -14,15 +14,15 @@ from pathlib import Path
 import yaml
 
 # Add src directory to path for imports
-src_dir = Path(__file__).parent.parent
+src_dir = Path(__file__).parent.parent.parent
 if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
 
 
 def load_and_modify_existing_config():
     """Load the existing FirstTests config and modify it for quick testing."""
-    # Path to the existing config
-    config_path = Path(__file__).parent.parent.parent / "experiments" / "FirstTests" / "configs" / "early_test.yaml"
+    # Path to the existing config (from checks/ directory, need to go up more levels)
+    config_path = Path(__file__).parent.parent.parent.parent / "experiments" / "FirstTests" / "configs" / "early_test.yaml"
     
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
@@ -51,7 +51,7 @@ def load_and_modify_existing_config():
 
 def run_simple_run_test(config_path):
     """Run the simple_run.py script with the test config."""
-    script_path = Path(__file__).parent / 'simple_run.py'
+    script_path = Path(__file__).parent.parent / 'simple_run.py'  # Go up one level to training directory
     
     if not script_path.exists():
         print(f"[ERROR] simple_run.py not found at: {script_path}")
