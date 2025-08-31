@@ -153,7 +153,7 @@ def main():
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers,
-            persistent_workers=True
+            persistent_workers=num_workers > 0  # Only use persistent workers when num_workers > 0
         )
         print(f"   DataLoader created successfully")
 
