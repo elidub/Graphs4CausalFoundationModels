@@ -47,13 +47,14 @@ scm_config:
   mlp_nonlins:
     value: "tabicl"
   mlp_num_hidden_layers:
-    distribution: "discrete_uniform"
-    distribution_parameters: {low: 0, high: 2}
+    distribution: "categorical"
+    distribution_parameters: {choices: [0, 1,2], probabilities: [0.7, 0.15, 0.15]}
   mlp_hidden_dim:
     distribution: "categorical"
-    distribution_parameters: {choices: [8,16,32,64]}
+    distribution_parameters: {choices: [2, 4, 8, 16, 32]}
   mlp_activation_mode:
-    value: "pre"
+    distribution: "categorical"
+    distribution_parameters: {choices: ["pre", "post"]}
   mlp_node_shape:
     value: [1]
     
@@ -73,7 +74,8 @@ scm_config:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 100, high: 500}
   xgb_add_noise:
-    value: false
+    distribution: "categorical"
+    distribution_parameters: {choices: [true, false], probabilities: [0.9, 0.1]}
     
   # Noise Distribution Parameters
   # -----------------------------
@@ -89,16 +91,16 @@ scm_config:
   # Random Standard Deviation Parameters
   exo_std_mean:
     distribution: "lognormal"
-    distribution_parameters: {mean: 0.0, std: 0.5}
+    distribution_parameters: {mean: 0.5, std: 2.0}
   exo_std_std:
     distribution: "uniform"
-    distribution_parameters: {low: 0.3, high: 1.0}
+    distribution_parameters: {low: 0.01, high: 2.0}
   endo_std_mean:
     distribution: "lognormal"
-    distribution_parameters: {mean: -1.0, std: 0.3}
+    distribution_parameters: {mean: -3.0, std: 0.6}
   endo_std_std:
     distribution: "uniform"
-    distribution_parameters: {low: 0.1, high: 0.5}
+    distribution_parameters: {low: 0.1, high: 1.0}
     
   # SCM Implementation Settings
   # ---------------------------
