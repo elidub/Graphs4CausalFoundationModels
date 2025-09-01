@@ -12,6 +12,8 @@ import yaml
 from pathlib import Path
 from torch.utils.data import DataLoader
 
+from torch.backends.cuda import sdp_kernel
+
 # Add src directory to path for imports
 src_dir = Path(__file__).parent.parent
 if str(src_dir) not in sys.path:
@@ -179,6 +181,8 @@ def main():
         
         # Create SimplePFN model
         print(f"\nMODEL CREATION:")
+
+        sdp_kernel(enable_flash=False, enable_mem_efficient=False, enable_math=True)
         model = SimplePFNRegressor(
             num_features=num_features,
             d_model=model_config.get("d_model", 8),

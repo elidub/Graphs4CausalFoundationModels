@@ -121,13 +121,13 @@ dataset_config:
   dataset_size:
     value: 100000000  # size of meta-dataset  #100000000
   max_number_samples:
-    value: 1000  # Maximum samples per individual dataset (keep default)
+    value: 300  # Maximum samples per individual dataset (keep default)
   max_number_features:
     value: 10  # Much smaller feature space (vs default 101) for faster processing
   number_samples_per_dataset:
     # Distribution over actual samples per dataset (within max_number_samples)
     distribution: "uniform"
-    distribution_parameters: {low: 990, high: 999}  # Smaller range for testing
+    distribution_parameters: {low: 299, high: 300}  # Smaller range for testing
   seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -161,7 +161,7 @@ model_config:
   # Core Architecture Parameters
   # ----------------------------
   d_model: 256      # Moderately sized embedding dimension
-  depth: 2      # Number of transformer blocks
+  depth: 5      # Number of transformer blocks
   heads_feat: 4    # Attention heads for feature-wise attention
   heads_samp: 4    # Attention heads for sample-wise attention
   dropout: 0.1     # Dropout probability for regularization
@@ -184,7 +184,7 @@ training_config:
   weight_decay:
     value: 0.0001  # L2 regularization weight (from debug_config)
   max_steps:
-    value: 10  # Very short training for early testing (vs debug's 100)
+    value: 10000  # Very short training for early testing (vs debug's 100)
   max_epochs:
     value: 1   # Single epoch (standard for synthetic data)
 # eta_min is no longer needed as we use min_lr_ratio directly
@@ -192,7 +192,7 @@ training_config:
   # Data Loading Parameters
   # -----------------------
   batch_size:
-    value: 128   # Reduce memory pressure for multiprocessing segfault testing
+    value: 64   # Reduce memory pressure for multiprocessing segfault testing
   num_workers:
     value: 32  # Match the number of requested CPUs
     
