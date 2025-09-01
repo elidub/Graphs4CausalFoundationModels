@@ -48,8 +48,15 @@ def load_yaml_config(config_path: str):
     """Load YAML configuration file."""
     # Convert to Path and make it relative to repository root
     if not Path(config_path).is_absolute():
-        # Get repository root (3 levels up from src/training/checks/)
-        repo_root = Path(__file__).parent.parent.parent.parent
+        # Get repository root path dynamically
+        file_path = Path(__file__)
+        # Check if we're in src/priors/training/checks/ or src/training/checks/
+        if 'priors' in str(file_path):
+            # For src/priors/training/checks/
+            repo_root = file_path.parent.parent.parent.parent.parent
+        else:
+            # For src/training/checks/
+            repo_root = file_path.parent.parent.parent.parent
         config_path = repo_root / config_path
     else:
         config_path = Path(config_path)
@@ -111,6 +118,10 @@ class DataloaderDatasetVisualizer:
             'rf_test_r2': [],
             'rf_train_mse': [],
             'rf_test_mse': [],
+            'linear_half_data_test_mse': [],  # For learnability metrics
+            'rf_half_data_test_mse': [],      # For learnability metrics
+            'linear_learnability': [],        # Ratio of full data MSE to half data MSE
+            'rf_learnability': [],            # Ratio of full data MSE to half data MSE
             'target_ranges': [],
             'feature_counts': [],
             'train_sample_counts': [],
@@ -137,6 +148,15 @@ class DataloaderDatasetVisualizer:
         self.log("[OK] Configuration loaded successfully")
         self.log(f"[INFO] Experiment: {self.config.get('experiment_name', 'unnamed')}")
         self.log(f"[INFO] Description: {self.config.get('description', 'no description')}")
+        
+        # Write the complete YAML config to the log file
+        self.log("\n" + "="*80)
+        self.log("                    COMPLETE YAML CONFIGURATION")
+        self.log("="*80)
+        # Convert config back to YAML format for pretty printing
+        config_yaml = yaml.dump(self.config, default_flow_style=False, sort_keys=False)
+        self.log(config_yaml)
+        self.log("="*80 + "\n")
         
     def create_dataset_and_dataloader(self, n_datasets_per_batch=None):
         """Create dataset and dataloader from config (same as simple_run.py)."""
@@ -172,7 +192,7 @@ class DataloaderDatasetVisualizer:
         else:
             batch_size = training_config.get('batch_size', 4)
             
-        num_workers = 0 # just use one worker
+        num_workers = 4 # just use one worker
         
         self.log("[INFO] Creating dataloader:")
         self.log(f"[INFO]   Batch size: {batch_size}")
@@ -268,10 +288,28 @@ class DataloaderDatasetVisualizer:
         self.log(f"[INFO]   Total features: {n_features}")
         
         # Config values for comparison
+        dataset_config = self.config.get('dataset_config', {})
+        max_samples = dataset_config.get('max_number_samples', {}).get('value', 'unknown')
+        max_features = dataset_config.get('max_number_features', {}).get('value', 'unknown')
+        
+        # Get distribution info for number of samples per dataset
+        samples_dist_info = dataset_config.get('number_samples_per_dataset', {})
+        dist_type = samples_dist_info.get('distribution', 'unknown')
+        dist_params = samples_dist_info.get('distribution_parameters', {})
+        
+        # Format distribution parameters for display
+        dist_params_str = ""
+        if dist_type == "uniform" and 'low' in dist_params and 'high' in dist_params:
+            dist_params_str = f"({dist_params['low']}, {dist_params['high']})"
+        elif dist_params:
+            # Generic parameter formatting for other distribution types
+            param_strings = [f"{k}={v}" for k, v in dist_params.items()]
+            dist_params_str = f"({', '.join(param_strings)})"
+            
         self.log("[INFO] Config values:")
-        self.log("[INFO]   max_number_samples: 100 (from early_test.yaml)")
-        self.log("[INFO]   max_number_features: 10 (from early_test.yaml)")
-        self.log("[INFO]   number_samples_per_dataset: uniform(50, 99)")
+        self.log(f"[INFO]   max_number_samples: {max_samples}")
+        self.log(f"[INFO]   max_number_features: {max_features}")
+        self.log(f"[INFO]   number_samples_per_dataset: {dist_type}{dist_params_str}")
         
         # Data ranges
         self.log("[INFO] Data ranges:")
@@ -316,6 +354,8 @@ class DataloaderDatasetVisualizer:
         n_padded_train_samples = n_train_samples - n_active_train_samples
         n_padded_test_samples = n_test_samples - n_active_test_samples
         
+        # Counts for non-zero elements are calculated inline in the log statements below
+        
         # Calculate fractions
         feature_padding_fraction = n_padded_features / n_features
         train_sample_padding_fraction = n_padded_train_samples / n_train_samples
@@ -335,10 +375,20 @@ class DataloaderDatasetVisualizer:
         self.log(f"[INFO]   Active train samples (actual data): {n_active_train_samples}")
         self.log(f"[INFO]   Padded train samples (zeros): {n_padded_train_samples}")
         self.log(f"[INFO]   Train sample padding fraction: {train_sample_padding_fraction:.1%}")
+        self.log(f"[INFO]   Total elements in X_train: {X_train.size}")
+        self.log(f"[INFO]   Non-zero elements in X_train: {np.count_nonzero(X_train)} ({np.count_nonzero(X_train)/X_train.size:.1%})")
+        self.log(f"[INFO]   Total elements in y_train: {y_train.size}")
+        self.log(f"[INFO]   Non-zero elements in y_train: {np.count_nonzero(y_train)} ({np.count_nonzero(y_train)/y_train.size:.1%})")
         
         self.log("[INFO] TEST SAMPLES:")
         self.log(f"[INFO]   Total test samples (with padding): {n_test_samples}")
         self.log(f"[INFO]   Active test samples (actual data): {n_active_test_samples}")
+        self.log(f"[INFO]   Padded test samples (zeros): {n_padded_test_samples}")
+        self.log(f"[INFO]   Test sample padding fraction: {test_sample_padding_fraction:.1%}")
+        self.log(f"[INFO]   Total elements in X_test: {X_test.size}")
+        self.log(f"[INFO]   Non-zero elements in X_test: {np.count_nonzero(X_test)} ({np.count_nonzero(X_test)/X_test.size:.1%})")
+        self.log(f"[INFO]   Total elements in y_test: {y_test.size}")
+        self.log(f"[INFO]   Non-zero elements in y_test: {np.count_nonzero(y_test)} ({np.count_nonzero(y_test)/y_test.size:.1%})")
         self.log(f"[INFO]   Padded test samples (zeros): {n_padded_test_samples}")
         self.log(f"[INFO]   Test sample padding fraction: {test_sample_padding_fraction:.1%}")
         
@@ -348,69 +398,92 @@ class DataloaderDatasetVisualizer:
         self.log("                  CONFIG vs ACTUAL COMPARISON")
         self.log("="*80)
         self.log("[INFO] SAMPLE COUNT ANALYSIS:")
-        self.log("[INFO]   Config max_number_samples: 100")
-        self.log("[INFO]   Config expected range: 50-99 samples")
+        self.log(f"[INFO]   Config max_number_samples: {max_samples}")
+        
+        # Display expected range based on distribution parameters
+        if dist_type == "uniform" and 'low' in dist_params and 'high' in dist_params:
+            self.log(f"[INFO]   Config expected range: {dist_params['low']}-{dist_params['high']} samples")
+        else:
+            # Format distribution parameters for display similar to original code
+            dist_desc = f"{dist_type}"
+            if dist_params:
+                param_strings = [f"{k}={v}" for k, v in dist_params.items()]
+                dist_desc = f"{dist_type}({', '.join(param_strings)})"
+            self.log(f"[INFO]   Config samples distribution: {dist_desc}")
+            
         self.log(f"[INFO]   Actual total samples: {total_original_samples}")
         self.log(f"[INFO]   Actual train samples: {n_active_train_samples}")
         self.log(f"[INFO]   Actual test samples: {n_active_test_samples}")
         
         self.log("[INFO] FEATURE COUNT ANALYSIS:")
-        self.log("[INFO]   Config max_number_features: 10")
+        self.log(f"[INFO]   Config max_number_features: {max_features}")
         self.log(f"[INFO]   Actual active features: {n_active_features}")
-        self.log(f"[INFO]   Features lost to preprocessing: {10 - n_active_features}")
+        self.log(f"[INFO]   Features lost to preprocessing: {int(max_features) - n_active_features if isinstance(max_features, (int, float)) else 'unknown'}")
         
         # Try to understand what happened to the features
         # Based on BasicProcessing.py, features can be lost due to:
         # 1. Feature dropout (dropout_prob parameter)
         # 2. Target feature removal (one feature becomes the target)
         # 3. Original SCM having fewer features than max
+        # Get relevant preprocessing parameters
+        preprocessing_config = self.config.get('preprocessing_config', {})
+        feature_dropout_prob = preprocessing_config.get('feature_dropout_prob', {}).get('value', 0.0)
+        
+        # Get SCM config for node info
+        scm_config = self.config.get('scm_config', {})
+        num_nodes = scm_config.get('num_nodes', {}).get('value', 'unknown')
+        
         self.log("[INFO] PREPROCESSING IMPACT ANALYSIS:")
         self.log("[INFO]   Expected feature loss sources:")
         self.log("[INFO]     - Target feature removed: 1 feature")
-        self.log(f"[INFO]     - Feature dropout (config 0.1): ~{int(0.1 * 10)} features expected")
-        self.log("[INFO]     - Original SCM features: 3-8 (from scm_config.num_nodes)")
-        expected_remaining = 10 - 1  # Target removed
-        expected_after_dropout = expected_remaining * (1 - 0.1)  # 10% dropout
+        self.log(f"[INFO]     - Feature dropout (config {feature_dropout_prob}): ~{int(feature_dropout_prob * int(max_features))} features expected")
+        self.log(f"[INFO]     - Original SCM features: {num_nodes} (from scm_config.num_nodes)")
+        expected_remaining = int(max_features) - 1 if isinstance(max_features, (int, float)) else 0  # Target removed
+        expected_after_dropout = expected_remaining * (1 - feature_dropout_prob) if expected_remaining > 0 else 0  # Apply dropout
         self.log(f"[INFO]     - Expected remaining after target removal: {expected_remaining}")
         self.log(f"[INFO]     - Expected after 10% dropout: ~{expected_after_dropout:.1f}")
         self.log(f"[INFO]     - Actual remaining: {n_active_features}")
         
         # CRITICAL DEBUGGING: The shape inconsistency!
-        self.log(f"[CRITICAL] SHAPE INCONSISTENCY DETECTED:")
-        self.log(f"[CRITICAL]   Dataloader reported 9 features, config expects 10")
-        self.log(f"[CRITICAL]   This suggests preprocessing already removed features BEFORE padding")
-        self.log(f"[CRITICAL]   Likely causes:")
-        self.log(f"[CRITICAL]     1. Original SCM generated < 10 features")
-        self.log(f"[CRITICAL]     2. Feature dropout happened before padding")
-        self.log(f"[CRITICAL]     3. Target feature was already removed")
+        self.log("[CRITICAL] SHAPE INCONSISTENCY DETECTED:")
+        self.log(f"[CRITICAL]   Dataloader reported {n_features} features, config expects {max_features}")
+        self.log("[CRITICAL]   This suggests preprocessing already removed features BEFORE padding")
+        self.log("[CRITICAL]   Likely causes:")
+        self.log("[CRITICAL]     1. Original SCM generated fewer features than configured")
+        self.log("[CRITICAL]     2. Feature dropout happened before padding")
+        self.log("[CRITICAL]     3. Target feature was already removed")
         
         # Analyze the pattern of zeroed features
         zeroed_indices = np.where(~active_features_mask)[0]
         active_indices = np.where(active_features_mask)[0]
-        self.log(f"[INFO] FEATURE PATTERN ANALYSIS:")
+        self.log("[INFO] FEATURE PATTERN ANALYSIS:")
         self.log(f"[INFO]   Active feature positions: {active_indices.tolist()}")
         self.log(f"[INFO]   Zeroed feature positions: {zeroed_indices.tolist()}")
         if len(zeroed_indices) > 0:
             if np.all(zeroed_indices >= n_active_features):
-                self.log(f"[INFO]   Pattern: All zeros at end → Likely padding-only")
+                self.log("[INFO]   Pattern: All zeros at end → Likely padding-only")
                 self.log(f"[CRITICAL]   CONCLUSION: Original data had {n_active_features} features")
-                self.log(f"[CRITICAL]   Missing features were likely removed in BasicProcessing, not padding")
+                self.log("[CRITICAL]   Missing features were likely removed in BasicProcessing, not padding")
             elif np.all(zeroed_indices < n_active_features):
-                self.log(f"[INFO]   Pattern: Zeros at beginning → Likely preprocessing dropout")
+                self.log("[INFO]   Pattern: Zeros at beginning → Likely preprocessing dropout")
             else:
-                self.log(f"[INFO]   Pattern: Mixed zeros → Combination of dropout + padding")
+                self.log("[INFO]   Pattern: Mixed zeros → Combination of dropout + padding")
                 
         # Additional analysis for test sample padding
-        self.log(f"[CRITICAL] TEST SAMPLE PADDING ANALYSIS:")
+        self.log("[CRITICAL] TEST SAMPLE PADDING ANALYSIS:")
         self.log(f"[CRITICAL]   Test samples show {test_sample_padding_fraction:.1%} padding ({n_padded_test_samples}/{n_test_samples} are zeros)")
         self.log(f"[CRITICAL]   This suggests the original dataset had {n_active_test_samples} test samples")
-        self.log(f"[CRITICAL]   Expected from config: 30% of total samples should be test")
-        self.log(f"[CRITICAL]   With {total_original_samples} total samples: 0.3 * {total_original_samples} = {int(0.3 * total_original_samples)} expected test samples")
+        # Get the train_fraction from the dataset config
+        train_fraction = dataset_config.get('train_fraction', {}).get('value', 0.7)
+        test_fraction = 1 - train_fraction
+        
+        self.log(f"[CRITICAL]   Expected from config: {test_fraction:.1%} of total samples should be test")
+        self.log(f"[CRITICAL]   With {total_original_samples} total samples: {test_fraction} * {total_original_samples} = {int(test_fraction * total_original_samples)} expected test samples")
         self.log(f"[CRITICAL]   But we have {n_active_test_samples} actual test samples!")
-        if n_active_test_samples < int(0.3 * total_original_samples):
-            self.log(f"[CRITICAL]   This indicates train_fraction = 0.7 was applied to a smaller dataset")
+        if n_active_test_samples < int(test_fraction * total_original_samples):
+            self.log("[CRITICAL]   This indicates train_fraction was applied to a smaller dataset")
         else:
-            self.log(f"[INFO]   Test sample count is reasonable for the dataset size")
+            self.log("[INFO]   Test sample count is reasonable for the dataset size")
         
         # Detailed feature analysis
         self.log("="*80)
@@ -444,7 +517,7 @@ class DataloaderDatasetVisualizer:
         X_test_filtered = X_test[active_test_samples_mask][:, active_features_mask]
         y_test_filtered = y_test[active_test_samples_mask]
         
-        self.log(f"[INFO] After removing padding:")
+        self.log("[INFO] After removing padding:")
         self.log(f"[INFO]   Filtered train: {X_train_filtered.shape[0]} samples × {X_train_filtered.shape[1]} features")
         self.log(f"[INFO]   Filtered test: {X_test_filtered.shape[0]} samples × {X_test_filtered.shape[1]} features")
         self.log(f"[INFO]   X_train_filtered range: [{X_train_filtered.min():.3f}, {X_train_filtered.max():.3f}]")
@@ -673,6 +746,7 @@ class DataloaderDatasetVisualizer:
             from sklearn.linear_model import LinearRegression
             from sklearn.ensemble import RandomForestRegressor
             from sklearn.metrics import mean_squared_error
+            import numpy as np
             
             n_train, n_features = X_train.shape
             n_test = X_test.shape[0]
@@ -682,11 +756,36 @@ class DataloaderDatasetVisualizer:
                 self.log("[INFO] Too few samples/features for train-test analysis")
                 return
             
+            # Need minimum samples for half-data learnability calculation
+            if n_train < 10:
+                self.log("[INFO] Too few training samples for learnability calculation")
+                compute_learnability = False
+            else:
+                compute_learnability = True
+            
             if n_features == 1:
                 self.log("[INFO] Single feature analysis:")
                 self.log("[INFO]   Note: Limited predictive analysis possible with only one feature")
             
             self.log(f"[INFO] Train-Test predictability analysis ({n_train} train, {n_test} test, {n_features} features):")
+            
+            # Add detailed shape information
+            self.log("[INFO]   Data shapes:")
+            self.log(f"[INFO]     X_train: {X_train.shape} - [{X_train.dtype}]")
+            self.log(f"[INFO]     y_train: {y_train.shape} - [{y_train.dtype}]")
+            self.log(f"[INFO]     X_test: {X_test.shape} - [{X_test.dtype}]")
+            self.log(f"[INFO]     y_test: {y_test.shape} - [{y_test.dtype}]")
+            
+            # Add shape consistency check
+            if X_train.shape[1] != X_test.shape[1]:
+                self.log(f"[WARN]     Shape inconsistency: Train features ({X_train.shape[1]}) != Test features ({X_test.shape[1]})")
+                
+            # Add additional statistics about the data tables
+            self.log("[INFO]   Data statistics:")
+            self.log(f"[INFO]     X_train range: [{X_train.min():.4f}, {X_train.max():.4f}], mean: {X_train.mean():.4f}, std: {X_train.std():.4f}")
+            self.log(f"[INFO]     y_train range: [{y_train.min():.4f}, {y_train.max():.4f}], mean: {y_train.mean():.4f}, std: {y_train.std():.4f}")
+            self.log(f"[INFO]     X_test range: [{X_test.min():.4f}, {X_test.max():.4f}], mean: {X_test.mean():.4f}, std: {X_test.std():.4f}")
+            self.log(f"[INFO]     y_test range: [{y_test.min():.4f}, {y_test.max():.4f}], mean: {y_test.mean():.4f}, std: {y_test.std():.4f}")
             
             # Linear Model
             try:
@@ -710,6 +809,12 @@ class DataloaderDatasetVisualizer:
                 self.log(f"[DEBUG] Linear Model - Test predictions (first 5): {test_pred[:5]}")
                 self.log(f"[DEBUG] Linear Model - Test actual (first 5): {y_test[:5]}")
                 
+                # Add prediction statistics
+                train_pred_stats = f"min={train_pred.min():.4f}, max={train_pred.max():.4f}, mean={train_pred.mean():.4f}, std={train_pred.std():.4f}"
+                test_pred_stats = f"min={test_pred.min():.4f}, max={test_pred.max():.4f}, mean={test_pred.mean():.4f}, std={test_pred.std():.4f}"
+                self.log(f"[DEBUG] Linear Model - Train predictions stats: {train_pred_stats}")
+                self.log(f"[DEBUG] Linear Model - Test predictions stats: {test_pred_stats}")
+                
                 self.log("[INFO]   Linear Model:")
                 self.log(f"[INFO]     Train R²: {train_r2:.6f}, MSE: {train_mse:.8f}")
                 self.log(f"[INFO]     Test R²: {test_r2:.6f}, MSE: {test_mse:.8f}")
@@ -727,6 +832,43 @@ class DataloaderDatasetVisualizer:
                 self.all_stats['linear_test_r2'].append(test_r2)
                 self.all_stats['linear_train_mse'].append(train_mse)
                 self.all_stats['linear_test_mse'].append(test_mse)
+                
+                # Calculate learnability (train on half the data)
+                if compute_learnability:
+                    try:
+                        # Use half of the training data (randomly selected)
+                        half_size = n_train // 2
+                        if half_size >= 5:  # Ensure we have enough samples
+                            # Generate random indices without replacement
+                            np.random.seed(42)  # For reproducibility
+                            half_indices = np.random.choice(n_train, half_size, replace=False)
+                            X_train_half = X_train[half_indices]
+                            y_train_half = y_train[half_indices]
+                            
+                            # Train on half data
+                            linear_half = LinearRegression()
+                            linear_half.fit(X_train_half, y_train_half)
+                            
+                            # Test on the same test set
+                            half_test_pred = linear_half.predict(X_test)
+                            half_test_mse = mean_squared_error(y_test, half_test_pred)
+                            
+                            # Calculate learnability ratio (half data MSE / full data MSE)
+                            # Higher ratio means the model benefits more from additional data
+                            if test_mse > 0:  # Avoid division by zero
+                                learnability = half_test_mse / test_mse
+                                self.all_stats['linear_half_data_test_mse'].append(half_test_mse)
+                                self.all_stats['linear_learnability'].append(learnability)
+                                
+                                self.log("[INFO]     Linear Learnability:")
+                                self.log(f"[INFO]       Half-data test MSE: {half_test_mse:.8f}")
+                                self.log(f"[INFO]       Half-to-full data MSE ratio: {learnability:.4f} (>1 means benefit from more data)")
+                                if learnability < 0.9:
+                                    self.log("[WARN]       Unexpected learnability < 1: Half data performs better than full data")
+                                elif learnability > 1.5:
+                                    self.log("[INFO]       High learnability: Model benefits significantly from additional data")
+                    except Exception as e:
+                        self.log(f"[WARN]     Linear learnability calculation failed: {e}")
                     
             except Exception as e:
                 self.log(f"[WARN]   Linear model failed: {e}")
@@ -747,6 +889,18 @@ class DataloaderDatasetVisualizer:
                 train_mse = mean_squared_error(y_train, train_pred)
                 test_mse = mean_squared_error(y_test, test_pred)
                 
+                # Debug: Show actual vs predicted values for a few samples
+                self.log(f"[DEBUG] Random Forest - Train predictions (first 5): {train_pred[:5]}")
+                self.log(f"[DEBUG] Random Forest - Train actual (first 5): {y_train[:5]}")
+                self.log(f"[DEBUG] Random Forest - Test predictions (first 5): {test_pred[:5]}")
+                self.log(f"[DEBUG] Random Forest - Test actual (first 5): {y_test[:5]}")
+                
+                # Add prediction statistics
+                train_pred_stats = f"min={train_pred.min():.4f}, max={train_pred.max():.4f}, mean={train_pred.mean():.4f}, std={train_pred.std():.4f}"
+                test_pred_stats = f"min={test_pred.min():.4f}, max={test_pred.max():.4f}, mean={test_pred.mean():.4f}, std={test_pred.std():.4f}"
+                self.log(f"[DEBUG] Random Forest - Train predictions stats: {train_pred_stats}")
+                self.log(f"[DEBUG] Random Forest - Test predictions stats: {test_pred_stats}")
+                
                 self.log("[INFO]   Random Forest:")
                 self.log(f"[INFO]     Train R²: {train_r2:.6f}, MSE: {train_mse:.8f}")
                 self.log(f"[INFO]     Test R²: {test_r2:.6f}, MSE: {test_mse:.8f}")
@@ -764,6 +918,43 @@ class DataloaderDatasetVisualizer:
                 self.all_stats['rf_test_r2'].append(test_r2)
                 self.all_stats['rf_train_mse'].append(train_mse)
                 self.all_stats['rf_test_mse'].append(test_mse)
+                
+                # Calculate learnability (train on half the data)
+                if compute_learnability:
+                    try:
+                        # Use half of the training data (randomly selected)
+                        half_size = n_train // 2
+                        if half_size >= 5:  # Ensure we have enough samples
+                            # Generate random indices without replacement
+                            np.random.seed(42)  # For reproducibility
+                            half_indices = np.random.choice(n_train, half_size, replace=False)
+                            X_train_half = X_train[half_indices]
+                            y_train_half = y_train[half_indices]
+                            
+                            # Train on half data
+                            rf_half = RandomForestRegressor(n_estimators=50, random_state=42, max_depth=5)
+                            rf_half.fit(X_train_half, y_train_half)
+                            
+                            # Test on the same test set
+                            half_test_pred = rf_half.predict(X_test)
+                            half_test_mse = mean_squared_error(y_test, half_test_pred)
+                            
+                            # Calculate learnability ratio (half data MSE / full data MSE)
+                            # Higher ratio means the model benefits more from additional data
+                            if test_mse > 0:  # Avoid division by zero
+                                learnability = half_test_mse / test_mse
+                                self.all_stats['rf_half_data_test_mse'].append(half_test_mse)
+                                self.all_stats['rf_learnability'].append(learnability)
+                                
+                                self.log("[INFO]     Random Forest Learnability:")
+                                self.log(f"[INFO]       Half-data test MSE: {half_test_mse:.8f}")
+                                self.log(f"[INFO]       Half-to-full data MSE ratio: {learnability:.4f} (>1 means benefit from more data)")
+                                if learnability < 0.9:
+                                    self.log("[WARN]       Unexpected learnability < 1: Half data performs better than full data")
+                                elif learnability > 1.5:
+                                    self.log("[INFO]       High learnability: Model benefits significantly from additional data")
+                    except Exception as e:
+                        self.log(f"[WARN]     Random Forest learnability calculation failed: {e}")
                     
                 # Feature importance
                 if n_features <= 10:  # Only show for reasonable number of features
@@ -794,7 +985,7 @@ class DataloaderDatasetVisualizer:
             n_batches: Number of batches to sample
             n_datasets_per_batch: Number of datasets to visualize per batch
         """
-        self.log(f"\n[INFO] Sampling and visualizing batches...")
+        self.log("\n[INFO] Sampling and visualizing batches...")
         self.log(f"[INFO] Target: {n_batches} batches, {n_datasets_per_batch} datasets per batch")
         
         batch_count = 0
@@ -811,12 +1002,12 @@ class DataloaderDatasetVisualizer:
             with open(batch_log_path, 'w', encoding='utf-8') as batch_log:
                 self.current_output_file = batch_log
                 
-                self.log(f"="*80)
+                self.log("="*80)
                 self.log(f"BATCH {batch_idx + 1} ANALYSIS OUTPUT")
                 self.log(f"Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                self.log(f"="*80)
+                self.log("="*80)
                 
-                self.log(f"\n" + "="*50)
+                self.log("\n" + "="*50)
                 self.log(f"BATCH {batch_idx + 1}")
                 self.log("="*50)
                 
@@ -944,140 +1135,92 @@ class DataloaderDatasetVisualizer:
         self.log("="*60)
         
         if self.all_stats['linear_test_r2']:
-            # Calculate standard errors (SE = std / sqrt(n))
-            n_datasets = len(self.all_stats['linear_test_r2'])
-            
-            # Linear Model TEST statistics - R²
+            # Linear Model statistics
             linear_test_r2_mean = np.mean(self.all_stats['linear_test_r2'])
             linear_test_r2_std = np.std(self.all_stats['linear_test_r2'])
-            linear_test_r2_se = linear_test_r2_std / np.sqrt(n_datasets)
             linear_test_r2_median = np.median(self.all_stats['linear_test_r2'])
             linear_test_r2_min = np.min(self.all_stats['linear_test_r2'])
             linear_test_r2_max = np.max(self.all_stats['linear_test_r2'])
             
-            # Linear Model TRAIN statistics - R²
-            linear_train_r2_mean = np.mean(self.all_stats['linear_train_r2'])
-            linear_train_r2_std = np.std(self.all_stats['linear_train_r2'])
-            linear_train_r2_se = linear_train_r2_std / np.sqrt(n_datasets)
-            linear_train_r2_median = np.median(self.all_stats['linear_train_r2'])
-            linear_train_r2_min = np.min(self.all_stats['linear_train_r2'])
-            linear_train_r2_max = np.max(self.all_stats['linear_train_r2'])
+            # Linear Model MSE statistics
+            linear_test_mse_mean = np.mean(self.all_stats['linear_test_mse']) if 'linear_test_mse' in self.all_stats and self.all_stats['linear_test_mse'] else np.nan
+            linear_test_mse_std = np.std(self.all_stats['linear_test_mse']) if 'linear_test_mse' in self.all_stats and self.all_stats['linear_test_mse'] else np.nan
+            linear_test_mse_median = np.median(self.all_stats['linear_test_mse']) if 'linear_test_mse' in self.all_stats and self.all_stats['linear_test_mse'] else np.nan
+            linear_test_mse_min = np.min(self.all_stats['linear_test_mse']) if 'linear_test_mse' in self.all_stats and self.all_stats['linear_test_mse'] else np.nan
+            linear_test_mse_max = np.max(self.all_stats['linear_test_mse']) if 'linear_test_mse' in self.all_stats and self.all_stats['linear_test_mse'] else np.nan
             
-            # Linear Model TEST statistics - MSE
-            if 'linear_test_mse' in self.all_stats and self.all_stats['linear_test_mse']:
-                linear_test_mse_mean = np.mean(self.all_stats['linear_test_mse'])
-                linear_test_mse_std = np.std(self.all_stats['linear_test_mse'])
-                linear_test_mse_se = linear_test_mse_std / np.sqrt(n_datasets)
-                linear_test_mse_median = np.median(self.all_stats['linear_test_mse'])
-                linear_test_mse_min = np.min(self.all_stats['linear_test_mse'])
-                linear_test_mse_max = np.max(self.all_stats['linear_test_mse'])
-            else:
-                linear_test_mse_mean = linear_test_mse_std = linear_test_mse_se = linear_test_mse_median = linear_test_mse_min = linear_test_mse_max = np.nan
-            
-            # Linear Model TRAIN statistics - MSE
-            if 'linear_train_mse' in self.all_stats and self.all_stats['linear_train_mse']:
-                linear_train_mse_mean = np.mean(self.all_stats['linear_train_mse'])
-                linear_train_mse_std = np.std(self.all_stats['linear_train_mse'])
-                linear_train_mse_se = linear_train_mse_std / np.sqrt(n_datasets)
-                linear_train_mse_median = np.median(self.all_stats['linear_train_mse'])
-                linear_train_mse_min = np.min(self.all_stats['linear_train_mse'])
-                linear_train_mse_max = np.max(self.all_stats['linear_train_mse'])
-            else:
-                linear_train_mse_mean = linear_train_mse_std = linear_train_mse_se = linear_train_mse_median = linear_train_mse_min = linear_train_mse_max = np.nan
-            
-            # Random Forest TEST statistics - R²
+            # Random Forest statistics
             rf_test_r2_mean = np.mean(self.all_stats['rf_test_r2'])
             rf_test_r2_std = np.std(self.all_stats['rf_test_r2'])
-            rf_test_r2_se = rf_test_r2_std / np.sqrt(n_datasets)
             rf_test_r2_median = np.median(self.all_stats['rf_test_r2'])
             rf_test_r2_min = np.min(self.all_stats['rf_test_r2'])
             rf_test_r2_max = np.max(self.all_stats['rf_test_r2'])
             
-            # Random Forest TRAIN statistics - R²
-            rf_train_r2_mean = np.mean(self.all_stats['rf_train_r2'])
-            rf_train_r2_std = np.std(self.all_stats['rf_train_r2'])
-            rf_train_r2_se = rf_train_r2_std / np.sqrt(n_datasets)
-            rf_train_r2_median = np.median(self.all_stats['rf_train_r2'])
-            rf_train_r2_min = np.min(self.all_stats['rf_train_r2'])
-            rf_train_r2_max = np.max(self.all_stats['rf_train_r2'])
+            # Random Forest MSE statistics
+            rf_test_mse_mean = np.mean(self.all_stats['rf_test_mse']) if 'rf_test_mse' in self.all_stats and self.all_stats['rf_test_mse'] else np.nan
+            rf_test_mse_std = np.std(self.all_stats['rf_test_mse']) if 'rf_test_mse' in self.all_stats and self.all_stats['rf_test_mse'] else np.nan
+            rf_test_mse_median = np.median(self.all_stats['rf_test_mse']) if 'rf_test_mse' in self.all_stats and self.all_stats['rf_test_mse'] else np.nan
+            rf_test_mse_min = np.min(self.all_stats['rf_test_mse']) if 'rf_test_mse' in self.all_stats and self.all_stats['rf_test_mse'] else np.nan
+            rf_test_mse_max = np.max(self.all_stats['rf_test_mse']) if 'rf_test_mse' in self.all_stats and self.all_stats['rf_test_mse'] else np.nan
             
-            # Random Forest TEST statistics - MSE
-            if 'rf_test_mse' in self.all_stats and self.all_stats['rf_test_mse']:
-                rf_test_mse_mean = np.mean(self.all_stats['rf_test_mse'])
-                rf_test_mse_std = np.std(self.all_stats['rf_test_mse'])
-                rf_test_mse_se = rf_test_mse_std / np.sqrt(n_datasets)
-                rf_test_mse_median = np.median(self.all_stats['rf_test_mse'])
-                rf_test_mse_min = np.min(self.all_stats['rf_test_mse'])
-                rf_test_mse_max = np.max(self.all_stats['rf_test_mse'])
-            else:
-                rf_test_mse_mean = rf_test_mse_std = rf_test_mse_se = rf_test_mse_median = rf_test_mse_min = rf_test_mse_max = np.nan
-                
-            # Random Forest TRAIN statistics - MSE
-            if 'rf_train_mse' in self.all_stats and self.all_stats['rf_train_mse']:
-                rf_train_mse_mean = np.mean(self.all_stats['rf_train_mse'])
-                rf_train_mse_std = np.std(self.all_stats['rf_train_mse'])
-                rf_train_mse_se = rf_train_mse_std / np.sqrt(n_datasets)
-                rf_train_mse_median = np.median(self.all_stats['rf_train_mse'])
-                rf_train_mse_min = np.min(self.all_stats['rf_train_mse'])
-                rf_train_mse_max = np.max(self.all_stats['rf_train_mse'])
-            else:
-                rf_train_mse_mean = rf_train_mse_std = rf_train_mse_se = rf_train_mse_median = rf_train_mse_min = rf_train_mse_max = np.nan
+            # Learnability statistics
+            linear_learnability_mean = np.mean(self.all_stats['linear_learnability']) if self.all_stats['linear_learnability'] else np.nan
+            linear_learnability_std = np.std(self.all_stats['linear_learnability']) if self.all_stats['linear_learnability'] else np.nan
+            linear_learnability_median = np.median(self.all_stats['linear_learnability']) if self.all_stats['linear_learnability'] else np.nan
+            linear_learnability_min = np.min(self.all_stats['linear_learnability']) if self.all_stats['linear_learnability'] else np.nan
+            linear_learnability_max = np.max(self.all_stats['linear_learnability']) if self.all_stats['linear_learnability'] else np.nan
             
-            # Output statistics with standard errors
-            self.log(f"\n[INFO] LINEAR MODEL PERFORMANCE (over {n_datasets} datasets):")
-            
-            # Linear model R² results
-            self.log("[INFO] Test R²:")
-            self.log(f"[INFO]   Mean:   {linear_test_r2_mean:.4f} (±{linear_test_r2_se:.4f})")
+            # Output statistics
+            self.log("[INFO] LINEAR MODEL (Test R²):")
+            self.log(f"[INFO]   Mean:   {linear_test_r2_mean:.4f}")
             self.log(f"[INFO]   Median: {linear_test_r2_median:.4f}")
+            self.log(f"[INFO]   Std:    {linear_test_r2_std:.4f}")
             self.log(f"[INFO]   Range:  [{linear_test_r2_min:.4f}, {linear_test_r2_max:.4f}]")
             
-            self.log("[INFO] Train R²:")
-            self.log(f"[INFO]   Mean:   {linear_train_r2_mean:.4f} (±{linear_train_r2_se:.4f})")
-            self.log(f"[INFO]   Median: {linear_train_r2_median:.4f}")
-            self.log(f"[INFO]   Range:  [{linear_train_r2_min:.4f}, {linear_train_r2_max:.4f}]")
+            # Output learnability statistics
+            if not np.isnan(linear_learnability_mean):
+                self.log("[INFO] LINEAR MODEL (Learnability - ratio of full data MSE to half data MSE):")
+                self.log(f"[INFO]   Mean:   {linear_learnability_mean:.4f}")
+                self.log(f"[INFO]   Median: {linear_learnability_median:.4f}")
+                self.log(f"[INFO]   Std:    {linear_learnability_std:.4f}")
+                self.log(f"[INFO]   Range:  [{linear_learnability_min:.4f}, {linear_learnability_max:.4f}]")
             
-            # Linear model MSE results
             if 'linear_test_mse' in self.all_stats and self.all_stats['linear_test_mse']:
-                self.log("[INFO] Test MSE:")
-                self.log(f"[INFO]   Mean:   {linear_test_mse_mean:.4f} (±{linear_test_mse_se:.4f})")
+                self.log("[INFO] LINEAR MODEL (Test MSE):")
+                self.log(f"[INFO]   Mean:   {linear_test_mse_mean:.4f}")
                 self.log(f"[INFO]   Median: {linear_test_mse_median:.4f}")
+                self.log(f"[INFO]   Std:    {linear_test_mse_std:.4f}")
                 self.log(f"[INFO]   Range:  [{linear_test_mse_min:.4f}, {linear_test_mse_max:.4f}]")
-                
-            if 'linear_train_mse' in self.all_stats and self.all_stats['linear_train_mse']:
-                self.log("[INFO] Train MSE:")
-                self.log(f"[INFO]   Mean:   {linear_train_mse_mean:.4f} (±{linear_train_mse_se:.4f})")
-                self.log(f"[INFO]   Median: {linear_train_mse_median:.4f}")
-                self.log(f"[INFO]   Range:  [{linear_train_mse_min:.4f}, {linear_train_mse_max:.4f}]")
             
-            # Random Forest results
-            self.log(f"\n[INFO] RANDOM FOREST PERFORMANCE (over {n_datasets} datasets):")
+            # Random Forest learnability statistics
+            rf_learnability_mean = np.mean(self.all_stats['rf_learnability']) if self.all_stats['rf_learnability'] else np.nan
+            rf_learnability_std = np.std(self.all_stats['rf_learnability']) if self.all_stats['rf_learnability'] else np.nan
+            rf_learnability_median = np.median(self.all_stats['rf_learnability']) if self.all_stats['rf_learnability'] else np.nan
+            rf_learnability_min = np.min(self.all_stats['rf_learnability']) if self.all_stats['rf_learnability'] else np.nan
+            rf_learnability_max = np.max(self.all_stats['rf_learnability']) if self.all_stats['rf_learnability'] else np.nan
             
-            # RF R² results
-            self.log("[INFO] Test R²:")
-            self.log(f"[INFO]   Mean:   {rf_test_r2_mean:.4f} (±{rf_test_r2_se:.4f})")
+            self.log("[INFO] RANDOM FOREST (Test R²):")
+            self.log(f"[INFO]   Mean:   {rf_test_r2_mean:.4f}")
             self.log(f"[INFO]   Median: {rf_test_r2_median:.4f}")
+            self.log(f"[INFO]   Std:    {rf_test_r2_std:.4f}")
             self.log(f"[INFO]   Range:  [{rf_test_r2_min:.4f}, {rf_test_r2_max:.4f}]")
             
-            self.log("[INFO] Train R²:")
-            self.log(f"[INFO]   Mean:   {rf_train_r2_mean:.4f} (±{rf_train_r2_se:.4f})")
-            self.log(f"[INFO]   Median: {rf_train_r2_median:.4f}")
-            self.log(f"[INFO]   Range:  [{rf_train_r2_min:.4f}, {rf_train_r2_max:.4f}]")
+            # Output learnability statistics
+            if not np.isnan(rf_learnability_mean):
+                self.log("[INFO] RANDOM FOREST (Learnability - ratio of full data MSE to half data MSE):")
+                self.log(f"[INFO]   Mean:   {rf_learnability_mean:.4f}")
+                self.log(f"[INFO]   Median: {rf_learnability_median:.4f}")
+                self.log(f"[INFO]   Std:    {rf_learnability_std:.4f}")
+                self.log(f"[INFO]   Range:  [{rf_learnability_min:.4f}, {rf_learnability_max:.4f}]")
             
-            # RF MSE results
             if 'rf_test_mse' in self.all_stats and self.all_stats['rf_test_mse']:
-                self.log("[INFO] Test MSE:")
-                self.log(f"[INFO]   Mean:   {rf_test_mse_mean:.4f} (±{rf_test_mse_se:.4f})")
+                self.log("[INFO] RANDOM FOREST (Test MSE):")
+                self.log(f"[INFO]   Mean:   {rf_test_mse_mean:.4f}")
                 self.log(f"[INFO]   Median: {rf_test_mse_median:.4f}")
+                self.log(f"[INFO]   Std:    {rf_test_mse_std:.4f}")
                 self.log(f"[INFO]   Range:  [{rf_test_mse_min:.4f}, {rf_test_mse_max:.4f}]")
-                
-            if 'rf_train_mse' in self.all_stats and self.all_stats['rf_train_mse']:
-                self.log("[INFO] Train MSE:")
-                self.log(f"[INFO]   Mean:   {rf_train_mse_mean:.4f} (±{rf_train_mse_se:.4f})")
-                self.log(f"[INFO]   Median: {rf_train_mse_median:.4f}")
-                self.log(f"[INFO]   Range:  [{rf_train_mse_min:.4f}, {rf_train_mse_max:.4f}]")
             
-            # Create histogram of Test R² values
+            # Create histogram of R² values
             plt.figure(figsize=(12, 6))
             
             plt.subplot(1, 2, 1)
@@ -1097,39 +1240,13 @@ class DataloaderDatasetVisualizer:
             plt.grid(alpha=0.3)
             
             plt.tight_layout()
-            test_r2_hist_path = summary_dir / 'test_r2_distribution_histogram.png'
-            plt.savefig(test_r2_hist_path, dpi=150, bbox_inches='tight')
+            r2_hist_path = summary_dir / 'r2_distribution_histogram.png'
+            plt.savefig(r2_hist_path, dpi=150, bbox_inches='tight')
             plt.close()
             
-            self.log(f"[INFO] Test R² distribution histogram saved to: {test_r2_hist_path}")
+            self.log(f"[INFO] R² distribution histogram saved to: {r2_hist_path}")
             
-            # Create histogram of Train R² values
-            plt.figure(figsize=(12, 6))
-            
-            plt.subplot(1, 2, 1)
-            plt.hist(self.all_stats['linear_train_r2'], bins=10, alpha=0.7, 
-                     color='lightsteelblue', edgecolor='black')
-            plt.title('Linear Model Train R² Distribution', fontsize=12)
-            plt.xlabel('Train R²', fontsize=10)
-            plt.ylabel('Number of Datasets', fontsize=10)
-            plt.grid(alpha=0.3)
-            
-            plt.subplot(1, 2, 2)
-            plt.hist(self.all_stats['rf_train_r2'], bins=10, alpha=0.7,
-                     color='lightgreen', edgecolor='black')
-            plt.title('Random Forest Train R² Distribution', fontsize=12)
-            plt.xlabel('Train R²', fontsize=10)
-            plt.ylabel('Number of Datasets', fontsize=10)
-            plt.grid(alpha=0.3)
-            
-            plt.tight_layout()
-            train_r2_hist_path = summary_dir / 'train_r2_distribution_histogram.png'
-            plt.savefig(train_r2_hist_path, dpi=150, bbox_inches='tight')
-            plt.close()
-            
-            self.log(f"[INFO] Train R² distribution histogram saved to: {train_r2_hist_path}")
-            
-            # Create histogram of Test MSE values (if available)
+            # Create histogram of MSE values (if available)
             if ('linear_test_mse' in self.all_stats and self.all_stats['linear_test_mse'] and 
                 'rf_test_mse' in self.all_stats and self.all_stats['rf_test_mse']):
                 
@@ -1152,40 +1269,11 @@ class DataloaderDatasetVisualizer:
                 plt.grid(alpha=0.3)
                 
                 plt.tight_layout()
-                test_mse_hist_path = summary_dir / 'test_mse_distribution_histogram.png'
-                plt.savefig(test_mse_hist_path, dpi=150, bbox_inches='tight')
+                mse_hist_path = summary_dir / 'mse_distribution_histogram.png'
+                plt.savefig(mse_hist_path, dpi=150, bbox_inches='tight')
                 plt.close()
                 
-                self.log(f"[INFO] Test MSE distribution histogram saved to: {test_mse_hist_path}")
-            
-            # Create histogram of Train MSE values (if available)
-            if ('linear_train_mse' in self.all_stats and self.all_stats['linear_train_mse'] and 
-                'rf_train_mse' in self.all_stats and self.all_stats['rf_train_mse']):
-                
-                plt.figure(figsize=(12, 6))
-                
-                plt.subplot(1, 2, 1)
-                plt.hist(self.all_stats['linear_train_mse'], bins=10, alpha=0.7, 
-                         color='mistyrose', edgecolor='black')
-                plt.title('Linear Model Train MSE Distribution', fontsize=12)
-                plt.xlabel('Train MSE', fontsize=10)
-                plt.ylabel('Number of Datasets', fontsize=10)
-                plt.grid(alpha=0.3)
-                
-                plt.subplot(1, 2, 2)
-                plt.hist(self.all_stats['rf_train_mse'], bins=10, alpha=0.7,
-                         color='palegreen', edgecolor='black')
-                plt.title('Random Forest Train MSE Distribution', fontsize=12)
-                plt.xlabel('Train MSE', fontsize=10)
-                plt.ylabel('Number of Datasets', fontsize=10)
-                plt.grid(alpha=0.3)
-                
-                plt.tight_layout()
-                train_mse_hist_path = summary_dir / 'train_mse_distribution_histogram.png'
-                plt.savefig(train_mse_hist_path, dpi=150, bbox_inches='tight')
-                plt.close()
-                
-                self.log(f"[INFO] Train MSE distribution histogram saved to: {train_mse_hist_path}")
+                self.log(f"[INFO] MSE distribution histogram saved to: {mse_hist_path}")
             
             # Create comparison plot: Linear vs RF R²
             plt.figure(figsize=(8, 6))
@@ -1207,39 +1295,59 @@ class DataloaderDatasetVisualizer:
             
             self.log(f"[INFO] Model comparison plot saved to: {r2_comparison_path}")
             
-            # Create Train vs Test R² comparison plots for overfitting analysis
-            plt.figure(figsize=(12, 6))
-            
-            # Linear Model Train vs Test
-            plt.subplot(1, 2, 1)
-            plt.scatter(self.all_stats['linear_train_r2'], self.all_stats['linear_test_r2'],
-                        alpha=0.7, s=50, edgecolors='black', c='royalblue')
-            plt.axline([0, 0], [1, 1], color='gray', linestyle='--', alpha=0.7)
-            plt.xlim(-0.1, 1.0)
-            plt.ylim(-0.1, 1.0)
-            plt.title('Linear Model: Train vs Test R²', fontsize=12)
-            plt.xlabel('Train R²', fontsize=10)
-            plt.ylabel('Test R²', fontsize=10)
-            plt.grid(alpha=0.3)
-            
-            # Random Forest Train vs Test
-            plt.subplot(1, 2, 2)
-            plt.scatter(self.all_stats['rf_train_r2'], self.all_stats['rf_test_r2'],
-                        alpha=0.7, s=50, edgecolors='black', c='darkgreen')
-            plt.axline([0, 0], [1, 1], color='gray', linestyle='--', alpha=0.7)
-            plt.xlim(-0.1, 1.0)
-            plt.ylim(-0.1, 1.0)
-            plt.title('Random Forest: Train vs Test R²', fontsize=12)
-            plt.xlabel('Train R²', fontsize=10)
-            plt.ylabel('Test R²', fontsize=10)
-            plt.grid(alpha=0.3)
-            
-            plt.tight_layout()
-            overfitting_path = summary_dir / 'r2_train_vs_test_comparison.png'
-            plt.savefig(overfitting_path, dpi=150, bbox_inches='tight')
-            plt.close()
-            
-            self.log(f"[INFO] Train vs Test R² comparison plot saved to: {overfitting_path}")
+            # Create learnability histograms if data is available
+            if self.all_stats['linear_learnability'] and self.all_stats['rf_learnability']:
+                plt.figure(figsize=(12, 6))
+                
+                plt.subplot(1, 2, 1)
+                plt.hist(self.all_stats['linear_learnability'], bins=10, alpha=0.7, 
+                         color='cornflowerblue', edgecolor='black')
+                plt.title('Linear Model Learnability Distribution', fontsize=12)
+                plt.xlabel('Learnability (Half/Full MSE ratio)', fontsize=10)
+                plt.ylabel('Number of Datasets', fontsize=10)
+                plt.grid(alpha=0.3)
+                
+                plt.subplot(1, 2, 2)
+                plt.hist(self.all_stats['rf_learnability'], bins=10, alpha=0.7,
+                         color='forestgreen', edgecolor='black')
+                plt.title('Random Forest Learnability Distribution', fontsize=12)
+                plt.xlabel('Learnability (Half/Full MSE ratio)', fontsize=10)
+                plt.ylabel('Number of Datasets', fontsize=10)
+                plt.grid(alpha=0.3)
+                
+                plt.tight_layout()
+                learnability_hist_path = summary_dir / 'learnability_distribution_histogram.png'
+                plt.savefig(learnability_hist_path, dpi=150, bbox_inches='tight')
+                plt.close()
+                
+                self.log(f"[INFO] Learnability distribution histogram saved to: {learnability_hist_path}")
+                
+                # Create learnability comparison plot
+                plt.figure(figsize=(8, 6))
+                plt.scatter(self.all_stats['linear_learnability'], self.all_stats['rf_learnability'],
+                           alpha=0.7, s=50, edgecolors='black', c='purple')
+                
+                # Add a reference line at x=y
+                max_value = max(
+                    max(self.all_stats['linear_learnability']),
+                    max(self.all_stats['rf_learnability'])
+                )
+                plt.axline([0, 0], [max_value, max_value], color='gray', linestyle='--', alpha=0.7)
+                
+                # Add a reference line at 1.0 (no learning benefit from more data)
+                plt.axhline(1.0, color='red', linestyle='--', alpha=0.5)
+                plt.axvline(1.0, color='red', linestyle='--', alpha=0.5)
+                
+                plt.title('Linear Model vs Random Forest Learnability Comparison', fontsize=14)
+                plt.xlabel('Linear Model Learnability', fontsize=12)
+                plt.ylabel('Random Forest Learnability', fontsize=12)
+                plt.grid(alpha=0.3)
+                
+                learnability_comparison_path = summary_dir / 'learnability_model_comparison.png'
+                plt.savefig(learnability_comparison_path, dpi=150, bbox_inches='tight')
+                plt.close()
+                
+                self.log(f"[INFO] Learnability comparison plot saved to: {learnability_comparison_path}")
             
             # Create comparison plot: Linear vs RF MSE
             if ('linear_test_mse' in self.all_stats and self.all_stats['linear_test_mse'] and 
@@ -1270,114 +1378,13 @@ class DataloaderDatasetVisualizer:
                 plt.close()
                 
                 self.log(f"[INFO] MSE model comparison plot saved to: {mse_comparison_path}")
-                
-                # Create Train vs Test MSE comparison plots for overfitting analysis
-                if ('linear_train_mse' in self.all_stats and self.all_stats['linear_train_mse'] and 
-                    'rf_train_mse' in self.all_stats and self.all_stats['rf_train_mse']):
-                    
-                    plt.figure(figsize=(12, 6))
-                    
-                    # Get max value for both plots
-                    max_linear_mse = max(
-                        max(self.all_stats['linear_train_mse']),
-                        max(self.all_stats['linear_test_mse'])
-                    )
-                    
-                    max_rf_mse = max(
-                        max(self.all_stats['rf_train_mse']),
-                        max(self.all_stats['rf_test_mse'])
-                    )
-                    
-                    # Linear Model Train vs Test MSE
-                    plt.subplot(1, 2, 1)
-                    plt.scatter(self.all_stats['linear_train_mse'], self.all_stats['linear_test_mse'],
-                                alpha=0.7, s=50, edgecolors='black', c='firebrick')
-                    plt.axline([0, 0], [max_linear_mse, max_linear_mse], color='gray', linestyle='--', alpha=0.7)
-                    plt.xlim(-0.05 * max_linear_mse, 1.05 * max_linear_mse)
-                    plt.ylim(-0.05 * max_linear_mse, 1.05 * max_linear_mse)
-                    plt.title('Linear Model: Train vs Test MSE', fontsize=12)
-                    plt.xlabel('Train MSE', fontsize=10)
-                    plt.ylabel('Test MSE', fontsize=10)
-                    plt.grid(alpha=0.3)
-                    
-                    # Random Forest Train vs Test MSE
-                    plt.subplot(1, 2, 2)
-                    plt.scatter(self.all_stats['rf_train_mse'], self.all_stats['rf_test_mse'],
-                                alpha=0.7, s=50, edgecolors='black', c='olivedrab')
-                    plt.axline([0, 0], [max_rf_mse, max_rf_mse], color='gray', linestyle='--', alpha=0.7)
-                    plt.xlim(-0.05 * max_rf_mse, 1.05 * max_rf_mse)
-                    plt.ylim(-0.05 * max_rf_mse, 1.05 * max_rf_mse)
-                    plt.title('Random Forest: Train vs Test MSE', fontsize=12)
-                    plt.xlabel('Train MSE', fontsize=10)
-                    plt.ylabel('Test MSE', fontsize=10)
-                    plt.grid(alpha=0.3)
-                    
-                    plt.tight_layout()
-                    mse_overfitting_path = summary_dir / 'mse_train_vs_test_comparison.png'
-                    plt.savefig(mse_overfitting_path, dpi=150, bbox_inches='tight')
-                    plt.close()
-                    
-                    self.log(f"[INFO] Train vs Test MSE comparison plot saved to: {mse_overfitting_path}")
         
-            # 3. OVERFITTING ANALYSIS
-            self.log("\n" + "="*60)
-            self.log("OVERFITTING ANALYSIS")
-            self.log("="*60)
-            
-            # Calculate overfitting metrics
-            if all(key in self.all_stats and self.all_stats[key] for key in ['linear_train_r2', 'linear_test_r2', 'rf_train_r2', 'rf_test_r2']):
-                # Calculate R² gaps (train - test) for each dataset
-                linear_r2_gaps = np.array(self.all_stats['linear_train_r2']) - np.array(self.all_stats['linear_test_r2'])
-                rf_r2_gaps = np.array(self.all_stats['rf_train_r2']) - np.array(self.all_stats['rf_test_r2'])
-                
-                # Calculate statistics for these gaps
-                linear_r2_gap_mean = np.mean(linear_r2_gaps)
-                linear_r2_gap_se = np.std(linear_r2_gaps) / np.sqrt(n_datasets)
-                linear_r2_gap_median = np.median(linear_r2_gaps)
-                
-                rf_r2_gap_mean = np.mean(rf_r2_gaps)
-                rf_r2_gap_se = np.std(rf_r2_gaps) / np.sqrt(n_datasets)
-                rf_r2_gap_median = np.median(rf_r2_gaps)
-                
-                # Log results
-                self.log("[INFO] R² Gap (Train - Test) Analysis:")
-                self.log("[INFO] Linear Model:")
-                self.log(f"[INFO]   Mean R² Gap:   {linear_r2_gap_mean:.4f} (±{linear_r2_gap_se:.4f})")
-                self.log(f"[INFO]   Median R² Gap: {linear_r2_gap_median:.4f}")
-                
-                self.log("[INFO] Random Forest:")
-                self.log(f"[INFO]   Mean R² Gap:   {rf_r2_gap_mean:.4f} (±{rf_r2_gap_se:.4f})")
-                self.log(f"[INFO]   Median R² Gap: {rf_r2_gap_median:.4f}")
-                
-                # MSE overfitting analysis if available
-                if all(key in self.all_stats and self.all_stats[key] for key in ['linear_train_mse', 'linear_test_mse', 'rf_train_mse', 'rf_test_mse']):
-                    # Calculate MSE ratios (test / train) for each dataset
-                    linear_mse_ratios = np.array(self.all_stats['linear_test_mse']) / np.array(self.all_stats['linear_train_mse'])
-                    rf_mse_ratios = np.array(self.all_stats['rf_test_mse']) / np.array(self.all_stats['rf_train_mse'])
-                    
-                    # Calculate statistics for these ratios
-                    linear_mse_ratio_mean = np.mean(linear_mse_ratios)
-                    linear_mse_ratio_se = np.std(linear_mse_ratios) / np.sqrt(n_datasets)
-                    linear_mse_ratio_median = np.median(linear_mse_ratios)
-                    
-                    rf_mse_ratio_mean = np.mean(rf_mse_ratios)
-                    rf_mse_ratio_se = np.std(rf_mse_ratios) / np.sqrt(n_datasets)
-                    rf_mse_ratio_median = np.median(rf_mse_ratios)
-                    
-                    # Log results
-                    self.log("[INFO] MSE Ratio (Test / Train) Analysis:")
-                    self.log("[INFO] Linear Model:")
-                    self.log(f"[INFO]   Mean MSE Ratio:   {linear_mse_ratio_mean:.4f} (±{linear_mse_ratio_se:.4f})")
-                    self.log(f"[INFO]   Median MSE Ratio: {linear_mse_ratio_median:.4f}")
-                    
-                    self.log("[INFO] Random Forest:")
-                    self.log(f"[INFO]   Mean MSE Ratio:   {rf_mse_ratio_mean:.4f} (±{rf_mse_ratio_se:.4f})")
-                    self.log(f"[INFO]   Median MSE Ratio: {rf_mse_ratio_median:.4f}")
-            
-            # 4. FEATURE IMPORTANCE SUMMARY
-            self.log("\n" + "="*60)
-            self.log("FEATURE IMPORTANCE SUMMARY")
-            self.log("="*60)        if self.all_stats['feature_importances']:
+        # 3. FEATURE IMPORTANCE SUMMARY
+        self.log("\n" + "="*60)
+        self.log("FEATURE IMPORTANCE SUMMARY")
+        self.log("="*60)
+        
+        if self.all_stats['feature_importances']:
             self.log("[INFO] Average feature importance across datasets:")
             
             # Calculate mean importance for each feature
@@ -1549,12 +1556,19 @@ def main():
     N_BATCHES = 1
     
     # Number of datasets to visualize per batch
-    N_DATASETS_PER_BATCH = 5
+    N_DATASETS_PER_BATCH = 100
     
     # Results will be saved to organized folders (plots will NOT be displayed)
     # Format: checks/Results/run_YYYYMMDD_HHMMSS/batch_X/dataset_Y/
     # A summary folder with overall statistics will also be created
-    RESULTS_BASE_DIR = 'src/training/checks/Results'
+    
+    # Detect which directory we're running from to set correct results path
+    if 'priors' in str(Path(__file__)):
+        # We're running from src/priors/training/checks/
+        RESULTS_BASE_DIR = 'src/priors/training/checks/Results'
+    else:
+        # We're running from src/training/checks/
+        RESULTS_BASE_DIR = 'src/training/checks/Results'
     
     # =============================================================
     # END CONFIGURATION
@@ -1574,6 +1588,19 @@ def main():
     print(f"  N_BATCHES = {N_BATCHES}")
     print(f"  N_DATASETS_PER_BATCH = {N_DATASETS_PER_BATCH}")
     print(f"  RESULTS_DIR = {results_dir}")
+    
+    # Debug information
+    script_path = Path(__file__)
+    script_dir = script_path.parent
+    repo_root = script_dir.parent.parent.parent.parent
+    expected_config_path = repo_root / CONFIG_PATH
+    
+    print("\nDebug Information:")
+    print(f"  Script Path: {script_path}")
+    print(f"  Script Directory: {script_dir}")
+    print(f"  Repository Root: {repo_root}")
+    print(f"  Expected Config Path: {expected_config_path}")
+    print(f"  Config Path Exists: {expected_config_path.exists()}")
     print()
     print("Output will be saved to organized folders. Plots will NOT be displayed.")
     print("Analysis output will be written to both console and files.")
