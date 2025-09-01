@@ -196,14 +196,53 @@ def main():
         
         # Create trainer with the dataloader
         print(f"\nTRAINER SETUP:")
+        
+        # Configure scheduler if enabled
+        scheduler_config = None
+        if "scheduler_type" in training_config:
+            scheduler_type = training_config.get("scheduler_type")
+            if scheduler_type == "linear_warmup_cosine_decay":
+                # Get scheduler parameters from config
+                warmup_ratio = training_config.get("warmup_ratio", 0.03)
+                
+                # Use explicit min_lr_ratio if provided, otherwise calculate from eta_min
+                min_lr_ratio = training_config.get("min_lr_ratio")
+                if min_lr_ratio is None and "eta_min" in training_config:
+                    eta_min = training_config.get("eta_min", 0.0)
+                    base_lr = training_config.get("learning_rate", 1e-3)
+                    if base_lr > 0:  # Avoid division by zero
+                        min_lr_ratio = eta_min / base_lr
+                
+                # Default if still not specified
+                if min_lr_ratio is None:
+                    min_lr_ratio = 0.1
+                
+                scheduler_config = {
+                    "type": scheduler_type,
+                    "warmup_ratio": warmup_ratio,
+                    "min_lr_ratio": min_lr_ratio
+                }
+                
+                # Calculate actual warmup steps for display
+                max_steps = training_config.get("max_steps", 10)
+                warmup_steps = int(round(warmup_ratio * max_steps))
+                
+                print(f"   Scheduler: Linear warmup + cosine decay")
+                print(f"   Warmup ratio: {warmup_ratio:.2f} ({warmup_steps} steps)")
+                print(f"   Min LR ratio: {min_lr_ratio:.6f}")
+            else:
+                print(f"   Scheduler: None (constant learning rate)")
+        
         trainer = SimplePFNTrainer(
             model=model,
             dataloader=dataloader,
             learning_rate=training_config.get("learning_rate", 1e-3),
             max_steps=training_config.get("max_steps", 10),
             device=device,
-            wandb_run=wandb_run  # Pass wandb run for logging
+            wandb_run=wandb_run,  # Pass wandb run for logging
+            scheduler_config=scheduler_config
         )
+        
         print(f"   Learning rate: {training_config.get('learning_rate', 1e-3)}")
         print(f"   Max steps: {training_config.get('max_steps', 10)}")
         print(f"   Wandb logging: {'enabled' if wandb_run else 'disabled'}")

@@ -7,7 +7,9 @@ import torch
 import torch.nn as nn
 import time
 from torch.utils.data import DataLoader
-from typing import Optional
+from torch.optim.lr_scheduler import LambdaLR
+import math
+from typing import Optional, Dict, Any, Union, Callable
 
 
 class SimplePFNTrainer:
@@ -20,7 +22,8 @@ class SimplePFNTrainer:
         learning_rate: float = 1e-3,
         max_steps: int = 1000,
         device: str = "cpu",
-        wandb_run: Optional[object] = None
+        wandb_run: Optional[object] = None,
+        scheduler_config: Optional[Dict[str, Any]] = None
     ):
         self.model = model
         self.dataloader = dataloader
@@ -28,6 +31,7 @@ class SimplePFNTrainer:
         self.max_steps = max_steps
         self.device = device
         self.wandb_run = wandb_run
+        self.scheduler_config = scheduler_config or {}
         
         # Move model to device
         self.model = self.model.to(device)
@@ -36,6 +40,43 @@ class SimplePFNTrainer:
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         self.criterion = nn.MSELoss()
         self.global_step = 0
+        
+        # Setup scheduler if enabled
+        self.scheduler = self._create_scheduler(self.scheduler_config)
+    
+    def _create_scheduler(self, scheduler_config):
+        sched_type = scheduler_config.get("type")
+        if not sched_type:
+            print(f"No scheduler specified, using constant learning rate: {self.learning_rate}")
+            return None
+
+        if sched_type == "linear_warmup_cosine_decay":
+            # Get parameters with sensible defaults
+            warmup_ratio = float(scheduler_config.get("warmup_ratio", 0.03))  # 3% of steps
+            min_lr_ratio = float(scheduler_config.get("min_lr_ratio", 0.1))   # 10% floor
+            
+            # Calculate warmup steps based on ratio
+            warmup_steps = int(round(warmup_ratio * self.max_steps))
+            warmup_steps = max(1, warmup_steps)  # avoid divide-by-zero
+
+            def lr_lambda(current_step: int) -> float:
+                # Linear warmup 0 -> 1
+                if current_step < warmup_steps:
+                    return float(current_step) / float(warmup_steps)
+
+                # Cosine decay from 1 -> min_lr_ratio
+                progress = (current_step - warmup_steps) / max(1, self.max_steps - warmup_steps)
+                progress = min(max(progress, 0.0), 1.0)
+                cosine = 0.5 * (1.0 + math.cos(math.pi * progress))  # 1 -> 0
+                return min_lr_ratio + (1.0 - min_lr_ratio) * cosine  # 1 -> min_lr_ratio
+
+            scheduler = LambdaLR(self.optimizer, lr_lambda=lr_lambda)
+            print(f"Created linear warmup ({warmup_steps} steps) + cosine decay "
+                  f"(min_lr_ratio={min_lr_ratio}) scheduler")
+            return scheduler
+
+        print(f"Unknown scheduler type: {sched_type}, using constant learning rate")
+        return None
 
     def _process_batch(self, batch):
         """
@@ -71,6 +112,20 @@ class SimplePFNTrainer:
         print(f"Training SimplePFN for {self.max_steps} steps with learning rate {self.learning_rate}")
         print(f"Using device: {self.device}")
         
+        # Log scheduler info if available
+        if self.scheduler is not None:
+            sched_config = self.scheduler_config
+            warmup_ratio = sched_config.get("warmup_ratio", 0.03)
+            min_lr_ratio = sched_config.get("min_lr_ratio", 0.1)
+            warmup_steps = int(round(warmup_ratio * self.max_steps))
+            
+            print(f"Using learning rate scheduler: enabled")
+            print(f"   Type: Linear warmup + cosine decay")
+            print(f"   Warmup ratio: {warmup_ratio:.2f} ({warmup_steps} steps)")
+            print(f"   Min LR ratio: {min_lr_ratio:.6f} (min LR: {self.learning_rate * min_lr_ratio:.6f})")
+        else:
+            print(f"Using learning rate scheduler: disabled (constant LR)")
+            
         # Start total timing
         total_start_time = time.time()
         batch_times = []
@@ -121,6 +176,13 @@ class SimplePFNTrainer:
             loss.backward()
             self.optimizer.step()
             
+            # Update learning rate if scheduler is enabled
+            if self.scheduler is not None:
+                self.scheduler.step()
+                current_lr = self.scheduler.get_last_lr()[0]
+            else:
+                current_lr = self.learning_rate
+            
             self.global_step += 1
             
             # End batch timing
@@ -134,13 +196,15 @@ class SimplePFNTrainer:
                     'train/loss': loss.item(),
                     'train/step_time': batch_time,
                     'train/batch_size': X_train.shape[0],
-                    'train/global_step': self.global_step
+                    'train/global_step': self.global_step,
+                    'train/learning_rate': current_lr
                 }, step=self.global_step)
             
             # Print progress - more frequent at start, less frequent later
             if step <= 10 or step % max(1, self.max_steps // 10) == 0:
-                wandb_status = "" if self.wandb_run else ""
-                print(f"   Step {step:4d}/{self.max_steps} | Loss: {loss.item():.6f} | Time: {batch_time:.3f}s | Batch size: {X_train.shape[0]} {wandb_status}")
+                wandb_status = "📊" if self.wandb_run else "⚫"
+                lr_info = f"LR: {current_lr:.6f}" if self.scheduler is not None else ""
+                print(f"   Step {step:4d}/{self.max_steps} | Loss: {loss.item():.6f} | Time: {batch_time:.3f}s | Batch size: {X_train.shape[0]} {lr_info} {wandb_status}")
         
         # End total timing
         total_end_time = time.time()

@@ -187,8 +187,7 @@ training_config:
     value: 10  # Very short training for early testing (vs debug's 100)
   max_epochs:
     value: 1   # Single epoch (standard for synthetic data)
-  eta_min:
-    value: 0.000001  # Minimum learning rate for scheduler
+# eta_min is no longer needed as we use min_lr_ratio directly
     
   # Data Loading Parameters
   # -----------------------
@@ -203,6 +202,12 @@ training_config:
     value: 0   # Disable early stopping (no validation setup needed)
   gradient_clip_val:
     value: 1.0  # Gradient clipping for training stability
+  scheduler_type:
+    value: "linear_warmup_cosine_decay"  # Linear warmup + cosine decay LR schedule
+  warmup_ratio:
+    value: 0.05  # Warmup for 3% of total training steps
+  min_lr_ratio:
+    value: 0.1  # Minimum LR as a ratio of initial LR (10% of max)
     
   # Hardware Configuration
   # ----------------------
