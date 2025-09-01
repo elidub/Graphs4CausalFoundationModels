@@ -125,7 +125,7 @@ dataset_config:
   number_samples_per_dataset:
     # Distribution over actual samples per dataset (within max_number_samples)
     distribution: "uniform"
-    distribution_parameters: {low: 90, high: 99}  # Smaller range for testing
+    distribution_parameters: {low: 990, high: 999}  # Smaller range for testing
   seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}

@@ -13,27 +13,19 @@ Usage:
 
 import sys
 import yaml
-import os
 from datetime import datetime
 from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from pathlib import Path
-from torch.utils.data import DataLoader
 import warnings
+from torch.utils.data import DataLoader
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 warnings.filterwarnings("ignore", category=UserWarning, module="xgboost")
 warnings.filterwarnings("ignore", message="Use subset (sliced data) of np.ndarray is not recommended")
-from torch.utils.data import DataLoader
-import warnings
-
-# Suppress specific warnings
-warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
-warnings.filterwarnings("ignore", category=UserWarning, module="xgboost")
 
 # Add src directory to path for imports
 src_dir = Path(__file__).parent.parent.parent
@@ -99,32 +91,19 @@ class DataloaderDatasetVisualizer:
         self.dataset = None
         self.dataloader = None
         self.current_output_file = None  # Current output file for logging
+        self.main_log_file = None  # Main log file handle
         self.results_base_dir = None  # Base directory for all results
-        
-        # Dictionary to collect statistics across all datasets for summary
-        self.all_stats = {
-            'linear_train_r2': [],
-            'linear_test_r2': [],
-            'linear_train_mse': [],
-            'linear_test_mse': [],
-            'rf_train_r2': [],
-            'rf_test_r2': [],
-            'rf_train_mse': [],
-            'rf_test_mse': [],
-            'target_ranges': [],
-            'feature_counts': [],
-            'train_sample_counts': [],
-            'test_sample_counts': [],
-            'feature_importances': {},
-            'target_correlations': []
-        }
         
     def log(self, message: str):
         """Log message to both current output file and console."""
         # Write to log file
         if self.current_output_file:
-            self.current_output_file.write(message + '\n')
-            self.current_output_file.flush()
+            try:
+                self.current_output_file.write(message + '\n')
+                self.current_output_file.flush()
+            except (ValueError, IOError) as e:
+                # Handle case where file is closed or other IO error
+                print(f"[WARNING] Could not write to log file: {e}")
         
         # Also print to console for better visibility
         print(message)
@@ -376,41 +355,41 @@ class DataloaderDatasetVisualizer:
         self.log(f"[INFO]     - Actual remaining: {n_active_features}")
         
         # CRITICAL DEBUGGING: The shape inconsistency!
-        self.log(f"[CRITICAL] SHAPE INCONSISTENCY DETECTED:")
-        self.log(f"[CRITICAL]   Dataloader reported 9 features, config expects 10")
-        self.log(f"[CRITICAL]   This suggests preprocessing already removed features BEFORE padding")
-        self.log(f"[CRITICAL]   Likely causes:")
-        self.log(f"[CRITICAL]     1. Original SCM generated < 10 features")
-        self.log(f"[CRITICAL]     2. Feature dropout happened before padding")
-        self.log(f"[CRITICAL]     3. Target feature was already removed")
+        self.log("[CRITICAL] SHAPE INCONSISTENCY DETECTED:")
+        self.log("[CRITICAL]   Dataloader reported 9 features, config expects 10")
+        self.log("[CRITICAL]   This suggests preprocessing already removed features BEFORE padding")
+        self.log("[CRITICAL]   Likely causes:")
+        self.log("[CRITICAL]     1. Original SCM generated < 10 features")
+        self.log("[CRITICAL]     2. Feature dropout happened before padding")
+        self.log("[CRITICAL]     3. Target feature was already removed")
         
         # Analyze the pattern of zeroed features
         zeroed_indices = np.where(~active_features_mask)[0]
         active_indices = np.where(active_features_mask)[0]
-        self.log(f"[INFO] FEATURE PATTERN ANALYSIS:")
+        self.log("[INFO] FEATURE PATTERN ANALYSIS:")
         self.log(f"[INFO]   Active feature positions: {active_indices.tolist()}")
         self.log(f"[INFO]   Zeroed feature positions: {zeroed_indices.tolist()}")
         if len(zeroed_indices) > 0:
             if np.all(zeroed_indices >= n_active_features):
-                self.log(f"[INFO]   Pattern: All zeros at end → Likely padding-only")
+                self.log("[INFO]   Pattern: All zeros at end → Likely padding-only")
                 self.log(f"[CRITICAL]   CONCLUSION: Original data had {n_active_features} features")
-                self.log(f"[CRITICAL]   Missing features were likely removed in BasicProcessing, not padding")
+                self.log("[CRITICAL]   Missing features were likely removed in BasicProcessing, not padding")
             elif np.all(zeroed_indices < n_active_features):
-                self.log(f"[INFO]   Pattern: Zeros at beginning → Likely preprocessing dropout")
+                self.log("[INFO]   Pattern: Zeros at beginning → Likely preprocessing dropout")
             else:
-                self.log(f"[INFO]   Pattern: Mixed zeros → Combination of dropout + padding")
+                self.log("[INFO]   Pattern: Mixed zeros → Combination of dropout + padding")
                 
         # Additional analysis for test sample padding
-        self.log(f"[CRITICAL] TEST SAMPLE PADDING ANALYSIS:")
+        self.log("[CRITICAL] TEST SAMPLE PADDING ANALYSIS:")
         self.log(f"[CRITICAL]   Test samples show {test_sample_padding_fraction:.1%} padding ({n_padded_test_samples}/{n_test_samples} are zeros)")
         self.log(f"[CRITICAL]   This suggests the original dataset had {n_active_test_samples} test samples")
-        self.log(f"[CRITICAL]   Expected from config: 30% of total samples should be test")
+        self.log("[CRITICAL]   Expected from config: 30% of total samples should be test")
         self.log(f"[CRITICAL]   With {total_original_samples} total samples: 0.3 * {total_original_samples} = {int(0.3 * total_original_samples)} expected test samples")
         self.log(f"[CRITICAL]   But we have {n_active_test_samples} actual test samples!")
         if n_active_test_samples < int(0.3 * total_original_samples):
-            self.log(f"[CRITICAL]   This indicates train_fraction = 0.7 was applied to a smaller dataset")
+            self.log("[CRITICAL]   This indicates train_fraction = 0.7 was applied to a smaller dataset")
         else:
-            self.log(f"[INFO]   Test sample count is reasonable for the dataset size")
+            self.log("[INFO]   Test sample count is reasonable for the dataset size")
         
         # Detailed feature analysis
         self.log("="*80)
@@ -420,9 +399,6 @@ class DataloaderDatasetVisualizer:
         self.log(f"[DEBUG] Feature variances - Test: {test_feature_variances}")
         self.log(f"[DEBUG] Active features mask: {active_features_mask}")
         self.log(f"[DEBUG] Active feature indices: {np.where(active_features_mask)[0].tolist()}")
-        print(f"[DEBUG] Zeroed feature indices: {np.where(~active_features_mask)[0].tolist()}")
-        
-        # Detailed sample analysis (show first/last few)
         self.log(f"[DEBUG] Active train samples: first 10 = {active_train_samples_mask[:10]}")
         self.log(f"[DEBUG] Active train samples: last 10 = {active_train_samples_mask[-10:]}")
         self.log(f"[DEBUG] Active test samples: first 10 = {active_test_samples_mask[:10]}")
@@ -444,18 +420,11 @@ class DataloaderDatasetVisualizer:
         X_test_filtered = X_test[active_test_samples_mask][:, active_features_mask]
         y_test_filtered = y_test[active_test_samples_mask]
         
-        self.log(f"[INFO] After removing padding:")
+        self.log("[INFO] After removing padding:")
         self.log(f"[INFO]   Filtered train: {X_train_filtered.shape[0]} samples × {X_train_filtered.shape[1]} features")
         self.log(f"[INFO]   Filtered test: {X_test_filtered.shape[0]} samples × {X_test_filtered.shape[1]} features")
         self.log(f"[INFO]   X_train_filtered range: [{X_train_filtered.min():.3f}, {X_train_filtered.max():.3f}]")
         self.log(f"[INFO]   X_test_filtered range: [{X_test_filtered.min():.3f}, {X_test_filtered.max():.3f}]")
-        
-        # Store dataset statistics for summary
-        y_range = (y_train_filtered.min(), y_train_filtered.max())
-        self.all_stats['feature_counts'].append(X_train_filtered.shape[1])
-        self.all_stats['train_sample_counts'].append(X_train_filtered.shape[0])
-        self.all_stats['test_sample_counts'].append(X_test_filtered.shape[0])
-        self.all_stats['target_ranges'].append(y_range)
         
         # Create DataFrame for easier plotting with only active features (use training data for viz)
         active_feature_names = [f'X{i}' for i in range(n_features) if active_features_mask[i]]
@@ -525,6 +494,7 @@ class DataloaderDatasetVisualizer:
         
         # Close the figure instead of displaying it
         plt.close(fig)
+        
         # Simple correlation heatmap (only if we have multiple features)
         if n_active_features > 1:
             self.log("[INFO] Creating correlation heatmap...")
@@ -564,8 +534,6 @@ class DataloaderDatasetVisualizer:
             target_corrs = corr_matrix['target'][:-1]  # Exclude target-target correlation
             for feat, corr in target_corrs.items():
                 self.log(f"[INFO]     {feat}: {corr:.3f}")
-                # Store correlation data for summary
-                self.all_stats['target_correlations'].append((feat, corr))
         else:
             self.log("[INFO] Only 1 active feature, skipping correlation heatmap")
             
@@ -576,11 +544,8 @@ class DataloaderDatasetVisualizer:
             self.log(f"[INFO]   Feature std: {X_train_filtered.std():.3f}")
             correlation_with_target = np.corrcoef(X_train_filtered.flatten(), y_train_filtered)[0, 1]
             self.log(f"[INFO]   Correlation with target: {correlation_with_target:.3f}")
-            
-            # Store correlation data for summary
-            self.all_stats['target_correlations'].append((active_feature_names[0], correlation_with_target))
         
-        print()
+        self.log("")
     
     def _analyze_predictability(self, X, y, feature_names):
         """
@@ -721,12 +686,6 @@ class DataloaderDatasetVisualizer:
                     self.log(f"[WARN]     Extremely poor test R² (worse than baseline): {test_r2:.6f}")
                 elif test_r2 > 0.99:
                     self.log(f"[WARN]     Suspiciously high test R² (possible overfitting): {test_r2:.6f}")
-                
-                # Store statistics for summary
-                self.all_stats['linear_train_r2'].append(train_r2)
-                self.all_stats['linear_test_r2'].append(test_r2)
-                self.all_stats['linear_train_mse'].append(train_mse)
-                self.all_stats['linear_test_mse'].append(test_mse)
                     
             except Exception as e:
                 self.log(f"[WARN]   Linear model failed: {e}")
@@ -758,12 +717,6 @@ class DataloaderDatasetVisualizer:
                     self.log(f"[WARN]     Extremely poor test R² (worse than baseline): {test_r2:.6f}")
                 elif test_r2 > 0.99:
                     self.log(f"[WARN]     Suspiciously high test R² (possible overfitting): {test_r2:.6f}")
-                
-                # Store statistics for summary
-                self.all_stats['rf_train_r2'].append(train_r2)
-                self.all_stats['rf_test_r2'].append(test_r2)
-                self.all_stats['rf_train_mse'].append(train_mse)
-                self.all_stats['rf_test_mse'].append(test_mse)
                     
                 # Feature importance
                 if n_features <= 10:  # Only show for reasonable number of features
@@ -771,11 +724,6 @@ class DataloaderDatasetVisualizer:
                     self.log("[INFO]     Feature Importance:")
                     for feat, imp in zip(feature_names, importances):
                         self.log(f"[INFO]       {feat}: {imp:.3f}")
-                        
-                        # Store feature importance for summary
-                        if feat not in self.all_stats['feature_importances']:
-                            self.all_stats['feature_importances'][feat] = []
-                        self.all_stats['feature_importances'][feat].append(imp)
                     
             except Exception as e:
                 self.log(f"[WARN]   Random Forest failed: {e}")
@@ -794,7 +742,7 @@ class DataloaderDatasetVisualizer:
             n_batches: Number of batches to sample
             n_datasets_per_batch: Number of datasets to visualize per batch
         """
-        self.log(f"\n[INFO] Sampling and visualizing batches...")
+        self.log("\n[INFO] Sampling and visualizing batches...")
         self.log(f"[INFO] Target: {n_batches} batches, {n_datasets_per_batch} datasets per batch")
         
         batch_count = 0
@@ -808,15 +756,16 @@ class DataloaderDatasetVisualizer:
             
             # Create batch log file
             batch_log_path = batch_dir / "batch_analysis.txt"
-            with open(batch_log_path, 'w', encoding='utf-8') as batch_log:
-                self.current_output_file = batch_log
-                
-                self.log(f"="*80)
+            batch_log_file = open(batch_log_path, 'w', encoding='utf-8')
+            self.current_output_file = batch_log_file
+            
+            try:
+                self.log("="*80)
                 self.log(f"BATCH {batch_idx + 1} ANALYSIS OUTPUT")
                 self.log(f"Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                self.log(f"="*80)
+                self.log("="*80)
                 
-                self.log(f"\n" + "="*50)
+                self.log("\n" + "="*50)
                 self.log(f"BATCH {batch_idx + 1}")
                 self.log("="*50)
                 
@@ -840,11 +789,15 @@ class DataloaderDatasetVisualizer:
                     dataset_dir = batch_dir / f"dataset_{dataset_idx + 1}"
                     dataset_dir.mkdir(parents=True, exist_ok=True)
                     
-                    # Create dataset log file
+                    # Create dataset log file and safely handle it
                     dataset_log_path = dataset_dir / "analysis.txt"
-                    with open(dataset_log_path, 'w', encoding='utf-8') as dataset_log:
-                        self.current_output_file = dataset_log
-                        
+                    dataset_log_file = open(dataset_log_path, 'w', encoding='utf-8')
+                    
+                    # Store the previous output file to restore later
+                    prev_output_file = self.current_output_file
+                    self.current_output_file = dataset_log_file
+                    
+                    try:
                         self.log(f"\n--- Dataset {dataset_idx + 1} ---")
                         self.visualize_dataset(
                             X_train, y_train, X_test, y_test,
@@ -852,622 +805,21 @@ class DataloaderDatasetVisualizer:
                             batch_idx=batch_idx + 1,
                             save_dir=dataset_dir
                         )
+                    finally:
+                        # Make sure to close the dataset log file and restore previous file
+                        if self.current_output_file:
+                            self.current_output_file.close()
+                        self.current_output_file = prev_output_file
                 
                 batch_count += 1
                 
-                # Restore output to batch log
-                self.current_output_file = batch_log
                 self.log(f"\n[INFO] Completed analysis of {n_to_visualize} datasets in batch {batch_idx + 1}")
+            finally:
+                # Make sure to close the batch log file
+                if batch_log_file:
+                    batch_log_file.close()
         
         print(f"\n[OK] Completed visualization of {batch_count} batches")
-    
-    def generate_summary_statistics(self):
-        """
-        Generate overall summary statistics across all datasets and create histograms.
-        
-        This method creates summary plots and outputs overall statistics based on all 
-        the datasets that were analyzed. It includes histograms of key metrics and 
-        summary statistics for predictability across datasets.
-        """
-        # Skip if no datasets were processed
-        if not self.all_stats['linear_test_r2'] and not self.all_stats['rf_test_r2']:
-            self.log("[WARN] No dataset statistics available for summary")
-            return
-        
-        # Print to console regardless of file state
-        print("\n" + "="*80)
-        print("                OVERALL SUMMARY STATISTICS ACROSS ALL DATASETS")
-        print("="*80)
-        
-        # Create summary directory
-        summary_dir = Path(self.results_base_dir) / "summary"
-        summary_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Store the current output file
-        original_output_file = self.current_output_file
-        
-        # Create and open a new summary log file
-        summary_log_path = summary_dir / "summary_statistics.txt"
-        summary_log = open(summary_log_path, 'w', encoding='utf-8')
-        self.current_output_file = summary_log
-        
-        # 1. DATASET CHARACTERISTICS SUMMARY
-        self.log("\n" + "="*60)
-        self.log("DATASET CHARACTERISTICS SUMMARY")
-        self.log("="*60)
-        
-        # Calculate statistics
-        n_datasets = len(self.all_stats['feature_counts'])
-        
-        if n_datasets > 0:
-            avg_features = np.mean(self.all_stats['feature_counts'])
-            std_features = np.std(self.all_stats['feature_counts'])
-            min_features = np.min(self.all_stats['feature_counts'])
-            max_features = np.max(self.all_stats['feature_counts'])
-            
-            avg_train = np.mean(self.all_stats['train_sample_counts'])
-            std_train = np.std(self.all_stats['train_sample_counts'])
-            min_train = np.min(self.all_stats['train_sample_counts'])
-            max_train = np.max(self.all_stats['train_sample_counts'])
-            
-            avg_test = np.mean(self.all_stats['test_sample_counts'])
-            std_test = np.std(self.all_stats['test_sample_counts'])
-            min_test = np.min(self.all_stats['test_sample_counts'])
-            max_test = np.max(self.all_stats['test_sample_counts'])
-            
-            # Output statistics
-            self.log(f"[INFO] Total datasets analyzed: {n_datasets}")
-            self.log(f"[INFO] Feature counts: {avg_features:.1f} ± {std_features:.1f} (min={min_features}, max={max_features})")
-            self.log(f"[INFO] Train samples: {avg_train:.1f} ± {std_train:.1f} (min={min_train}, max={max_train})")
-            self.log(f"[INFO] Test samples: {avg_test:.1f} ± {std_test:.1f} (min={min_test}, max={max_test})")
-            
-            # Create histogram of feature counts
-            plt.figure(figsize=(10, 6))
-            plt.hist(self.all_stats['feature_counts'], bins=min(10, max_features - min_features + 1), 
-                    alpha=0.7, color='steelblue', edgecolor='black')
-            plt.title('Feature Count Distribution Across Datasets', fontsize=14)
-            plt.xlabel('Number of Features', fontsize=12)
-            plt.ylabel('Number of Datasets', fontsize=12)
-            plt.grid(alpha=0.3)
-            plt.tight_layout()
-            
-            # Save histogram
-            feature_hist_path = summary_dir / 'feature_count_histogram.png'
-            plt.savefig(feature_hist_path, dpi=150, bbox_inches='tight')
-            plt.close()
-            
-            self.log(f"[INFO] Feature count histogram saved to: {feature_hist_path}")
-        
-        # 2. PREDICTABILITY SUMMARY
-        self.log("\n" + "="*60)
-        self.log("PREDICTABILITY SUMMARY")
-        self.log("="*60)
-        
-        if self.all_stats['linear_test_r2']:
-            # Calculate standard errors (SE = std / sqrt(n))
-            n_datasets = len(self.all_stats['linear_test_r2'])
-            
-            # Linear Model TEST statistics - R²
-            linear_test_r2_mean = np.mean(self.all_stats['linear_test_r2'])
-            linear_test_r2_std = np.std(self.all_stats['linear_test_r2'])
-            linear_test_r2_se = linear_test_r2_std / np.sqrt(n_datasets)
-            linear_test_r2_median = np.median(self.all_stats['linear_test_r2'])
-            linear_test_r2_min = np.min(self.all_stats['linear_test_r2'])
-            linear_test_r2_max = np.max(self.all_stats['linear_test_r2'])
-            
-            # Linear Model TRAIN statistics - R²
-            linear_train_r2_mean = np.mean(self.all_stats['linear_train_r2'])
-            linear_train_r2_std = np.std(self.all_stats['linear_train_r2'])
-            linear_train_r2_se = linear_train_r2_std / np.sqrt(n_datasets)
-            linear_train_r2_median = np.median(self.all_stats['linear_train_r2'])
-            linear_train_r2_min = np.min(self.all_stats['linear_train_r2'])
-            linear_train_r2_max = np.max(self.all_stats['linear_train_r2'])
-            
-            # Linear Model TEST statistics - MSE
-            if 'linear_test_mse' in self.all_stats and self.all_stats['linear_test_mse']:
-                linear_test_mse_mean = np.mean(self.all_stats['linear_test_mse'])
-                linear_test_mse_std = np.std(self.all_stats['linear_test_mse'])
-                linear_test_mse_se = linear_test_mse_std / np.sqrt(n_datasets)
-                linear_test_mse_median = np.median(self.all_stats['linear_test_mse'])
-                linear_test_mse_min = np.min(self.all_stats['linear_test_mse'])
-                linear_test_mse_max = np.max(self.all_stats['linear_test_mse'])
-            else:
-                linear_test_mse_mean = linear_test_mse_std = linear_test_mse_se = linear_test_mse_median = linear_test_mse_min = linear_test_mse_max = np.nan
-            
-            # Linear Model TRAIN statistics - MSE
-            if 'linear_train_mse' in self.all_stats and self.all_stats['linear_train_mse']:
-                linear_train_mse_mean = np.mean(self.all_stats['linear_train_mse'])
-                linear_train_mse_std = np.std(self.all_stats['linear_train_mse'])
-                linear_train_mse_se = linear_train_mse_std / np.sqrt(n_datasets)
-                linear_train_mse_median = np.median(self.all_stats['linear_train_mse'])
-                linear_train_mse_min = np.min(self.all_stats['linear_train_mse'])
-                linear_train_mse_max = np.max(self.all_stats['linear_train_mse'])
-            else:
-                linear_train_mse_mean = linear_train_mse_std = linear_train_mse_se = linear_train_mse_median = linear_train_mse_min = linear_train_mse_max = np.nan
-            
-            # Random Forest TEST statistics - R²
-            rf_test_r2_mean = np.mean(self.all_stats['rf_test_r2'])
-            rf_test_r2_std = np.std(self.all_stats['rf_test_r2'])
-            rf_test_r2_se = rf_test_r2_std / np.sqrt(n_datasets)
-            rf_test_r2_median = np.median(self.all_stats['rf_test_r2'])
-            rf_test_r2_min = np.min(self.all_stats['rf_test_r2'])
-            rf_test_r2_max = np.max(self.all_stats['rf_test_r2'])
-            
-            # Random Forest TRAIN statistics - R²
-            rf_train_r2_mean = np.mean(self.all_stats['rf_train_r2'])
-            rf_train_r2_std = np.std(self.all_stats['rf_train_r2'])
-            rf_train_r2_se = rf_train_r2_std / np.sqrt(n_datasets)
-            rf_train_r2_median = np.median(self.all_stats['rf_train_r2'])
-            rf_train_r2_min = np.min(self.all_stats['rf_train_r2'])
-            rf_train_r2_max = np.max(self.all_stats['rf_train_r2'])
-            
-            # Random Forest TEST statistics - MSE
-            if 'rf_test_mse' in self.all_stats and self.all_stats['rf_test_mse']:
-                rf_test_mse_mean = np.mean(self.all_stats['rf_test_mse'])
-                rf_test_mse_std = np.std(self.all_stats['rf_test_mse'])
-                rf_test_mse_se = rf_test_mse_std / np.sqrt(n_datasets)
-                rf_test_mse_median = np.median(self.all_stats['rf_test_mse'])
-                rf_test_mse_min = np.min(self.all_stats['rf_test_mse'])
-                rf_test_mse_max = np.max(self.all_stats['rf_test_mse'])
-            else:
-                rf_test_mse_mean = rf_test_mse_std = rf_test_mse_se = rf_test_mse_median = rf_test_mse_min = rf_test_mse_max = np.nan
-                
-            # Random Forest TRAIN statistics - MSE
-            if 'rf_train_mse' in self.all_stats and self.all_stats['rf_train_mse']:
-                rf_train_mse_mean = np.mean(self.all_stats['rf_train_mse'])
-                rf_train_mse_std = np.std(self.all_stats['rf_train_mse'])
-                rf_train_mse_se = rf_train_mse_std / np.sqrt(n_datasets)
-                rf_train_mse_median = np.median(self.all_stats['rf_train_mse'])
-                rf_train_mse_min = np.min(self.all_stats['rf_train_mse'])
-                rf_train_mse_max = np.max(self.all_stats['rf_train_mse'])
-            else:
-                rf_train_mse_mean = rf_train_mse_std = rf_train_mse_se = rf_train_mse_median = rf_train_mse_min = rf_train_mse_max = np.nan
-            
-            # Output statistics with standard errors
-            self.log(f"\n[INFO] LINEAR MODEL PERFORMANCE (over {n_datasets} datasets):")
-            
-            # Linear model R² results
-            self.log("[INFO] Test R²:")
-            self.log(f"[INFO]   Mean:   {linear_test_r2_mean:.4f} (±{linear_test_r2_se:.4f})")
-            self.log(f"[INFO]   Median: {linear_test_r2_median:.4f}")
-            self.log(f"[INFO]   Range:  [{linear_test_r2_min:.4f}, {linear_test_r2_max:.4f}]")
-            
-            self.log("[INFO] Train R²:")
-            self.log(f"[INFO]   Mean:   {linear_train_r2_mean:.4f} (±{linear_train_r2_se:.4f})")
-            self.log(f"[INFO]   Median: {linear_train_r2_median:.4f}")
-            self.log(f"[INFO]   Range:  [{linear_train_r2_min:.4f}, {linear_train_r2_max:.4f}]")
-            
-            # Linear model MSE results
-            if 'linear_test_mse' in self.all_stats and self.all_stats['linear_test_mse']:
-                self.log("[INFO] Test MSE:")
-                self.log(f"[INFO]   Mean:   {linear_test_mse_mean:.4f} (±{linear_test_mse_se:.4f})")
-                self.log(f"[INFO]   Median: {linear_test_mse_median:.4f}")
-                self.log(f"[INFO]   Range:  [{linear_test_mse_min:.4f}, {linear_test_mse_max:.4f}]")
-                
-            if 'linear_train_mse' in self.all_stats and self.all_stats['linear_train_mse']:
-                self.log("[INFO] Train MSE:")
-                self.log(f"[INFO]   Mean:   {linear_train_mse_mean:.4f} (±{linear_train_mse_se:.4f})")
-                self.log(f"[INFO]   Median: {linear_train_mse_median:.4f}")
-                self.log(f"[INFO]   Range:  [{linear_train_mse_min:.4f}, {linear_train_mse_max:.4f}]")
-            
-            # Random Forest results
-            self.log(f"\n[INFO] RANDOM FOREST PERFORMANCE (over {n_datasets} datasets):")
-            
-            # RF R² results
-            self.log("[INFO] Test R²:")
-            self.log(f"[INFO]   Mean:   {rf_test_r2_mean:.4f} (±{rf_test_r2_se:.4f})")
-            self.log(f"[INFO]   Median: {rf_test_r2_median:.4f}")
-            self.log(f"[INFO]   Range:  [{rf_test_r2_min:.4f}, {rf_test_r2_max:.4f}]")
-            
-            self.log("[INFO] Train R²:")
-            self.log(f"[INFO]   Mean:   {rf_train_r2_mean:.4f} (±{rf_train_r2_se:.4f})")
-            self.log(f"[INFO]   Median: {rf_train_r2_median:.4f}")
-            self.log(f"[INFO]   Range:  [{rf_train_r2_min:.4f}, {rf_train_r2_max:.4f}]")
-            
-            # RF MSE results
-            if 'rf_test_mse' in self.all_stats and self.all_stats['rf_test_mse']:
-                self.log("[INFO] Test MSE:")
-                self.log(f"[INFO]   Mean:   {rf_test_mse_mean:.4f} (±{rf_test_mse_se:.4f})")
-                self.log(f"[INFO]   Median: {rf_test_mse_median:.4f}")
-                self.log(f"[INFO]   Range:  [{rf_test_mse_min:.4f}, {rf_test_mse_max:.4f}]")
-                
-            if 'rf_train_mse' in self.all_stats and self.all_stats['rf_train_mse']:
-                self.log("[INFO] Train MSE:")
-                self.log(f"[INFO]   Mean:   {rf_train_mse_mean:.4f} (±{rf_train_mse_se:.4f})")
-                self.log(f"[INFO]   Median: {rf_train_mse_median:.4f}")
-                self.log(f"[INFO]   Range:  [{rf_train_mse_min:.4f}, {rf_train_mse_max:.4f}]")
-            
-            # Create histogram of Test R² values
-            plt.figure(figsize=(12, 6))
-            
-            plt.subplot(1, 2, 1)
-            plt.hist(self.all_stats['linear_test_r2'], bins=10, alpha=0.7, 
-                     color='cornflowerblue', edgecolor='black')
-            plt.title('Linear Model Test R² Distribution', fontsize=12)
-            plt.xlabel('Test R²', fontsize=10)
-            plt.ylabel('Number of Datasets', fontsize=10)
-            plt.grid(alpha=0.3)
-            
-            plt.subplot(1, 2, 2)
-            plt.hist(self.all_stats['rf_test_r2'], bins=10, alpha=0.7,
-                     color='forestgreen', edgecolor='black')
-            plt.title('Random Forest Test R² Distribution', fontsize=12)
-            plt.xlabel('Test R²', fontsize=10)
-            plt.ylabel('Number of Datasets', fontsize=10)
-            plt.grid(alpha=0.3)
-            
-            plt.tight_layout()
-            test_r2_hist_path = summary_dir / 'test_r2_distribution_histogram.png'
-            plt.savefig(test_r2_hist_path, dpi=150, bbox_inches='tight')
-            plt.close()
-            
-            self.log(f"[INFO] Test R² distribution histogram saved to: {test_r2_hist_path}")
-            
-            # Create histogram of Train R² values
-            plt.figure(figsize=(12, 6))
-            
-            plt.subplot(1, 2, 1)
-            plt.hist(self.all_stats['linear_train_r2'], bins=10, alpha=0.7, 
-                     color='lightsteelblue', edgecolor='black')
-            plt.title('Linear Model Train R² Distribution', fontsize=12)
-            plt.xlabel('Train R²', fontsize=10)
-            plt.ylabel('Number of Datasets', fontsize=10)
-            plt.grid(alpha=0.3)
-            
-            plt.subplot(1, 2, 2)
-            plt.hist(self.all_stats['rf_train_r2'], bins=10, alpha=0.7,
-                     color='lightgreen', edgecolor='black')
-            plt.title('Random Forest Train R² Distribution', fontsize=12)
-            plt.xlabel('Train R²', fontsize=10)
-            plt.ylabel('Number of Datasets', fontsize=10)
-            plt.grid(alpha=0.3)
-            
-            plt.tight_layout()
-            train_r2_hist_path = summary_dir / 'train_r2_distribution_histogram.png'
-            plt.savefig(train_r2_hist_path, dpi=150, bbox_inches='tight')
-            plt.close()
-            
-            self.log(f"[INFO] Train R² distribution histogram saved to: {train_r2_hist_path}")
-            
-            # Create histogram of Test MSE values (if available)
-            if ('linear_test_mse' in self.all_stats and self.all_stats['linear_test_mse'] and 
-                'rf_test_mse' in self.all_stats and self.all_stats['rf_test_mse']):
-                
-                plt.figure(figsize=(12, 6))
-                
-                plt.subplot(1, 2, 1)
-                plt.hist(self.all_stats['linear_test_mse'], bins=10, alpha=0.7, 
-                         color='lightcoral', edgecolor='black')
-                plt.title('Linear Model Test MSE Distribution', fontsize=12)
-                plt.xlabel('Test MSE', fontsize=10)
-                plt.ylabel('Number of Datasets', fontsize=10)
-                plt.grid(alpha=0.3)
-                
-                plt.subplot(1, 2, 2)
-                plt.hist(self.all_stats['rf_test_mse'], bins=10, alpha=0.7,
-                         color='mediumseagreen', edgecolor='black')
-                plt.title('Random Forest Test MSE Distribution', fontsize=12)
-                plt.xlabel('Test MSE', fontsize=10)
-                plt.ylabel('Number of Datasets', fontsize=10)
-                plt.grid(alpha=0.3)
-                
-                plt.tight_layout()
-                test_mse_hist_path = summary_dir / 'test_mse_distribution_histogram.png'
-                plt.savefig(test_mse_hist_path, dpi=150, bbox_inches='tight')
-                plt.close()
-                
-                self.log(f"[INFO] Test MSE distribution histogram saved to: {test_mse_hist_path}")
-            
-            # Create histogram of Train MSE values (if available)
-            if ('linear_train_mse' in self.all_stats and self.all_stats['linear_train_mse'] and 
-                'rf_train_mse' in self.all_stats and self.all_stats['rf_train_mse']):
-                
-                plt.figure(figsize=(12, 6))
-                
-                plt.subplot(1, 2, 1)
-                plt.hist(self.all_stats['linear_train_mse'], bins=10, alpha=0.7, 
-                         color='mistyrose', edgecolor='black')
-                plt.title('Linear Model Train MSE Distribution', fontsize=12)
-                plt.xlabel('Train MSE', fontsize=10)
-                plt.ylabel('Number of Datasets', fontsize=10)
-                plt.grid(alpha=0.3)
-                
-                plt.subplot(1, 2, 2)
-                plt.hist(self.all_stats['rf_train_mse'], bins=10, alpha=0.7,
-                         color='palegreen', edgecolor='black')
-                plt.title('Random Forest Train MSE Distribution', fontsize=12)
-                plt.xlabel('Train MSE', fontsize=10)
-                plt.ylabel('Number of Datasets', fontsize=10)
-                plt.grid(alpha=0.3)
-                
-                plt.tight_layout()
-                train_mse_hist_path = summary_dir / 'train_mse_distribution_histogram.png'
-                plt.savefig(train_mse_hist_path, dpi=150, bbox_inches='tight')
-                plt.close()
-                
-                self.log(f"[INFO] Train MSE distribution histogram saved to: {train_mse_hist_path}")
-            
-            # Create comparison plot: Linear vs RF R²
-            plt.figure(figsize=(8, 6))
-            plt.scatter(self.all_stats['linear_test_r2'], self.all_stats['rf_test_r2'],
-                       alpha=0.7, s=50, edgecolors='black', c='teal')
-            
-            plt.axline([0, 0], [1, 1], color='gray', linestyle='--', alpha=0.7)
-            
-            plt.xlim(-0.1, 1.0)
-            plt.ylim(-0.1, 1.0)
-            plt.title('Linear Model vs Random Forest Test R² Comparison', fontsize=14)
-            plt.xlabel('Linear Model Test R²', fontsize=12)
-            plt.ylabel('Random Forest Test R²', fontsize=12)
-            plt.grid(alpha=0.3)
-            
-            r2_comparison_path = summary_dir / 'r2_model_comparison.png'
-            plt.savefig(r2_comparison_path, dpi=150, bbox_inches='tight')
-            plt.close()
-            
-            self.log(f"[INFO] Model comparison plot saved to: {r2_comparison_path}")
-            
-            # Create Train vs Test R² comparison plots for overfitting analysis
-            plt.figure(figsize=(12, 6))
-            
-            # Linear Model Train vs Test
-            plt.subplot(1, 2, 1)
-            plt.scatter(self.all_stats['linear_train_r2'], self.all_stats['linear_test_r2'],
-                        alpha=0.7, s=50, edgecolors='black', c='royalblue')
-            plt.axline([0, 0], [1, 1], color='gray', linestyle='--', alpha=0.7)
-            plt.xlim(-0.1, 1.0)
-            plt.ylim(-0.1, 1.0)
-            plt.title('Linear Model: Train vs Test R²', fontsize=12)
-            plt.xlabel('Train R²', fontsize=10)
-            plt.ylabel('Test R²', fontsize=10)
-            plt.grid(alpha=0.3)
-            
-            # Random Forest Train vs Test
-            plt.subplot(1, 2, 2)
-            plt.scatter(self.all_stats['rf_train_r2'], self.all_stats['rf_test_r2'],
-                        alpha=0.7, s=50, edgecolors='black', c='darkgreen')
-            plt.axline([0, 0], [1, 1], color='gray', linestyle='--', alpha=0.7)
-            plt.xlim(-0.1, 1.0)
-            plt.ylim(-0.1, 1.0)
-            plt.title('Random Forest: Train vs Test R²', fontsize=12)
-            plt.xlabel('Train R²', fontsize=10)
-            plt.ylabel('Test R²', fontsize=10)
-            plt.grid(alpha=0.3)
-            
-            plt.tight_layout()
-            overfitting_path = summary_dir / 'r2_train_vs_test_comparison.png'
-            plt.savefig(overfitting_path, dpi=150, bbox_inches='tight')
-            plt.close()
-            
-            self.log(f"[INFO] Train vs Test R² comparison plot saved to: {overfitting_path}")
-            
-            # Create comparison plot: Linear vs RF MSE
-            if ('linear_test_mse' in self.all_stats and self.all_stats['linear_test_mse'] and 
-                'rf_test_mse' in self.all_stats and self.all_stats['rf_test_mse']):
-                
-                plt.figure(figsize=(8, 6))
-                
-                # Get max value to set equal plot limits
-                max_mse = max(
-                    max(self.all_stats['linear_test_mse']),
-                    max(self.all_stats['rf_test_mse'])
-                )
-                
-                plt.scatter(self.all_stats['linear_test_mse'], self.all_stats['rf_test_mse'],
-                           alpha=0.7, s=50, edgecolors='black', c='crimson')
-                
-                plt.axline([0, 0], [max_mse, max_mse], color='gray', linestyle='--', alpha=0.7)
-                
-                plt.xlim(-0.05 * max_mse, 1.05 * max_mse)
-                plt.ylim(-0.05 * max_mse, 1.05 * max_mse)
-                plt.title('Linear Model vs Random Forest Test MSE Comparison', fontsize=14)
-                plt.xlabel('Linear Model Test MSE', fontsize=12)
-                plt.ylabel('Random Forest Test MSE', fontsize=12)
-                plt.grid(alpha=0.3)
-                
-                mse_comparison_path = summary_dir / 'mse_model_comparison.png'
-                plt.savefig(mse_comparison_path, dpi=150, bbox_inches='tight')
-                plt.close()
-                
-                self.log(f"[INFO] MSE model comparison plot saved to: {mse_comparison_path}")
-                
-                # Create Train vs Test MSE comparison plots for overfitting analysis
-                if ('linear_train_mse' in self.all_stats and self.all_stats['linear_train_mse'] and 
-                    'rf_train_mse' in self.all_stats and self.all_stats['rf_train_mse']):
-                    
-                    plt.figure(figsize=(12, 6))
-                    
-                    # Get max value for both plots
-                    max_linear_mse = max(
-                        max(self.all_stats['linear_train_mse']),
-                        max(self.all_stats['linear_test_mse'])
-                    )
-                    
-                    max_rf_mse = max(
-                        max(self.all_stats['rf_train_mse']),
-                        max(self.all_stats['rf_test_mse'])
-                    )
-                    
-                    # Linear Model Train vs Test MSE
-                    plt.subplot(1, 2, 1)
-                    plt.scatter(self.all_stats['linear_train_mse'], self.all_stats['linear_test_mse'],
-                                alpha=0.7, s=50, edgecolors='black', c='firebrick')
-                    plt.axline([0, 0], [max_linear_mse, max_linear_mse], color='gray', linestyle='--', alpha=0.7)
-                    plt.xlim(-0.05 * max_linear_mse, 1.05 * max_linear_mse)
-                    plt.ylim(-0.05 * max_linear_mse, 1.05 * max_linear_mse)
-                    plt.title('Linear Model: Train vs Test MSE', fontsize=12)
-                    plt.xlabel('Train MSE', fontsize=10)
-                    plt.ylabel('Test MSE', fontsize=10)
-                    plt.grid(alpha=0.3)
-                    
-                    # Random Forest Train vs Test MSE
-                    plt.subplot(1, 2, 2)
-                    plt.scatter(self.all_stats['rf_train_mse'], self.all_stats['rf_test_mse'],
-                                alpha=0.7, s=50, edgecolors='black', c='olivedrab')
-                    plt.axline([0, 0], [max_rf_mse, max_rf_mse], color='gray', linestyle='--', alpha=0.7)
-                    plt.xlim(-0.05 * max_rf_mse, 1.05 * max_rf_mse)
-                    plt.ylim(-0.05 * max_rf_mse, 1.05 * max_rf_mse)
-                    plt.title('Random Forest: Train vs Test MSE', fontsize=12)
-                    plt.xlabel('Train MSE', fontsize=10)
-                    plt.ylabel('Test MSE', fontsize=10)
-                    plt.grid(alpha=0.3)
-                    
-                    plt.tight_layout()
-                    mse_overfitting_path = summary_dir / 'mse_train_vs_test_comparison.png'
-                    plt.savefig(mse_overfitting_path, dpi=150, bbox_inches='tight')
-                    plt.close()
-                    
-                    self.log(f"[INFO] Train vs Test MSE comparison plot saved to: {mse_overfitting_path}")
-        
-            # 3. OVERFITTING ANALYSIS
-            self.log("\n" + "="*60)
-            self.log("OVERFITTING ANALYSIS")
-            self.log("="*60)
-            
-            # Calculate overfitting metrics
-            if all(key in self.all_stats and self.all_stats[key] for key in ['linear_train_r2', 'linear_test_r2', 'rf_train_r2', 'rf_test_r2']):
-                # Calculate R² gaps (train - test) for each dataset
-                linear_r2_gaps = np.array(self.all_stats['linear_train_r2']) - np.array(self.all_stats['linear_test_r2'])
-                rf_r2_gaps = np.array(self.all_stats['rf_train_r2']) - np.array(self.all_stats['rf_test_r2'])
-                
-                # Calculate statistics for these gaps
-                linear_r2_gap_mean = np.mean(linear_r2_gaps)
-                linear_r2_gap_se = np.std(linear_r2_gaps) / np.sqrt(n_datasets)
-                linear_r2_gap_median = np.median(linear_r2_gaps)
-                
-                rf_r2_gap_mean = np.mean(rf_r2_gaps)
-                rf_r2_gap_se = np.std(rf_r2_gaps) / np.sqrt(n_datasets)
-                rf_r2_gap_median = np.median(rf_r2_gaps)
-                
-                # Log results
-                self.log("[INFO] R² Gap (Train - Test) Analysis:")
-                self.log("[INFO] Linear Model:")
-                self.log(f"[INFO]   Mean R² Gap:   {linear_r2_gap_mean:.4f} (±{linear_r2_gap_se:.4f})")
-                self.log(f"[INFO]   Median R² Gap: {linear_r2_gap_median:.4f}")
-                
-                self.log("[INFO] Random Forest:")
-                self.log(f"[INFO]   Mean R² Gap:   {rf_r2_gap_mean:.4f} (±{rf_r2_gap_se:.4f})")
-                self.log(f"[INFO]   Median R² Gap: {rf_r2_gap_median:.4f}")
-                
-                # MSE overfitting analysis if available
-                if all(key in self.all_stats and self.all_stats[key] for key in ['linear_train_mse', 'linear_test_mse', 'rf_train_mse', 'rf_test_mse']):
-                    # Calculate MSE ratios (test / train) for each dataset
-                    linear_mse_ratios = np.array(self.all_stats['linear_test_mse']) / np.array(self.all_stats['linear_train_mse'])
-                    rf_mse_ratios = np.array(self.all_stats['rf_test_mse']) / np.array(self.all_stats['rf_train_mse'])
-                    
-                    # Calculate statistics for these ratios
-                    linear_mse_ratio_mean = np.mean(linear_mse_ratios)
-                    linear_mse_ratio_se = np.std(linear_mse_ratios) / np.sqrt(n_datasets)
-                    linear_mse_ratio_median = np.median(linear_mse_ratios)
-                    
-                    rf_mse_ratio_mean = np.mean(rf_mse_ratios)
-                    rf_mse_ratio_se = np.std(rf_mse_ratios) / np.sqrt(n_datasets)
-                    rf_mse_ratio_median = np.median(rf_mse_ratios)
-                    
-                    # Log results
-                    self.log("[INFO] MSE Ratio (Test / Train) Analysis:")
-                    self.log("[INFO] Linear Model:")
-                    self.log(f"[INFO]   Mean MSE Ratio:   {linear_mse_ratio_mean:.4f} (±{linear_mse_ratio_se:.4f})")
-                    self.log(f"[INFO]   Median MSE Ratio: {linear_mse_ratio_median:.4f}")
-                    
-                    self.log("[INFO] Random Forest:")
-                    self.log(f"[INFO]   Mean MSE Ratio:   {rf_mse_ratio_mean:.4f} (±{rf_mse_ratio_se:.4f})")
-                    self.log(f"[INFO]   Median MSE Ratio: {rf_mse_ratio_median:.4f}")
-            
-            # 4. FEATURE IMPORTANCE SUMMARY
-            self.log("\n" + "="*60)
-            self.log("FEATURE IMPORTANCE SUMMARY")
-            self.log("="*60)        if self.all_stats['feature_importances']:
-            self.log("[INFO] Average feature importance across datasets:")
-            
-            # Calculate mean importance for each feature
-            avg_importances = {}
-            for feat, values in self.all_stats['feature_importances'].items():
-                avg_importances[feat] = np.mean(values)
-            
-            # Sort features by average importance
-            sorted_features = sorted(avg_importances.items(), key=lambda x: x[1], reverse=True)
-            
-            for feat, imp in sorted_features:
-                count = len(self.all_stats['feature_importances'][feat])
-                self.log(f"[INFO]   {feat}: {imp:.4f} (used in {count} datasets)")
-            
-            # Create feature importance bar chart (for top 10 features)
-            top_features = sorted_features[:10]
-            if top_features:
-                plt.figure(figsize=(10, 6))
-                
-                features = [x[0] for x in top_features]
-                importances = [x[1] for x in top_features]
-                
-                plt.barh(features, importances, alpha=0.7, color='slateblue', edgecolor='black')
-                plt.title('Average Feature Importance Across Datasets (Top Features)', fontsize=14)
-                plt.xlabel('Average Importance', fontsize=12)
-                plt.ylabel('Feature', fontsize=12)
-                plt.grid(alpha=0.3)
-                plt.tight_layout()
-                
-                importance_path = summary_dir / 'feature_importance_summary.png'
-                plt.savefig(importance_path, dpi=150, bbox_inches='tight')
-                plt.close()
-                
-                self.log(f"[INFO] Feature importance summary saved to: {importance_path}")
-        
-        # 4. CORRELATION ANALYSIS SUMMARY
-        self.log("\n" + "="*60)
-        self.log("CORRELATION ANALYSIS SUMMARY")
-        self.log("="*60)
-        
-        if self.all_stats['target_correlations']:
-            self.log("[INFO] Target correlation analysis:")
-            
-            # Organize correlations by feature
-            feature_corrs = {}
-            for feat, corr in self.all_stats['target_correlations']:
-                if feat not in feature_corrs:
-                    feature_corrs[feat] = []
-                feature_corrs[feat].append(corr)
-            
-            # Calculate statistics per feature
-            self.log("[INFO] Average absolute correlation with target by feature:")
-            
-            feature_avg_abs_corrs = {}
-            for feat, corrs in feature_corrs.items():
-                avg_abs_corr = np.mean(np.abs(corrs))
-                feature_avg_abs_corrs[feat] = avg_abs_corr
-                count = len(corrs)
-                self.log(f"[INFO]   {feat}: {avg_abs_corr:.4f} (used in {count} datasets)")
-            
-            # Create correlation distribution histogram
-            all_corrs = [corr for feat, corr in self.all_stats['target_correlations']]
-            
-            plt.figure(figsize=(10, 6))
-            plt.hist(all_corrs, bins=20, alpha=0.7, color='tomato', edgecolor='black')
-            plt.title('Distribution of Feature-Target Correlations Across All Datasets', fontsize=14)
-            plt.xlabel('Correlation with Target', fontsize=12)
-            plt.ylabel('Frequency', fontsize=12)
-            plt.grid(alpha=0.3)
-            plt.axvline(x=0, color='black', linestyle='--', alpha=0.7)
-            plt.tight_layout()
-            
-            corr_hist_path = summary_dir / 'correlation_distribution.png'
-            plt.savefig(corr_hist_path, dpi=150, bbox_inches='tight')
-            plt.close()
-            
-            self.log(f"[INFO] Correlation distribution histogram saved to: {corr_hist_path}")
-        
-        self.log("\n" + "="*80)
-        self.log("[OK] Summary analysis complete")
-        self.log("="*80)
-        
-        # Close the summary log file
-        if self.current_output_file and not self.current_output_file.closed:
-            self.current_output_file.close()
-            
-        # Restore original output file if it's still open
-        if original_output_file and not original_output_file.closed:
-            self.current_output_file = original_output_file
-            self.log(f"\n[INFO] Generated overall summary statistics in: {summary_dir}")
     
     def run_visualization(self, n_batches=2, n_datasets_per_batch=3, results_base_dir=None):
         """
@@ -1484,8 +836,10 @@ class DataloaderDatasetVisualizer:
         
         # Create main log file in results directory
         main_log_path = Path(self.results_base_dir) / "analysis_log.txt"
-        main_log = open(main_log_path, 'w', encoding='utf-8')
-        self.current_output_file = main_log
+        
+        # Open the log file directly (not using 'with' to avoid premature closing)
+        self.main_log_file = open(main_log_path, 'w', encoding='utf-8')
+        self.current_output_file = self.main_log_file
         
         self.log("=" * 60)
         self.log("      DataLoader Dataset Visualization from YAML Config")
@@ -1504,9 +858,6 @@ class DataloaderDatasetVisualizer:
                 n_datasets_per_batch=n_datasets_per_batch
             )
             
-            # Step 4: Generate summary statistics and histograms
-            self.generate_summary_statistics()
-            
             self.log("=" * 60)
             self.log("[OK] Complete visualization finished successfully!")
             self.log("=" * 60)
@@ -1522,14 +873,12 @@ class DataloaderDatasetVisualizer:
             self.log("\nFull traceback:")
             self.log(error_trace)
             self.log("=" * 60)
-            # Make sure to close the file in case of an error
-            if self.current_output_file and not self.current_output_file.closed:
-                self.current_output_file.close()
             raise
-            
-        # Make sure to close the file when done
-        if self.current_output_file and not self.current_output_file.closed:
-            self.current_output_file.close()
+        finally:
+            # Make sure to close the main log file when done
+            if hasattr(self, 'main_log_file') and self.main_log_file:
+                self.main_log_file.close()
+                self.main_log_file = None
 
 
 def main():
@@ -1553,7 +902,6 @@ def main():
     
     # Results will be saved to organized folders (plots will NOT be displayed)
     # Format: checks/Results/run_YYYYMMDD_HHMMSS/batch_X/dataset_Y/
-    # A summary folder with overall statistics will also be created
     RESULTS_BASE_DIR = 'src/training/checks/Results'
     
     # =============================================================
@@ -1577,7 +925,6 @@ def main():
     print()
     print("Output will be saved to organized folders. Plots will NOT be displayed.")
     print("Analysis output will be written to both console and files.")
-    print("An overall summary with statistics and histograms will be created in the summary/ folder.")
     print("=" * 60)
     
     # Create visualizer
@@ -1586,7 +933,7 @@ def main():
         seed=SEED
     )
     
-    # Run visualization with interactive mode
+    # Run visualization with file output mode
     visualizer.run_visualization(
         n_batches=N_BATCHES,
         n_datasets_per_batch=N_DATASETS_PER_BATCH,
@@ -1594,9 +941,8 @@ def main():
     )
     
     print("=" * 60)
-    print("Analysis complete! Results are saved in:")
+    print("Analysis complete! Check results in:")
     print(f"  {results_dir}")
-    print(f"  {results_dir}/summary/  <- Overall statistics summary and histograms")
     print("=" * 60)
 
 
