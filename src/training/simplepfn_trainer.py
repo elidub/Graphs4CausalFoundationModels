@@ -202,7 +202,7 @@ class SimplePFNTrainer:
             
             # Print progress - more frequent at start, less frequent later
             if step <= 10 or step % max(1, self.max_steps // 10) == 0:
-                wandb_status = "📊" if self.wandb_run else "⚫"
+                wandb_status = "[W&B]" if self.wandb_run else "[local]"
                 lr_info = f"LR: {current_lr:.6f}" if self.scheduler is not None else ""
                 print(f"   Step {step:4d}/{self.max_steps} | Loss: {loss.item():.6f} | Time: {batch_time:.3f}s | Batch size: {X_train.shape[0]} {lr_info} {wandb_status}")
         
