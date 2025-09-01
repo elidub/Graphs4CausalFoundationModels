@@ -48,10 +48,10 @@ scm_config:
     value: "tabicl"
   mlp_num_hidden_layers:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 0, high: 1}
+    distribution_parameters: {low: 0, high: 2}
   mlp_hidden_dim:
     distribution: "categorical"
-    distribution_parameters: {choices: [8,8]}
+    distribution_parameters: {choices: [8,16,32,64]}
   mlp_activation_mode:
     value: "pre"
   mlp_node_shape:
@@ -119,13 +119,13 @@ dataset_config:
   dataset_size:
     value: 100000000  # size of meta-dataset  #100000000
   max_number_samples:
-    value: 100  # Maximum samples per individual dataset (keep default)
+    value: 1000  # Maximum samples per individual dataset (keep default)
   max_number_features:
     value: 10  # Much smaller feature space (vs default 101) for faster processing
   number_samples_per_dataset:
     # Distribution over actual samples per dataset (within max_number_samples)
     distribution: "uniform"
-    distribution_parameters: {low: 50, high: 99}  # Smaller range for testing
+    distribution_parameters: {low: 90, high: 99}  # Smaller range for testing
   seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -137,7 +137,7 @@ dataset_config:
 # Controls how raw datasets are transformed for model input
 preprocessing_config:
   train_fraction:
-    value: 0.7  # 70% training, 30% test (vs default 50-50)
+    value: 0.5  # 70% training, 30% test (vs default 50-50)
   dropout_prob:
     value: 0.1  # Feature dropout probability for regularization
   transformation_type:
