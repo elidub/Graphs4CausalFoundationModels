@@ -15,3 +15,4 @@ src/training/checks/Results/
 src/training/checks/Results/**
 src/priors/training/checks/Results
 /experiments/FirstTests/checkpoints
+src/training/checks/ResultsBaselines
