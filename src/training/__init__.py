@@ -71,6 +71,11 @@ from .utils import (
     print_model_comparison,
     EarlyStopping
 )
+from .load_utils import (
+    load_model,
+    find_checkpoint_in_run,
+    find_run_directory
+)
 
 __version__ = "2.0.0"
 __author__ = "SimplePFN Team"
@@ -98,6 +103,11 @@ __all__ = [
     "save_experiment_summary",
     "load_experiment_summary",
     "find_best_checkpoint",
+    
+    # Model loading utilities
+    "load_model",
+    "find_checkpoint_in_run",
+    "find_run_directory",
     "compare_models",
     "print_model_comparison",
     "EarlyStopping",

@@ -12,8 +12,6 @@ import yaml
 from pathlib import Path
 from torch.utils.data import DataLoader
 
-from torch.backends.cuda import sdp_kernel
-
 # Add src directory to path for imports
 src_dir = Path(__file__).parent.parent
 if str(src_dir) not in sys.path:
@@ -90,9 +88,33 @@ def main():
                 print(f"   API key: Not found in environment")
             
             try:
+                # Determine the run name based on HTCondor job ID (same format as log files)
+                cluster_id = os.environ.get('CLUSTER_ID', '')  # HTCondor sets this
+                proc_id = os.environ.get('PROCESS_ID', '0')    # HTCondor sets this
+                
+                # If HTCondor variables aren't available, try to extract from _CONDOR_JOB_AD
+                if not cluster_id and '_CONDOR_JOB_AD' in os.environ:
+                    try:
+                        with open(os.environ['_CONDOR_JOB_AD'], 'r') as f:
+                            for line in f:
+                                if line.startswith('ClusterId = '):
+                                    cluster_id = line.split('=')[1].strip()
+                                elif line.startswith('ProcId = '):
+                                    proc_id = line.split('=')[1].strip()
+                    except Exception as e:
+                        print(f"Warning: Could not read job ID from Condor job ad: {e}")
+                
+                # Use job ID for run name if available, otherwise use config name
+                if cluster_id:
+                    run_name = f"simple_pfn_{cluster_id}.{proc_id}"
+                    print(f"   Using log file name as run name: {run_name}")
+                else:
+                    run_name = wandb_config.get('wandb_run_name', config.get('experiment_name'))
+                    print(f"   Using config name as run name: {run_name}")
+                
                 wandb_run = wandb.init(
                     project=wandb_config.get('wandb_project'),
-                    name=wandb_config.get('wandb_run_name', config.get('experiment_name')),
+                    name=run_name,
                     tags=wandb_config.get('wandb_tags', []),
                     notes=wandb_config.get('wandb_notes', ''),
                     mode='offline' if wandb_config.get('wandb_offline', False) else 'online',
@@ -181,8 +203,6 @@ def main():
         
         # Create SimplePFN model
         print(f"\nMODEL CREATION:")
-
-        sdp_kernel(enable_flash=False, enable_mem_efficient=False, enable_math=True)
         model = SimplePFNRegressor(
             num_features=num_features,
             d_model=model_config.get("d_model", 8),
@@ -217,7 +237,7 @@ def main():
                     if base_lr > 0:  # Avoid division by zero
                         min_lr_ratio = eta_min / base_lr
                 
-                # Default if still not specified
+                # Default if still not save
                 if min_lr_ratio is None:
                     min_lr_ratio = 0.1
                 
@@ -237,6 +257,20 @@ def main():
             else:
                 print(f"   Scheduler: None (constant learning rate)")
         
+        # Get model saving configuration
+        save_dir = training_config.get("checkpoint_dir")
+        save_every = training_config.get("save_every", 0)  # 0 means no periodic saving
+        
+        # Use the run name (derived from job ID or config) for model naming
+        run_name = None
+        cluster_id = os.environ.get('CLUSTER_ID', '')
+        proc_id = os.environ.get('PROCESS_ID', '0')
+        if proc_id:
+            run_name = f"simple_pfn_{proc_id}"
+        else:
+            run_name = config.get('experiment_name', 'simplepfn')
+        
+        # Initialize trainer
         trainer = SimplePFNTrainer(
             model=model,
             dataloader=dataloader,
@@ -244,12 +278,20 @@ def main():
             max_steps=training_config.get("max_steps", 10),
             device=device,
             wandb_run=wandb_run,  # Pass wandb run for logging
-            scheduler_config=scheduler_config
+            scheduler_config=scheduler_config,
+            save_dir=save_dir,
+            save_every=save_every,
+            run_name=run_name
         )
         
         print(f"   Learning rate: {training_config.get('learning_rate', 1e-3)}")
         print(f"   Max steps: {training_config.get('max_steps', 10)}")
         print(f"   Wandb logging: {'enabled' if wandb_run else 'disabled'}")
+        print(f"   Model checkpoints: {'enabled' if save_dir else 'disabled'}")
+        if save_dir:
+            print(f"   Save directory: {save_dir}")
+            print(f"   Save frequency: {'never' if save_every <= 0 else f'every {save_every} steps'}")
+            print(f"   Run name: {run_name}")
         print(f"   Trainer initialized")
         
         # Start training

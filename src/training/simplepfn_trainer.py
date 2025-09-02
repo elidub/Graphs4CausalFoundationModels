@@ -3,9 +3,11 @@ SimplePFN Trainer Module
 Contains the SimplePFNTrainer class for training SimplePFN models.
 """
 
+import os
 import torch
 import torch.nn as nn
 import time
+import signal
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import LambdaLR
 import math
@@ -23,7 +25,10 @@ class SimplePFNTrainer:
         max_steps: int = 1000,
         device: str = "cpu",
         wandb_run: Optional[object] = None,
-        scheduler_config: Optional[Dict[str, Any]] = None
+        scheduler_config: Optional[Dict[str, Any]] = None,
+        save_dir: str = None,
+        save_every: int = 0,
+        run_name: str = None
     ):
         self.model = model
         self.dataloader = dataloader
@@ -32,6 +37,16 @@ class SimplePFNTrainer:
         self.device = device
         self.wandb_run = wandb_run
         self.scheduler_config = scheduler_config or {}
+        self.save_dir = save_dir
+        self.save_every = save_every
+        self.run_name = run_name or f"model_{int(time.time())}"
+        
+        # Create a run-specific subfolder for checkpoints
+        self.run_save_dir = None
+        if self.save_dir:
+            self.run_save_dir = os.path.join(self.save_dir, self.run_name)
+            os.makedirs(self.run_save_dir, exist_ok=True)
+            print(f"Model checkpoints will be saved to: {os.path.abspath(self.run_save_dir)}")
         
         # Move model to device
         self.model = self.model.to(device)
@@ -43,6 +58,9 @@ class SimplePFNTrainer:
         
         # Setup scheduler if enabled
         self.scheduler = self._create_scheduler(self.scheduler_config)
+            
+        # Flag for graceful termination
+        self.terminate = False
     
     def _create_scheduler(self, scheduler_config):
         sched_type = scheduler_config.get("type")
@@ -107,10 +125,86 @@ class SimplePFNTrainer:
         else:
             raise ValueError(f"Expected list of 4 tensors, got {type(batch)} with length {len(batch) if hasattr(batch, '__len__') else 'unknown'}")
 
+    def save_model(self, filename=None, metadata=None):
+        """Save model to disk.
+        
+        Args:
+            filename (str, optional): Specific filename to use. If None, auto-generated.
+            metadata (dict, optional): Additional metadata to save with model.
+        
+        Returns:
+            str: Path to the saved model file
+        """
+        if not self.run_save_dir:
+            print("Warning: save_dir not provided, cannot save model")
+            return None
+            
+        # Create filename if not provided
+        if filename is None:
+            filename = f"step_{self.global_step}.pt"
+        
+        # Ensure path is absolute
+        path = os.path.join(self.run_save_dir, filename)
+        
+        # Prepare metadata
+        if metadata is None:
+            metadata = {}
+        
+        # Add standard metadata
+        metadata.update({
+            'step': self.global_step,
+            'learning_rate': self.learning_rate,
+            'timestamp': time.time(),
+            'device': self.device
+        })
+        
+        # Save model state, optimizer state, and metadata
+        checkpoint = {
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'metadata': metadata
+        }
+        
+        # Save scheduler state if available
+        if self.scheduler is not None:
+            checkpoint['scheduler_state_dict'] = self.scheduler.state_dict()
+            checkpoint['scheduler_config'] = self.scheduler_config
+            
+        # Save to disk
+        torch.save(checkpoint, path)
+        print(f"Model saved to {path}")
+        
+        # Log to wandb if available
+        if self.wandb_run:
+            self.wandb_run.log({
+                'checkpoints/saved_path': path,
+                'checkpoints/global_step': self.global_step
+            })
+            
+        return path
+    
+    def setup_signal_handlers(self):
+        """Setup signal handlers for clean shutdown and model saving on termination."""
+        def signal_handler(sig, frame):
+            print(f"\nReceived termination signal. Saving model before exiting...")
+            self.terminate = True
+            # Save final model
+            self.save_model(filename="interrupted.pt", 
+                           metadata={'termination_reason': 'signal_interrupted'})
+            
+        # Register signal handlers for common termination signals
+        signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
+        signal.signal(signal.SIGTERM, signal_handler) # Termination request
+
     def fit(self):
         """Train the SimplePFN model."""
         print(f"Training SimplePFN for {self.max_steps} steps with learning rate {self.learning_rate}")
         print(f"Using device: {self.device}")
+        
+        # Setup signal handlers for graceful termination
+        if self.run_save_dir:
+            self.setup_signal_handlers()
+            print("Signal handlers set up for graceful termination with model saving")
         
         # Log scheduler info if available
         if self.scheduler is not None:
@@ -143,7 +237,7 @@ class SimplePFNTrainer:
             print(f"Batch structure: {batch_size} samples, {n_train} train points, {n_test} test points, {features} features")
         
         for step, batch in enumerate(self.dataloader):
-            if step >= self.max_steps:
+            if step >= self.max_steps or self.terminate:
                 break   
 
             # Start batch timing
@@ -202,9 +296,13 @@ class SimplePFNTrainer:
             
             # Print progress - more frequent at start, less frequent later
             if step <= 10 or step % max(1, self.max_steps // 10) == 0:
-                wandb_status = "[W&B]" if self.wandb_run else "[local]"
+                wandb_status = "📊" if self.wandb_run else "⚫"
                 lr_info = f"LR: {current_lr:.6f}" if self.scheduler is not None else ""
                 print(f"   Step {step:4d}/{self.max_steps} | Loss: {loss.item():.6f} | Time: {batch_time:.3f}s | Batch size: {X_train.shape[0]} {lr_info} {wandb_status}")
+            
+            # Save model checkpoint if requested
+            if self.run_save_dir and self.save_every > 0 and self.global_step % self.save_every == 0:
+                self.save_model()
         
         # End total timing
         total_end_time = time.time()
@@ -239,5 +337,11 @@ class SimplePFNTrainer:
                 'summary/average_loss': sum(losses)/len(losses)
             })
             print(f"   Training metrics logged to Weights & Biases!")
+        
+        # Save final model
+        if self.run_save_dir:
+            self.save_model(filename="final.pt", 
+                           metadata={'final': True})
+            print(f"   Final model saved to {self.run_save_dir}")
         
         return self.model
