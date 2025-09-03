@@ -16,3 +16,5 @@ src/training/checks/Results/**
 src/priors/training/checks/Results
 /experiments/FirstTests/checkpoints
 src/training/checks/ResultsBaselines
+/experiments/FirstTests/benchmark_results
+/data_cache/*
