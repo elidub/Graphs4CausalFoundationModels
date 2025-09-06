@@ -160,16 +160,42 @@ preprocessing_config:
 model_config:
   # Core Architecture Parameters
   # ----------------------------
-  d_model: 256      # Moderately sized embedding dimension
-  depth: 6     # Number of transformer blocks
-  heads_feat: 4    # Attention heads for feature-wise attention
-  heads_samp: 4    # Attention heads for sample-wise attention
-  dropout: 0.1     # Dropout probability for regularization
+  d_model:
+    value: 256      # Moderately sized embedding dimension
+  depth:
+    value: 6     # Number of transformer blocks
+  heads_feat:
+    value: 4    # Attention heads for feature-wise attention
+  heads_samp:
+    value: 4    # Attention heads for sample-wise attention
+  dropout:
+    value: 0.1     # Dropout probability for regularization
   
   # Critical Parameter (automatically calculated)
   # ---------------------------------------------
-  num_features: 9  # MUST be max_number_features - 1 (10-1=9)
-                   # One feature becomes the target, leaving 9 input features
+  num_features:
+    value: 9  # MUST be max_number_features - 1 (10-1=9)
+              # One feature becomes the target, leaving 9 input features
+  
+  # BarDistribution Configuration (optional)
+  # ----------------------------------------
+  # Enable probabilistic output using BarDistribution
+  use_bar_distribution:
+    value: true  # Set to true to enable probabilistic outputs
+  num_bars:
+    value: 11                 # Number of bars in the distribution (default: 11)
+  min_width:
+    value: 1e-6             # Minimum width for bars (default: 1e-6)
+  scale_floor:
+    value: 1e-6           # Minimum scale parameter (default: 1e-6)
+  max_fit_items:
+    value: null         # Maximum items to use for fitting (null = use all)
+  max_fit_batches:
+    value: null       # Maximum batches to use for fitting (null = use all)
+  log_prob_clip_min:
+    value: -50.0    # Minimum log probability clipping (default: -50.0)
+  log_prob_clip_max:
+    value: 50.0     # Maximum log probability clipping (default: 50.0)
 
 # ===============================================================================
 # Training Configuration (PyTorch Lightning Setup)
@@ -240,7 +266,7 @@ training_config:
   # Weights & Biases Integration
   # ----------------------------
   wandb_project:
-    value: "DoPFN_v2"  # Enable W&B for experiment tracking
+    value: null  # Disable W&B for testing
   wandb_run_name:
     value: null  # Auto-generate from experiment_name
   wandb_tags:

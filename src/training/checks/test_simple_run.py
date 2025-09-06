@@ -36,15 +36,15 @@ def load_and_modify_existing_config():
     config['description'] = 'Quick test run based on early_test1 config'
     
     # Reduce training iterations for quick test
-    if 'training_config' in config:
-        config['training_config']['max_steps'] = {'value': 3}  # Very few steps
-        config['training_config']['batch_size'] = {'value': 2}  # Small batch
-        config['training_config']['device'] = {'value': 'cpu'}  # Force CPU usage
-        config['training_config']['num_workers'] = {'value': 0}  # Avoid multiprocessing issues
+
+    config['training_config']['max_steps'] = {'value': 3}  # Very few steps
+    config['training_config']['batch_size'] = {'value': 2}  # Small batch
+    config['training_config']['device'] = {'value': 'cpu'}  # Force CPU usage
+    config['training_config']['num_workers'] = {'value': 0}  # Avoid multiprocessing issues
     
     # Reduce dataset size for speed
-    if 'dataset_config' in config:
-        config['dataset_config']['dataset_size'] = {'value': 20}  # Much smaller
+    #if 'dataset_config' in config:
+    config['dataset_config']['dataset_size'] = {'value': 20}  # Much smaller
     
     return config
 

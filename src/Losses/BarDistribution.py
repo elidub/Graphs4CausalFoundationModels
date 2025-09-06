@@ -71,10 +71,26 @@ class BarDistribution(PosteriorPredictive):
     # ------------------------- Fit bar locations -------------------------
 
     @torch.no_grad()
-    def fit(self, dataloader: Iterable[Tuple[Tensor, Tensor, Tensor, Tensor]]) -> "BarDistribution":
+    def fit(self, dataloader: Iterable[Tuple[Tensor, Tensor, Tensor, Tensor]], 
+            max_batches: Optional[int] = None) -> "BarDistribution":
+        """
+        Fit the BarDistribution to data from a dataloader.
+        
+        Args:
+            dataloader: DataLoader yielding (X_train, y_train, X_test, y_test) tuples
+            max_batches: Maximum number of batches to use for fitting. If None, uses all batches.
+        
+        Returns:
+            self for method chaining
+        """
         ys = []
         total = 0
+        batch_count = 0
+        
         for batch in dataloader:
+            if max_batches is not None and batch_count >= max_batches:
+                break
+                
             if len(batch) != 4:
                 raise ValueError("Each dataloader item must be (X_train, y_train, X_test, y_test).")
             _, y_tr, _, y_te = batch
@@ -100,6 +116,8 @@ class BarDistribution(PosteriorPredictive):
             else:
                 ys.append(y_tr_flat.cpu())
                 ys.append(y_te_flat.cpu())
+            
+            batch_count += 1
 
         if not ys:
             raise ValueError("No y data collected for fit().")

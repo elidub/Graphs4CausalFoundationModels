@@ -8,7 +8,11 @@ Uses YAML configuration files like the original approach but with clean dataload
 """
 
 import sys
+import os
 import yaml
+import json
+import argparse
+import traceback
 from pathlib import Path
 from torch.utils.data import DataLoader
 
@@ -39,7 +43,6 @@ except ImportError:
 
 def main():
     """Main entry point for SimplePFN training with YAML config."""
-    import argparse
     parser = argparse.ArgumentParser(description="Run SimplePFN training with YAML config.")
     parser.add_argument('--config', type=str, default=None, help='Path to YAML config file')
     args = parser.parse_args()
@@ -54,7 +57,6 @@ def main():
         # Print full config at the beginning
         print("\nFULL CONFIGURATION:")
         print("-" * 40)
-        import json
         print(json.dumps(config, indent=2, default=str))
         print("-" * 40)
 
@@ -84,7 +86,6 @@ def main():
             print(f"   Offline mode: {wandb_config.get('wandb_offline', False)}")
             
             # Check for API key
-            import os
             if 'WANDB_API_KEY' in os.environ:
                 print(f"   API key: Found ({'***' + os.environ['WANDB_API_KEY'][-4:]})")
             else:
@@ -215,6 +216,7 @@ def main():
             min_width = model_config.get("min_width", 1e-6)
             scale_floor = model_config.get("scale_floor", 1e-6)
             max_fit_items = model_config.get("max_fit_items", None)
+            max_fit_batches = model_config.get("max_fit_batches", None)
             log_prob_clip_min = model_config.get("log_prob_clip_min", -50.0)
             log_prob_clip_max = model_config.get("log_prob_clip_max", 50.0)
             
@@ -230,7 +232,28 @@ def main():
             )
             
             print(f"   Fitting BarDistribution to data...")
-            bar_distribution.fit(dataloader)
+            if max_fit_batches is not None:
+                print(f"   Using max {max_fit_batches} batches for fitting")
+            
+            # Create a wrapper dataloader that squeezes the last dimension for BarDistribution
+            # BarDistribution expects y_train and y_test to be (B, N/M) but dataloader produces (B, N/M, 1)
+            class BarDistributionDataLoaderWrapper:
+                def __init__(self, original_dataloader):
+                    self.original_dataloader = original_dataloader
+                
+                def __iter__(self):
+                    for batch in self.original_dataloader:
+                        if len(batch) == 4:
+                            X_train, y_train, X_test, y_test = batch
+                            # Squeeze last dimension: (B, N/M, 1) -> (B, N/M)
+                            y_train_squeezed = y_train.squeeze(-1)
+                            y_test_squeezed = y_test.squeeze(-1)
+                            yield X_train, y_train_squeezed, X_test, y_test_squeezed
+                        else:
+                            yield batch
+            
+            bar_fit_dataloader = BarDistributionDataLoaderWrapper(dataloader)
+            bar_distribution.fit(bar_fit_dataloader, max_batches=max_fit_batches)
             output_dim = bar_distribution.num_params  # K + 4 parameters
             print(f"   BarDistribution fitted with output dimension: {output_dim}")
             print(f"   Parameters needed: {num_bars} bars + 4 tail parameters = {output_dim}")
@@ -357,7 +380,6 @@ def main():
         print(f"Error: {e}")
         print(f"Error type: {type(e).__name__}")
         print("\nFull traceback:")
-        import traceback
         traceback.print_exc()
         print("=" * 60)
         
