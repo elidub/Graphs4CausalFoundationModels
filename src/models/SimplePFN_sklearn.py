@@ -51,8 +51,11 @@ class SimplePFNSklearn:
         self.model: Optional[SimplePFNRegressor] = None
         self.model_kwargs: Dict[str, Any] = {}
 
-    def load(self) -> "SimplePFNSklearn":
-        """Load config (if provided), build the model and load checkpoint (if provided)."""
+    def load(self, override_kwargs: Optional[Dict[str, Any]] = None) -> "SimplePFNSklearn":
+        """Load config (if provided), apply optional override_kwargs, build the model and load checkpoint (if provided).
+
+        override_kwargs: a dict of model kwargs (e.g., {'num_features': 9}) that will update values from the YAML.
+        """
         if self.config_path:
             with open(self.config_path, "r") as f:
                 cfg = yaml.safe_load(f)
@@ -68,8 +71,17 @@ class SimplePFNSklearn:
                 "dropout": float(mcfg.get("dropout", 0.0)),
             }
         else:
-            if self.verbose:
-                print("[SimplePFNSklearn] No config_path provided; you must supply model kwargs manually before load().")
+            # If the user provided model_kwargs before load(), that's acceptable.
+            if self.model_kwargs and self.model_kwargs.get("num_features"):
+                if self.verbose:
+                    print("[SimplePFNSklearn] Using pre-specified model_kwargs.")
+            else:
+                if self.verbose:
+                    print("[SimplePFNSklearn] No config_path provided; you must supply model kwargs manually before load().")
+
+        # apply overrides if present (these take precedence over config)
+        if override_kwargs:
+            self.model_kwargs.update({k: v for k, v in override_kwargs.items() if v is not None})
 
         # sanity check for num_features
         if not self.model_kwargs.get("num_features"):

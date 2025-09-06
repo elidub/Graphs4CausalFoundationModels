@@ -42,12 +42,14 @@ class SimpleOpenMLLoader:
         random_state: int = 42,
         test_size: float = 0.2,
         use_target_encoding: bool = True,
-        verbose: bool = True,
+    verbose: bool = True,
+    only_numeric: bool = False,
     ):
         self.data_dir = Path(data_dir)
         self.random_state = int(random_state)
         self.test_size = float(test_size)
         self.use_target_encoding = bool(use_target_encoding) and _HAS_TARGET_ENCODER
+        self.only_numeric = bool(only_numeric)
         self.verbose = bool(verbose)
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -220,7 +222,8 @@ class SimpleOpenMLLoader:
         n_train: int,
         n_test: int,
         prefer_numeric: bool = True,
-        save: bool = True,
+    save: bool = True,
+    only_numeric: bool = False,
     ) -> Dict[int, Dict[str, Any]]:
         """
         Create a set of processed datasets by subsampling existing OpenML tasks/datasets.
@@ -285,21 +288,29 @@ class SimpleOpenMLLoader:
 
                 # select feature columns (exclude target)
                 feature_cols = [c for c in df.columns if c != target_name]
+                num_cols = [c for c in feature_cols if pd.api.types.is_numeric_dtype(df[c])]
 
-                if prefer_numeric:
-                    num_cols = [c for c in feature_cols if pd.api.types.is_numeric_dtype(df[c])]
+                if only_numeric:
+                    # strictly require numeric-only selection
+                    if len(num_cols) < n_features:
+                        if self.verbose:
+                            print(f"[SimpleOpenMLLoader] Skipping dataset {dataset_id}: needs {n_features} numeric features but has {len(num_cols)}")
+                        continue
                     chosen = list(num_cols[:n_features])
-                    if len(chosen) < n_features:
-                        # fill with remaining columns in original order
-                        for c in feature_cols:
-                            if c not in chosen:
-                                chosen.append(c)
-                                if len(chosen) >= n_features:
-                                    break
                 else:
-                    chosen = feature_cols[:n_features]
+                    if prefer_numeric:
+                        chosen = list(num_cols[:n_features])
+                        if len(chosen) < n_features:
+                            # fill with remaining columns in original order
+                            for c in feature_cols:
+                                if c not in chosen:
+                                    chosen.append(c)
+                                    if len(chosen) >= n_features:
+                                        break
+                    else:
+                        chosen = feature_cols[:n_features]
 
-                chosen = chosen[:n_features]
+                    chosen = chosen[:n_features]
 
                 # sample rows deterministically
                 indices = rng.choice(n_rows, size=total_required, replace=False)
