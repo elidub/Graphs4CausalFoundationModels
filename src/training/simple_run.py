@@ -25,6 +25,9 @@ from models.SimplePFN import SimplePFNRegressor
 from simplepfn_trainer import SimplePFNTrainer
 from training_utils import load_yaml_config, extract_config_values, get_device, determine_input_size
 
+# Import BarDistribution for probabilistic output
+from Losses.BarDistribution import BarDistribution
+
 # Weights & Biases for experiment tracking
 try:
     import wandb
@@ -196,10 +199,44 @@ def main():
             print(f"   Using detected num_features: {num_features}")
 
             
-        # Get device
+        # Get device first (needed for BarDistribution)
         device = get_device(training_config.get("device", "cpu"))
         print(f"\nCOMPUTE SETUP:")
         print(f"   Device: {device}")
+
+        # Check if BarDistribution should be used
+        use_bar_distribution = model_config.get("use_bar_distribution", False)
+        bar_distribution = None
+        output_dim = 1  # Default single output
+        
+        if use_bar_distribution:
+            print(f"\nBAR DISTRIBUTION SETUP:")
+            num_bars = model_config.get("num_bars", 11)
+            min_width = model_config.get("min_width", 1e-6)
+            scale_floor = model_config.get("scale_floor", 1e-6)
+            max_fit_items = model_config.get("max_fit_items", None)
+            log_prob_clip_min = model_config.get("log_prob_clip_min", -50.0)
+            log_prob_clip_max = model_config.get("log_prob_clip_max", 50.0)
+            
+            print(f"   Creating BarDistribution with {num_bars} bars...")
+            bar_distribution = BarDistribution(
+                num_bars=num_bars,
+                min_width=min_width,
+                scale_floor=scale_floor,
+                device=device,
+                max_fit_items=max_fit_items,
+                log_prob_clip_min=log_prob_clip_min,
+                log_prob_clip_max=log_prob_clip_max
+            )
+            
+            print(f"   Fitting BarDistribution to data...")
+            bar_distribution.fit(dataloader)
+            output_dim = bar_distribution.num_params  # K + 4 parameters
+            print(f"   BarDistribution fitted with output dimension: {output_dim}")
+            print(f"   Parameters needed: {num_bars} bars + 4 tail parameters = {output_dim}")
+        else:
+            print(f"\n   Using standard MSE loss (no BarDistribution)")
+            output_dim = model_config.get("output_dim", 1)
         
         # Create SimplePFN model
         print(f"\nMODEL CREATION:")
@@ -209,7 +246,8 @@ def main():
             depth=model_config.get("depth", 1), 
             heads_feat=model_config.get("heads_feat", 2),
             heads_samp=model_config.get("heads_samp", 2),
-            dropout=model_config.get("dropout", 0.1)
+            dropout=model_config.get("dropout", 0.1),
+            output_dim=output_dim  # Use calculated output dimension
         )
         # Count parameters
         total_params = sum(p.numel() for p in model.parameters())
@@ -281,7 +319,8 @@ def main():
             scheduler_config=scheduler_config,
             save_dir=save_dir,
             save_every=save_every,
-            run_name=run_name
+            run_name=run_name,
+            bar_distribution=bar_distribution  # Pass BarDistribution for probabilistic training
         )
         
         print(f"   Learning rate: {training_config.get('learning_rate', 1e-3)}")

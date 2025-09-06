@@ -28,7 +28,8 @@ class SimplePFNTrainer:
         scheduler_config: Optional[Dict[str, Any]] = None,
         save_dir: str = None,
         save_every: int = 0,
-        run_name: str = None
+        run_name: str = None,
+        bar_distribution: Optional[object] = None  # BarDistribution for probabilistic training
     ):
         self.model = model
         self.dataloader = dataloader
@@ -40,6 +41,7 @@ class SimplePFNTrainer:
         self.save_dir = save_dir
         self.save_every = save_every
         self.run_name = run_name or f"model_{int(time.time())}"
+        self.bar_distribution = bar_distribution  # Store BarDistribution
         
         # Create a run-specific subfolder for checkpoints
         self.run_save_dir = None
@@ -53,7 +55,15 @@ class SimplePFNTrainer:
         
         # Setup optimizer and loss
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
-        self.criterion = nn.MSELoss()
+        
+        # Choose loss function based on whether BarDistribution is available
+        if self.bar_distribution is not None:
+            self.criterion = None  # Will use BarDistribution.average_log_prob
+            print(f"Using BarDistribution probabilistic loss")
+        else:
+            self.criterion = nn.MSELoss()
+            print(f"Using MSE loss")
+            
         self.global_step = 0
         
         # Setup scheduler if enabled
@@ -256,14 +266,31 @@ class SimplePFNTrainer:
             else:
                 predictions = output
             
-            # Ensure predictions have the right shape for loss computation
-            # predictions should be (batch_size, n_test) to match y_test (batch_size, n_test)
-            if len(predictions.shape) == 3 and predictions.shape[-1] == 1:
-                # If predictions are (batch_size, n_test, 1), squeeze last dimension
-                predictions = predictions.squeeze(-1)
-            
-            # Compute loss for the full batch
-            loss = self.criterion(predictions, y_test)
+            # Compute loss based on available loss function
+            if self.bar_distribution is not None:
+                # Use BarDistribution probabilistic loss
+                # predictions should be (batch_size, n_test, K+4) for BarDistribution
+                # y_test should be (batch_size, n_test)
+                
+                # Ensure predictions have the right shape for BarDistribution
+                if len(predictions.shape) == 2:
+                    # If predictions are (batch_size, n_test), this is wrong for BarDistribution
+                    raise ValueError(f"BarDistribution requires high-dimensional predictions, got shape {predictions.shape}")
+                
+                # Use negative log probability as loss (since we want to maximize log prob)
+                log_prob = self.bar_distribution.average_log_prob(predictions, y_test)  # (batch_size,)
+                loss = -log_prob.mean()  # Average across batch and negate for minimization
+            else:
+                # Use standard MSE loss
+                # Ensure predictions have the right shape for loss computation
+                # predictions should be (batch_size, n_test) to match y_test (batch_size, n_test)
+                if len(predictions.shape) == 3 and predictions.shape[-1] == 1:
+                    # If predictions are (batch_size, n_test, 1), squeeze last dimension
+                    predictions = predictions.squeeze(-1)
+                
+                # Compute MSE loss for the full batch
+                loss = self.criterion(predictions, y_test)
+                
             losses.append(loss.item())
             
             # Backward pass

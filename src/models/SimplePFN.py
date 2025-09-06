@@ -79,10 +79,12 @@ class SimplePFNRegressor(nn.Module):
         heads_feat: int = 8,
         heads_samp: int = 8,
         dropout: float = 0.0,
+        output_dim: int = 1,  # New parameter for high-dimensional output
     ):
         super().__init__()
         self.num_features = num_features
         self.d_model = d_model
+        self.output_dim = output_dim
 
         # Per-cell encoders
         self.value_encoder = nn.Linear(1, d_model)
@@ -102,8 +104,8 @@ class SimplePFNRegressor(nn.Module):
             for _ in range(depth)
         ])
 
-        # Output head - single regression value
-        self.regression_head = nn.Linear(d_model, 1)
+        # Output head - configurable dimensionality
+        self.regression_head = nn.Linear(d_model, output_dim)
 
     @staticmethod
     def _build_sample_attn_mask(N: int, M: int, device: torch.device) -> torch.Tensor:
@@ -139,7 +141,7 @@ class SimplePFNRegressor(nn.Module):
         
         try:
             B, N = y_train.shape
-        except Exception as e:
+        except Exception:
             B = len(y_train)
         # train encodings
         lab_train = self.label_value_encoder(y_train.unsqueeze(-1))
@@ -167,7 +169,12 @@ class SimplePFNRegressor(nn.Module):
 
         label_pos = self.num_features
         h_test = x[:, N:, label_pos, :]
-        predictions = self.regression_head(h_test).squeeze(-1)  # (B, M)
+        predictions = self.regression_head(h_test)  # (B, M, output_dim)
+        
+        # If output_dim is 1, squeeze the last dimension for backward compatibility
+        if self.output_dim == 1:
+            predictions = predictions.squeeze(-1)  # (B, M)
+        
         return {"predictions": predictions}
 
 
@@ -179,6 +186,42 @@ if __name__ == "__main__":
     Xte = torch.randn(B, M, num_feat)
     ytr = torch.randn(B, N)
 
+    # Test with default single output
+    print("=== Single Output (Backward Compatible) ===")
     model = SimplePFNRegressor(num_features=num_feat, d_model=128, depth=4, heads_feat=4, heads_samp=4, dropout=0.1)
     out = model(Xtr, ytr, Xte)
-    print('predictions:', out['predictions'].shape)
+    print('predictions shape:', out['predictions'].shape)  # Should be (B, M)
+    print('predictions:', out['predictions'])
+    
+    # Test with high-dimensional output
+    print("\n=== High-Dimensional Output ===")
+    output_dim = 10  # Example: 10-dimensional output per test sample
+    model_hd = SimplePFNRegressor(
+        num_features=num_feat, 
+        d_model=128, 
+        depth=4, 
+        heads_feat=4, 
+        heads_samp=4, 
+        dropout=0.1,
+        output_dim=output_dim
+    )
+    out_hd = model_hd(Xtr, ytr, Xte)
+    print('high-dim predictions shape:', out_hd['predictions'].shape)  # Should be (B, M, output_dim)
+    print('high-dim predictions:', out_hd['predictions'])
+    
+    # Test compatibility with BarDistribution
+    print("\n=== BarDistribution Compatibility Example ===")
+    # For BarDistribution with 5 bars, we need 5 + 4 = 9 parameters
+    bar_params = 9
+    model_bar = SimplePFNRegressor(
+        num_features=num_feat, 
+        d_model=128, 
+        depth=4, 
+        heads_feat=4, 
+        heads_samp=4, 
+        dropout=0.1,
+        output_dim=bar_params
+    )
+    out_bar = model_bar(Xtr, ytr, Xte)
+    print('BarDistribution params shape:', out_bar['predictions'].shape)  # Should be (B, M, 9)
+    print('BarDistribution params sample:', out_bar['predictions'][0, 0, :])  # First test sample parameters

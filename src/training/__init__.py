@@ -49,8 +49,8 @@ trained_model = setup.run_training()
 ```
 """
 
-from .Trainer import Trainer
-from .SetupTraining import SetupTraining, quick_train
+from .simplepfn_trainer import SimplePFNTrainer
+# from .SetupTraining import SetupTraining, quick_train
 from .configs import (
     get_training_config, 
     list_configs, 
@@ -58,24 +58,24 @@ from .configs import (
     extract_config_values,
     TRAINING_CONFIGS
 )
-from .utils import (
-    SimplePFNDataset,
-    create_dataloaders,
-    count_parameters,
-    set_seed,
-    plot_training_history,
-    save_experiment_summary,
-    load_experiment_summary,
-    find_best_checkpoint,
-    compare_models,
-    print_model_comparison,
-    EarlyStopping
-)
-from .load_utils import (
-    load_model,
-    find_checkpoint_in_run,
-    find_run_directory
-)
+# from .utils import (
+#     SimplePFNDataset,
+#     create_dataloaders,
+#     count_parameters,
+#     set_seed,
+#     plot_training_history,
+#     save_experiment_summary,
+#     load_experiment_summary,
+#     find_best_checkpoint,
+#     compare_models,
+#     print_model_comparison,
+#     EarlyStopping
+# )
+# from .load_utils import (
+#     load_model,
+#     find_checkpoint_in_run,
+#     find_run_directory
+# )
 
 __version__ = "2.0.0"
 __author__ = "SimplePFN Team"
@@ -83,9 +83,9 @@ __author__ = "SimplePFN Team"
 # Main exports
 __all__ = [
     # Core training classes
-    "Trainer",           # Low-level trainer with explicit parameters
-    "SetupTraining",     # High-level config-based setup
-    "quick_train",       # Convenience function for quick training
+    "SimplePFNTrainer",  # Low-level trainer with explicit parameters (renamed from Trainer)
+    # "SetupTraining",     # High-level config-based setup
+    # "quick_train",       # Convenience function for quick training
     
     # Configuration management
     "get_training_config",
@@ -94,21 +94,21 @@ __all__ = [
     "extract_config_values",
     "TRAINING_CONFIGS",
     
-    # Utilities
-    "SimplePFNDataset",
-    "create_dataloaders",
-    "count_parameters",
-    "set_seed",
-    "plot_training_history",
-    "save_experiment_summary",
-    "load_experiment_summary",
-    "find_best_checkpoint",
+    # # Utilities
+    # "SimplePFNDataset",
+    # "create_dataloaders",
+    # "count_parameters",
+    # "set_seed",
+    # "plot_training_history",
+    # "save_experiment_summary",
+    # "load_experiment_summary",
+    # "find_best_checkpoint",
     
-    # Model loading utilities
-    "load_model",
-    "find_checkpoint_in_run",
-    "find_run_directory",
-    "compare_models",
-    "print_model_comparison",
-    "EarlyStopping",
+    # # Model loading utilities
+    # "load_model",
+    # "find_checkpoint_in_run",
+    # "find_run_directory",
+    # "compare_models",
+    # "print_model_comparison",
+    # "EarlyStopping",
 ]

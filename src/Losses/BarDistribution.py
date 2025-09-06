@@ -150,7 +150,6 @@ class BarDistribution(PosteriorPredictive):
 
     # ------------------------------ Interface ------------------------------
 
-    @torch.inference_mode()
     def average_log_prob(self, pred: Tensor, y: Tensor) -> Tensor:
         """
         pred: (B, M, K+4)
@@ -167,7 +166,6 @@ class BarDistribution(PosteriorPredictive):
         logpdf = torch.clamp(logpdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
         return logpdf.mean(dim=1)
 
-    @torch.inference_mode()
     def mode(self, pred: Tensor) -> Tensor:
         """
         Argmax among: left edge (tail), the densest bar, right edge (tail).
@@ -209,7 +207,6 @@ class BarDistribution(PosteriorPredictive):
         mode_vals[arg == 1] = mode_bar[arg == 1]
         return mode_vals
 
-    @torch.inference_mode()
     def mean(self, pred: Tensor) -> Tensor:
         """
         Mean is always finite with Gaussian tails.
@@ -243,7 +240,6 @@ class BarDistribution(PosteriorPredictive):
 
         return pL * E_left + pR * E_right + bar_mean  # (B,M)
 
-    @torch.inference_mode()
     def sample(self, pred: Tensor, num_samples: int) -> Tensor:
         """
         Returns: (B, S, M)
