@@ -9,8 +9,8 @@ Simple runner that:
 
 Enhanced with BarDistribution support:
 - Automatically detects BarDistribution configuration from YAML config files
-- Loads BarDistribution parameters from model checkpoints when available
-- Falls back to fitting BarDistribution on current dataset if parameters not found in checkpoint
+- ALWAYS loads BarDistribution parameters from trained PFN model checkpoints
+- Raises error if BarDistribution is expected but not found in checkpoint
 - Supports both standard MSE and probabilistic BarDistribution models seamlessly
 
 This is intentionally simple and meant for small-scale testing.
@@ -25,6 +25,8 @@ import json
 import math
 import numpy as np
 import pandas as pd
+import time
+from datetime import datetime
 
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
@@ -217,18 +219,23 @@ def main(args):
                 
                 pfn.load(override_kwargs=mkwargs)
                 
-                # If BarDistribution is enabled but not fitted in checkpoint, fit it to current data
+                # BarDistribution should always be loaded from the trained PFN checkpoint
                 if use_bar_distribution and pfn.bar_distribution is not None:
-                    # Check if BarDistribution was loaded from checkpoint (has fitted parameters)
+                    # Check if BarDistribution was properly loaded from checkpoint
                     if (pfn.bar_distribution.centers is None or 
                         pfn.bar_distribution.edges is None or 
                         pfn.bar_distribution.widths is None):
                         if not args.quiet:
-                            print("[run_benchmark] BarDistribution not fitted in checkpoint, fitting to current dataset...")
-                        pfn.fit_bar_distribution(X_train, y_train, X_test, y_test, max_batches=10)
+                            print("[run_benchmark] ERROR: BarDistribution not found in checkpoint!")
+                            print("[run_benchmark] BarDistribution should always be loaded from trained PFN.")
+                        raise ValueError("BarDistribution parameters missing from checkpoint. Cannot proceed without trained BarDistribution.")
                     else:
                         if not args.quiet:
                             print("[run_benchmark] BarDistribution parameters loaded from checkpoint")
+                elif use_bar_distribution and pfn.bar_distribution is None:
+                    if not args.quiet:
+                        print("[run_benchmark] ERROR: BarDistribution expected but not found in model!")
+                    raise ValueError("BarDistribution expected from config but not found in loaded model.")
 
                 y_pred_pfn = pfn.predict(X_train, y_train, X_test)
                 # pfn.predict returns (M,) for batch 1
@@ -238,6 +245,9 @@ def main(args):
                 print(f"SimplePFN failed for task {tid}: {e}")
 
             results.append({
+                "process_id": os.getpid(),  # Add process ID to track which run produced these results
+                "timestamp": datetime.now().isoformat(),  # Add timestamp for run tracking
+                "checkpoint_path": os.path.basename(ckpt),  # Track which model checkpoint was used
                 "task_id": int(tid),
                 "dataset_shape": d.get("data_shape"),
                 "num_features": X_train.shape[1],
@@ -258,9 +268,24 @@ def main(args):
             print(f"Error processing task {tid}: {e}")
 
     df = pd.DataFrame(results)
-    out_file = Path(args.output)
+    
+    # Generate output filename with process ID
+    process_id = os.getpid()
+    out_file_path = Path(args.output)
+    
+    # Insert process ID into filename before extension
+    if out_file_path.suffix:
+        # e.g., "benchmark_results.csv" -> "benchmark_results_pid12345.csv"
+        stem = out_file_path.stem
+        suffix = out_file_path.suffix
+        parent = out_file_path.parent
+        out_file = parent / f"{stem}_pid{process_id}{suffix}"
+    else:
+        # No extension, just append process ID
+        out_file = Path(f"{args.output}_pid{process_id}")
+    
     df.to_csv(out_file, index=False)
-    print(f"\nSaved results to {out_file}")
+    print(f"\nSaved results to {out_file} (PID: {process_id})")
 
 
 if __name__ == "__main__":
@@ -269,9 +294,9 @@ if __name__ == "__main__":
     MAX_TASKS = 20
     DATA_DIR = "data_cache"
     CONFIG = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/configs/early_test.yaml"
-    CHECKPOINT = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/early_test1_32bs/step1000.pt"
+    CHECKPOINT = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_0/final_model_with_bardist.pt"
     DEVICE = "cuda"
-    OUTPUT = "benchmark_results.csv"
+    OUTPUT = "benchmark_results.csv"  # Process ID will be automatically added: benchmark_results_pid12345.csv
     NO_TARGET_ENCODING = False
     QUIET = False
 
@@ -279,10 +304,10 @@ if __name__ == "__main__":
     from types import SimpleNamespace
 
     # Subsampling env vars (optional) - read from ALL_CAPS environment variables so submit files can set them
-    N_FEATURES = 3
-    MAX_N_FEATURES = 9
-    N_TRAIN = 500
-    N_TEST = 495
+    N_FEATURES = 7
+    MAX_N_FEATURES = 19
+    N_TRAIN = 250
+    N_TEST = 250
     PREFER_NUMERIC = True
     ONLY_NUMERIC = False
 

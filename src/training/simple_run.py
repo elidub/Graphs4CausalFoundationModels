@@ -343,10 +343,8 @@ def main():
         
         # Use the run name (derived from job ID or config) for model naming
         run_name = None
-        cluster_id = os.environ.get('CLUSTER_ID', '')
-        proc_id = os.environ.get('PROCESS_ID', '0')
-        if proc_id:
-            run_name = f"simple_pfn_{proc_id}"
+        if cluster_id:
+            run_name = f"simple_pfn_{cluster_id}"
         else:
             run_name = config.get('experiment_name', 'simplepfn')
         
@@ -365,7 +363,11 @@ def main():
             bar_distribution=bar_distribution,  # Pass BarDistribution for probabilistic training
             eval_dataloader=eval_dataloader,  # Pass evaluation dataloader
             eval_every=training_config.get("eval_every", 0),  # Evaluation frequency
-            eval_batches=training_config.get("eval_batches", 10)  # Number of eval batches
+            eval_batches=training_config.get("eval_batches", 10),  # Number of eval batches
+            # Model selection parameters
+            enable_model_selection=training_config.get("model_selection_enabled", False),
+            model_selection_metric=training_config.get("model_selection_metric", "eval/mse_median"),
+            model_selection_mode=training_config.get("model_selection_mode", "min")
         )
         
         print(f"   Learning rate: {training_config.get('learning_rate', 1e-3)}")
@@ -376,6 +378,9 @@ def main():
         if eval_dataloader:
             print(f"   Eval frequency: every {training_config.get('eval_every', 0)} steps")
             print(f"   Eval batches: {training_config.get('eval_batches', 10)}")
+        print(f"   Model selection: {'enabled' if training_config.get('model_selection_enabled', False) else 'disabled'}")
+        if training_config.get('model_selection_enabled', False):
+            print(f"   Selection metric: {training_config.get('model_selection_metric', 'eval/mse_median')} ({training_config.get('model_selection_mode', 'min')})")
         if save_dir:
             print(f"   Save directory: {save_dir}")
             print(f"   Save frequency: {'never' if save_every <= 0 else f'every {save_every} steps'}")

@@ -34,7 +34,11 @@ class SimplePFNTrainer:
         bar_distribution: Optional[object] = None,  # BarDistribution for probabilistic training
         eval_dataloader: Optional[DataLoader] = None,  # Evaluation dataloader (can be same as training)
         eval_every: int = 0,  # Evaluate every N steps (0 to disable)
-        eval_batches: int = 10  # Number of batches to use for evaluation
+        eval_batches: int = 10,  # Number of batches to use for evaluation
+        # Model selection parameters
+        enable_model_selection: bool = False,  # Whether to enable automatic best model selection
+        model_selection_metric: str = "eval/mse_median",  # Metric to use for model selection
+        model_selection_mode: str = "min",  # "min" or "max" - whether lower or higher is better
     ):
         self.model = model
         self.dataloader = dataloader
@@ -52,6 +56,15 @@ class SimplePFNTrainer:
         self.eval_dataloader = eval_dataloader
         self.eval_every = eval_every
         self.eval_batches = eval_batches
+        
+        # Model selection parameters
+        self.enable_model_selection = enable_model_selection
+        self.model_selection_metric = model_selection_metric
+        self.model_selection_mode = model_selection_mode
+        self.best_metric_value = float('inf') if model_selection_mode == "min" else float('-inf')
+        self.best_model_state = None
+        self.best_model_step = 0
+        self.best_model_metadata = None
         
         # Create a run-specific subfolder for checkpoints
         self.run_save_dir = None
@@ -232,7 +245,148 @@ class SimplePFNTrainer:
             })
             
         return path
-    
+
+    def _update_best_model(self, metrics: Dict[str, float], train_loss: float = None) -> bool:
+        """
+        Update the best model based on the configured selection metric.
+        
+        Args:
+            metrics: Dictionary of evaluation metrics
+            train_loss: Current training loss (used as fallback)
+            
+        Returns:
+            bool: True if this is a new best model, False otherwise
+        """
+        # Determine the metric value to use for selection
+        metric_value = None
+        metric_source = "unknown"
+        
+        # First try to use the configured evaluation metric
+        if self.model_selection_metric in metrics:
+            metric_value = metrics[self.model_selection_metric]
+            metric_source = "eval"
+        # Fallback options for evaluation metrics
+        elif self.model_selection_metric.startswith("eval/") and not metrics:
+            # If eval metrics requested but none available, try train loss
+            if train_loss is not None:
+                metric_value = train_loss
+                metric_source = "train_fallback"
+        # Direct fallback to training loss
+        elif train_loss is not None and (self.model_selection_metric in ["train/loss", "loss"] or not metrics):
+            metric_value = train_loss
+            metric_source = "train"
+        
+        if metric_value is None:
+            return False  # No valid metric available
+            
+        # Check if this is a new best
+        is_better = False
+        if self.model_selection_mode == "min":
+            is_better = metric_value < self.best_metric_value
+        else:  # "max"
+            is_better = metric_value > self.best_metric_value
+            
+        if is_better:
+            self.best_metric_value = metric_value
+            self.best_model_step = self.global_step
+            
+            # Store the current model state
+            self.best_model_state = {
+                'model_state_dict': self.model.state_dict().copy(),
+                'optimizer_state_dict': self.optimizer.state_dict().copy(),
+            }
+            
+            # Store scheduler state if available
+            if self.scheduler is not None:
+                self.best_model_state['scheduler_state_dict'] = self.scheduler.state_dict().copy()
+                self.best_model_state['scheduler_config'] = self.scheduler_config.copy()
+            
+            # Store BarDistribution state if available
+            if hasattr(self, 'bar_distribution') and self.bar_distribution is not None:
+                bar_dist_state = {
+                    'num_bars': self.bar_distribution.num_bars,
+                    'min_width': self.bar_distribution.min_width,
+                    'scale_floor': self.bar_distribution.scale_floor,
+                    'max_fit_items': self.bar_distribution.max_fit_items,
+                    'log_prob_clip_min': self.bar_distribution.log_prob_clip_min,
+                    'log_prob_clip_max': self.bar_distribution.log_prob_clip_max,
+                    'device': str(self.bar_distribution.device),
+                    'dtype': str(self.bar_distribution.dtype),
+                }
+                
+                # Save fitted parameters if available
+                if (hasattr(self.bar_distribution, 'centers') and 
+                    self.bar_distribution.centers is not None):
+                    bar_dist_state.update({
+                        'centers': self.bar_distribution.centers.cpu().clone(),
+                        'edges': self.bar_distribution.edges.cpu().clone(),
+                        'widths': self.bar_distribution.widths.cpu().clone(),
+                        'base_s_left': self.bar_distribution.base_s_left.cpu().clone(),
+                        'base_s_right': self.bar_distribution.base_s_right.cpu().clone(),
+                        'fitted': True
+                    })
+                else:
+                    bar_dist_state['fitted'] = False
+                    
+                self.best_model_state['bar_distribution'] = bar_dist_state
+            
+            # Store metadata
+            self.best_model_metadata = {
+                'step': self.global_step,
+                'metric_name': self.model_selection_metric,
+                'metric_value': metric_value,
+                'metric_source': metric_source,
+                'timestamp': time.time(),
+                'selection_mode': self.model_selection_mode,
+            }
+            
+            print(f"   ✓ New best model! {self.model_selection_metric}={metric_value:.6f} (from {metric_source}) at step {self.global_step}")
+            return True
+        
+        return False
+
+    def save_best_model(self, filename: str = "best_model.pt") -> Optional[str]:
+        """
+        Save the best model encountered during training.
+        
+        Args:
+            filename: Name of the file to save the best model to
+            
+        Returns:
+            str: Path to saved model, or None if no best model available
+        """
+        if self.best_model_state is None:
+            print("Warning: No best model state available to save")
+            return None
+            
+        if not self.run_save_dir:
+            print("Warning: save_dir not provided, cannot save best model")
+            return None
+            
+        # Prepare the checkpoint
+        checkpoint = self.best_model_state.copy()
+        checkpoint['metadata'] = self.best_model_metadata.copy()
+        checkpoint['metadata']['saved_as_best'] = True
+        
+        # Save to disk
+        path = os.path.join(self.run_save_dir, filename)
+        torch.save(checkpoint, path)
+        
+        print(f"Best model saved to {path}")
+        print(f"   Best {self.best_model_metadata['metric_name']}: {self.best_model_metadata['metric_value']:.6f}")
+        print(f"   Best step: {self.best_model_metadata['step']}")
+        print(f"   Metric source: {self.best_model_metadata['metric_source']}")
+        
+        # Log to wandb if available
+        if self.wandb_run:
+            self.wandb_run.log({
+                'best_model/metric_value': self.best_model_metadata['metric_value'],
+                'best_model/step': self.best_model_metadata['step'],
+                'best_model/saved_path': path,
+            })
+            
+        return path
+
     def load_model(self, checkpoint_path: str, map_location: Optional[str] = None) -> Dict[str, Any]:
         """
         Load model checkpoint including BarDistribution parameters.
@@ -476,6 +630,10 @@ class SimplePFNTrainer:
             print(f"   MSE: {metrics['eval/mse_mean']:.6f} ± {metrics['eval/mse_std']:.6f} (median: {metrics['eval/mse_median']:.6f})")
             print(f"   R²: {metrics['eval/r2_mean']:.6f} ± {metrics['eval/r2_std']:.6f} (median: {metrics['eval/r2_median']:.6f})")
         
+        # Update best model if model selection is enabled
+        if self.enable_model_selection:
+            self._update_best_model(metrics)
+        
         return metrics
 
     def fit(self):
@@ -613,6 +771,13 @@ class SimplePFNTrainer:
                 # Log evaluation metrics to wandb
                 if self.wandb_run and eval_metrics:
                     self.wandb_run.log(eval_metrics, step=self.global_step)
+            else:
+                # If evaluation is disabled but model selection is enabled,
+                # update best model based on training loss
+                if (self.enable_model_selection and 
+                    self.eval_dataloader is None and 
+                    self.global_step % max(1, self.max_steps // 20) == 0):  # Check every 5% of training
+                    self._update_best_model({}, train_loss=loss.item())
         
         # End total timing
         total_end_time = time.time()
@@ -653,5 +818,18 @@ class SimplePFNTrainer:
             self.save_model(filename="final.pt", 
                            metadata={'final': True})
             print(f"   Final model saved to {self.run_save_dir}")
+            
+            # Save best model if model selection was enabled
+            if self.enable_model_selection and self.best_model_state is not None:
+                best_path = self.save_best_model()
+                if best_path:
+                    print(f"   Best model saved to {best_path}")
+                    
+                    # Optionally load best model as the final model state
+                    # (user may want to keep the last checkpoint instead)
+                    print(f"   Note: Final model state represents last checkpoint.")
+                    print(f"         Load '{os.path.basename(best_path)}' to use the best model.")
+            elif self.enable_model_selection:
+                print(f"   Warning: Model selection was enabled but no best model was tracked.")
         
         return self.model

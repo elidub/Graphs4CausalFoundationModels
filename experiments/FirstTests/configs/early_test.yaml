@@ -185,7 +185,7 @@ model_config:
   # Critical Parameter (automatically calculated)
   # ---------------------------------------------
   num_features:
-    value: 9  # MUST be max_number_features - 1 (10-1=9)
+    value: 19  # MUST be max_number_features - 1 (10-1=9)
               # One feature becomes the target, leaving 9 input features
   
   # BarDistribution Configuration (optional)
@@ -194,7 +194,7 @@ model_config:
   use_bar_distribution:
     value: true  # Set to true to enable probabilistic outputs
   num_bars:
-    value: 1000                 # Number of bars in the distribution (default: 11)
+    value: 500                 # Number of bars in the distribution (default: 11)
   min_width:
     value: 1e-6             # Minimum width for bars (default: 1e-6)
   scale_floor:
@@ -217,11 +217,11 @@ training_config:
   # Core Training Parameters
   # ------------------------
   learning_rate:
-    value: 0.0001  # Adam learning rate (from debug_config)
+    value: 0.001  # Adam learning rate (from debug_config)
   weight_decay:
     value: 0.000001  # L2 regularization weight (from debug_config)
   max_steps:
-    value: 100000  # 
+    value: 10000  # 
   max_epochs:
     value: 1   # Single epoch (standard for synthetic data)
 # eta_min is no longer needed as we use min_lr_ratio directly
@@ -231,7 +231,7 @@ training_config:
   batch_size:
     value: 64   # Reduce memory pressure for multiprocessing segfault testing
   num_workers:
-    value: 64  # Match the number of requested CPUs
+    value: 128  # Match the number of requested CPUs
     
   # Training Control  
   # ----------------  
@@ -283,14 +283,23 @@ training_config:
   eval_batches:
     value: 100   # Number of batches to use for evaluation
   eval_dataset_size:
-    value: 100000 # Size of evaluation dataset (separate from training)
+    value: 1000000 # Size of evaluation dataset (separate from training)
+    
+  # Model Selection Configuration
+  # -----------------------------
+  model_selection_enabled:
+    value: true  # Enable automatic best model selection
+  model_selection_metric:
+    value: "eval/mse_median"  # Metric to use for model selection (eval/mse_median, eval/loss_median, train/loss, etc.)
+  model_selection_mode:
+    value: "min"  # Whether to minimize ("min") or maximize ("max") the metric
     
   # Weights & Biases Integration
   # ----------------------------
   wandb_project:
     value: "DoPFN_v2"  # Enable W&B for experiment tracking
   wandb_run_name:
-    value: null  # Auto-generate from experiment_name
+    value: basic_10000step_1  # Auto-generate from experiment_name
   wandb_tags:
     value: ["early_test", "debug", "first_run", "simplepfn"]  # Tags for experiment tracking
   wandb_notes:
