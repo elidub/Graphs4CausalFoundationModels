@@ -306,8 +306,8 @@ if __name__ == "__main__":
     # Subsampling env vars (optional) - read from ALL_CAPS environment variables so submit files can set them
     N_FEATURES = 7
     MAX_N_FEATURES = 19
-    N_TRAIN = 250
-    N_TEST = 250
+    N_TRAIN = 125
+    N_TEST = 125
     PREFER_NUMERIC = True
     ONLY_NUMERIC = False
 
