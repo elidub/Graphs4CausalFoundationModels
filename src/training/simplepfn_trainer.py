@@ -190,6 +190,36 @@ class SimplePFNTrainer:
             checkpoint['scheduler_state_dict'] = self.scheduler.state_dict()
             checkpoint['scheduler_config'] = self.scheduler_config
             
+        # Save BarDistribution parameters if available
+        if hasattr(self, 'bar_distribution') and self.bar_distribution is not None:
+            bar_dist_state = {
+                'num_bars': self.bar_distribution.num_bars,
+                'min_width': self.bar_distribution.min_width,
+                'scale_floor': self.bar_distribution.scale_floor,
+                'max_fit_items': self.bar_distribution.max_fit_items,
+                'log_prob_clip_min': self.bar_distribution.log_prob_clip_min,
+                'log_prob_clip_max': self.bar_distribution.log_prob_clip_max,
+                'device': str(self.bar_distribution.device),
+                'dtype': str(self.bar_distribution.dtype),
+            }
+            
+            # Save fitted parameters if the distribution has been fitted
+            if (hasattr(self.bar_distribution, 'centers') and 
+                self.bar_distribution.centers is not None):
+                bar_dist_state.update({
+                    'centers': self.bar_distribution.centers.cpu(),
+                    'edges': self.bar_distribution.edges.cpu(),
+                    'widths': self.bar_distribution.widths.cpu(),
+                    'base_s_left': self.bar_distribution.base_s_left.cpu(),
+                    'base_s_right': self.bar_distribution.base_s_right.cpu(),
+                    'fitted': True
+                })
+            else:
+                bar_dist_state['fitted'] = False
+                
+            checkpoint['bar_distribution'] = bar_dist_state
+            print(f"   Saved BarDistribution parameters (fitted: {bar_dist_state['fitted']})")
+            
         # Save to disk
         torch.save(checkpoint, path)
         print(f"Model saved to {path}")
@@ -202,6 +232,68 @@ class SimplePFNTrainer:
             })
             
         return path
+    
+    def load_model(self, checkpoint_path: str, map_location: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Load model checkpoint including BarDistribution parameters.
+        
+        Args:
+            checkpoint_path: Path to the checkpoint file
+            map_location: Device mapping for loading (e.g., 'cpu', 'cuda:0')
+            
+        Returns:
+            Dict containing metadata from the checkpoint
+        """
+        if map_location is None:
+            map_location = str(self.device)
+            
+        print(f"Loading model checkpoint from {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, map_location=map_location)
+        
+        # Load model state
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        print("   Model state loaded")
+        
+        # Load optimizer state if available
+        if 'optimizer_state_dict' in checkpoint and hasattr(self, 'optimizer'):
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            print("   Optimizer state loaded")
+        
+        # Load scheduler state if available
+        if 'scheduler_state_dict' in checkpoint and hasattr(self, 'scheduler') and self.scheduler is not None:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            print("   Scheduler state loaded")
+        
+        # Load BarDistribution parameters if available
+        if 'bar_distribution' in checkpoint and self.bar_distribution is not None:
+            bar_dist_state = checkpoint['bar_distribution']
+            print(f"   Loading BarDistribution parameters (fitted: {bar_dist_state.get('fitted', False)})")
+            
+            # Restore basic configuration
+            self.bar_distribution.num_bars = bar_dist_state['num_bars']
+            self.bar_distribution.min_width = bar_dist_state['min_width']
+            self.bar_distribution.scale_floor = bar_dist_state['scale_floor']
+            self.bar_distribution.max_fit_items = bar_dist_state['max_fit_items']
+            self.bar_distribution.log_prob_clip_min = bar_dist_state['log_prob_clip_min']
+            self.bar_distribution.log_prob_clip_max = bar_dist_state['log_prob_clip_max']
+            
+            # Restore fitted parameters if available
+            if bar_dist_state.get('fitted', False):
+                self.bar_distribution.centers = bar_dist_state['centers'].to(self.device)
+                self.bar_distribution.edges = bar_dist_state['edges'].to(self.device)
+                self.bar_distribution.widths = bar_dist_state['widths'].to(self.device)
+                self.bar_distribution.base_s_left = bar_dist_state['base_s_left'].to(self.device)
+                self.bar_distribution.base_s_right = bar_dist_state['base_s_right'].to(self.device)
+                print("   BarDistribution fitted parameters restored")
+            else:
+                print("   BarDistribution was not fitted when saved")
+        
+        # Return metadata
+        metadata = checkpoint.get('metadata', {})
+        print(f"Model checkpoint loaded successfully")
+        if 'global_step' in metadata:
+            print(f"   Checkpoint was saved at step {metadata['global_step']}")
+        return metadata
     
     def setup_signal_handlers(self):
         """Setup signal handlers for clean shutdown and model saving on termination."""

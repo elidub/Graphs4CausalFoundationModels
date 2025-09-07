@@ -272,6 +272,9 @@ def main():
             output_dim = bar_distribution.num_params  # K + 4 parameters
             print(f"   BarDistribution fitted with output dimension: {output_dim}")
             print(f"   Parameters needed: {num_bars} bars + 4 tail parameters = {output_dim}")
+            
+            # Store BarDistribution parameters for later saving with the trained model
+            print("   BarDistribution fitted successfully and will be saved with model checkpoints")
         else:
             print(f"\n   Using standard MSE loss (no BarDistribution)")
             output_dim = model_config.get("output_dim", 1)
@@ -384,6 +387,15 @@ def main():
         print("=" * 60)
         trained_model = trainer.fit()
         
+        # Save final model with BarDistribution parameters
+        if training_config.get("checkpoint_dir") and bar_distribution is not None:
+            print("\nSaving final model with BarDistribution...")
+            final_model_path = trainer.save_model(
+                filename="final_model_with_bardist.pt",
+                metadata={'stage': 'final', 'training_complete': True}
+            )
+            print(f"Final model with BarDistribution saved to: {final_model_path}")
+
         print("=" * 60)
         print("SimplePFN Training Complete!")
         print("   Training completed successfully!")

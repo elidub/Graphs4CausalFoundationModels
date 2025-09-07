@@ -7,6 +7,12 @@ Simple runner that:
 - runs the SimplePFN inference (using the sklearn-like wrapper) when possible
 - reports RMSE per method and saves a CSV summary
 
+Enhanced with BarDistribution support:
+- Automatically detects BarDistribution configuration from YAML config files
+- Loads BarDistribution parameters from model checkpoints when available
+- Falls back to fitting BarDistribution on current dataset if parameters not found in checkpoint
+- Supports both standard MSE and probabilistic BarDistribution models seamlessly
+
 This is intentionally simple and meant for small-scale testing.
 """
 
@@ -181,21 +187,48 @@ def main(args):
                     cfg = yaml.safe_load(f)
                 model_cfg = cfg.get("model_config", {}) if isinstance(cfg, dict) else {}
 
-                # prepare wrapper but override num_features to match dataset
+                # Check if BarDistribution is enabled in the config
+                use_bar_distribution = model_cfg.get("use_bar_distribution", {}).get("value", False)
+
+                # prepare wrapper with config path so it can detect BarDistribution settings
+                pfn = SimplePFNSklearn(config_path=cfg_path, checkpoint_path=ckpt, device=args.device, verbose=not args.quiet)
+                
+                # Override num_features to match dataset and read other parameters from config
                 mkwargs = {
                     "num_features": int(getattr(args, "max_n_features", X_train.shape[1]) or X_train.shape[1]),
-                    "d_model": int(model_cfg.get("d_model", 256)),
-                    "depth": int(model_cfg.get("depth", 8)),
-                    "heads_feat": int(model_cfg.get("heads_feat", 8)),
-                    "heads_samp": int(model_cfg.get("heads_samp", 8)),
-                    "dropout": float(model_cfg.get("dropout", 0.0)),
                 }
+                
+                # Only override if the config doesn't specify these values or they need adjustment
+                if not model_cfg.get("d_model"):
+                    mkwargs["d_model"] = 256
+                if not model_cfg.get("depth"):  
+                    mkwargs["depth"] = 8
+                if not model_cfg.get("heads_feat"):
+                    mkwargs["heads_feat"] = 8
+                if not model_cfg.get("heads_samp"):
+                    mkwargs["heads_samp"] = 8
+                if not model_cfg.get("dropout"):
+                    mkwargs["dropout"] = 0.0
 
-                # Load config from YAML (if available) and override with mkwargs
-                pfn = SimplePFNSklearn(config_path=None, checkpoint_path=ckpt, device=args.device, verbose=not args.quiet)
                 if not args.quiet:
                     print("[run_benchmark] PFN wrapper override model_kwargs:", json.dumps(mkwargs, indent=2))
+                    if use_bar_distribution:
+                        print("[run_benchmark] BarDistribution detected in config")
+                
                 pfn.load(override_kwargs=mkwargs)
+                
+                # If BarDistribution is enabled but not fitted in checkpoint, fit it to current data
+                if use_bar_distribution and pfn.bar_distribution is not None:
+                    # Check if BarDistribution was loaded from checkpoint (has fitted parameters)
+                    if (pfn.bar_distribution.centers is None or 
+                        pfn.bar_distribution.edges is None or 
+                        pfn.bar_distribution.widths is None):
+                        if not args.quiet:
+                            print("[run_benchmark] BarDistribution not fitted in checkpoint, fitting to current dataset...")
+                        pfn.fit_bar_distribution(X_train, y_train, X_test, y_test, max_batches=10)
+                    else:
+                        if not args.quiet:
+                            print("[run_benchmark] BarDistribution parameters loaded from checkpoint")
 
                 y_pred_pfn = pfn.predict(X_train, y_train, X_test)
                 # pfn.predict returns (M,) for batch 1

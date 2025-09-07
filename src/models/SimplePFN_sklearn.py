@@ -164,6 +164,11 @@ class SimplePFNSklearn:
                 self.model.load_state_dict(state, strict=False)
                 if self.verbose:
                     print("[SimplePFNSklearn] Loaded checkpoint into model (partial loads allowed).")
+                    
+                # Load BarDistribution parameters if available and BarDistribution is enabled
+                if self.use_bar_distribution and self.bar_distribution is not None and 'bar_distribution' in ckpt:
+                    self._load_bar_distribution_parameters(ckpt['bar_distribution'])
+                    
             except Exception as e:
                 if self.verbose:
                     print(f"[SimplePFNSklearn] Warning: initial load failed: {e}")
@@ -198,6 +203,11 @@ class SimplePFNSklearn:
                             self.model.load_state_dict(state, strict=False)
                             if self.verbose:
                                 print("[SimplePFNSklearn] Successfully rebuilt model with inferred shape and loaded checkpoint.")
+                                
+                            # Load BarDistribution parameters if available and BarDistribution is enabled
+                            if self.use_bar_distribution and self.bar_distribution is not None and 'bar_distribution' in ckpt:
+                                self._load_bar_distribution_parameters(ckpt['bar_distribution'])
+                                
                         except Exception as e2:
                             if self.verbose:
                                 print(f"[SimplePFNSklearn] Warning: failed to load even after inferring shapes: {e2}")
@@ -209,6 +219,37 @@ class SimplePFNSklearn:
                         print(f"[SimplePFNSklearn] Error while attempting to infer shapes: {e3}")
 
         return self
+    
+    def _load_bar_distribution_parameters(self, bar_dist_state: Dict[str, Any]) -> None:
+        """
+        Load BarDistribution parameters from checkpoint state.
+        
+        Args:
+            bar_dist_state: Dictionary containing BarDistribution parameters from checkpoint
+        """
+        if self.verbose:
+            print(f"[SimplePFNSklearn] Loading BarDistribution parameters (fitted: {bar_dist_state.get('fitted', False)})")
+        
+        # Restore basic configuration
+        self.bar_distribution.num_bars = bar_dist_state['num_bars']
+        self.bar_distribution.min_width = bar_dist_state['min_width']
+        self.bar_distribution.scale_floor = bar_dist_state['scale_floor']
+        self.bar_distribution.max_fit_items = bar_dist_state['max_fit_items']
+        self.bar_distribution.log_prob_clip_min = bar_dist_state['log_prob_clip_min']
+        self.bar_distribution.log_prob_clip_max = bar_dist_state['log_prob_clip_max']
+        
+        # Restore fitted parameters if available
+        if bar_dist_state.get('fitted', False):
+            self.bar_distribution.centers = bar_dist_state['centers'].to(self.device)
+            self.bar_distribution.edges = bar_dist_state['edges'].to(self.device)
+            self.bar_distribution.widths = bar_dist_state['widths'].to(self.device)
+            self.bar_distribution.base_s_left = bar_dist_state['base_s_left'].to(self.device)
+            self.bar_distribution.base_s_right = bar_dist_state['base_s_right'].to(self.device)
+            if self.verbose:
+                print("[SimplePFNSklearn] BarDistribution fitted parameters restored from checkpoint")
+        else:
+            if self.verbose:
+                print("[SimplePFNSklearn] BarDistribution was not fitted in the saved checkpoint")
 
     def fit_bar_distribution(self, X_train_data, y_train_data, X_test_data, y_test_data, 
                            max_batches: Optional[int] = None) -> "SimplePFNSklearn":
