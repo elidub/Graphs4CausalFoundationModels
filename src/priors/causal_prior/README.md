@@ -14,7 +14,7 @@ An SCM has three components:
 
 ## SCM Sampling Workflow
 
-### Method 1: High-level SCMSampler (Recommended)
+###  High-level SCMSampler
 
 The easiest way to sample SCMs is using the **SCMSampler** class in causal_prior/scm/SCMSampler.py. This provides a high-level interface that encapsulates the entire sampling pipeline:
 
@@ -33,29 +33,6 @@ N_SAMPLES = 100
 scm.sample_exogenous(num_samples=N_SAMPLES)
 scm.sample_endogenous_noise(num_samples=N_SAMPLES)
 data = scm.propagate(num_samples=N_SAMPLES)
-```
-
-You can also sample multiple SCMs at once:
-```python
-scms = sampler.sample_multiple(count=5, base_seed=100)
-```
-
-### Method 2: Manual SCM Construction
-
-To sample an SCM manually, a config specifying distributions over all hyperparameters (of the graph sampling, mechanisms sampling and noise distributions) is needed. An example for such a config can be found in causal_prior/ExampleConfigs/Basic_Configs.py. This config is passed to the class SCMHyperparameterSampler in causal_prior/scm/SCMHyperparameterSampler.py, which samples a hyperparameter dictionary according to the config. Such a dictionary can be passed to causal_prior/scm/SCMBuilder.py to build and return an SCM.
-
-```python
-from priors.causal_prior.scm.SCMHyperparameterSampler import SCMHyperparameterSampler
-from priors.causal_prior.scm.SCMBuilder import SCMBuilder
-from priors.causal_prior.ExampleConfigs.Basic_Configs import default_sampling_config
-
-# Sample hyperparameters
-sampler = SCMHyperparameterSampler(default_sampling_config, seed=123)
-sampled_params = sampler.sample()
-
-# Build SCM
-builder = SCMBuilder(**sampled_params)
-scm = builder.build()
 ```
 
 ## Data Generation from SCM
