@@ -38,7 +38,7 @@ try:
     WANDB_AVAILABLE = True
 except ImportError:
     WANDB_AVAILABLE = False
-    print("WARNING: wandb not available - experiment tracking disabled")
+    raise ImportError("wandb library not found. Please install it or disable wandb logging in the config.")
 
 
 def main():
@@ -198,6 +198,21 @@ def main():
             print(f"   WARNING: Using config num_features ({num_features}) instead of detected ({input_size})")
         else:
             print(f"   Using detected num_features: {num_features}")
+        
+        # Create evaluation dataloader if enabled
+        eval_dataloader = None
+        eval_enabled = training_config.get("eval_enabled", False)
+        eval_every = training_config.get("eval_every", 0)
+        
+        if eval_enabled and eval_every > 0:
+            print(f"\nEVALUATION SETUP:")
+            eval_batches = training_config.get("eval_batches", 10)
+            print(f"   Using training dataloader for evaluation")
+            print(f"   Evaluation batches: {eval_batches}")
+            eval_dataloader = dataloader  # Use the same training dataloader
+            print(f"   Evaluation setup complete")
+        else:
+            print(f"\nEVALUATION: Disabled (eval_enabled={eval_enabled}, eval_every={eval_every})")
 
             
         # Get device first (needed for BarDistribution)
@@ -270,6 +285,7 @@ def main():
             heads_feat=model_config.get("heads_feat", 2),
             heads_samp=model_config.get("heads_samp", 2),
             dropout=model_config.get("dropout", 0.1),
+            hidden_mult=model_config.get("hidden_mult", 4),
             output_dim=output_dim  # Use calculated output dimension
         )
         # Count parameters
@@ -343,13 +359,20 @@ def main():
             save_dir=save_dir,
             save_every=save_every,
             run_name=run_name,
-            bar_distribution=bar_distribution  # Pass BarDistribution for probabilistic training
+            bar_distribution=bar_distribution,  # Pass BarDistribution for probabilistic training
+            eval_dataloader=eval_dataloader,  # Pass evaluation dataloader
+            eval_every=training_config.get("eval_every", 0),  # Evaluation frequency
+            eval_batches=training_config.get("eval_batches", 10)  # Number of eval batches
         )
         
         print(f"   Learning rate: {training_config.get('learning_rate', 1e-3)}")
         print(f"   Max steps: {training_config.get('max_steps', 10)}")
         print(f"   Wandb logging: {'enabled' if wandb_run else 'disabled'}")
         print(f"   Model checkpoints: {'enabled' if save_dir else 'disabled'}")
+        print(f"   Evaluation: {'enabled' if eval_dataloader else 'disabled'}")
+        if eval_dataloader:
+            print(f"   Eval frequency: every {training_config.get('eval_every', 0)} steps")
+            print(f"   Eval batches: {training_config.get('eval_batches', 10)}")
         if save_dir:
             print(f"   Save directory: {save_dir}")
             print(f"   Save frequency: {'never' if save_every <= 0 else f'every {save_every} steps'}")

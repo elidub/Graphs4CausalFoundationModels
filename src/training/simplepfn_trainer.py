@@ -8,10 +8,12 @@ import torch
 import torch.nn as nn
 import time
 import signal
+import numpy as np
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import LambdaLR
 import math
 from typing import Optional, Dict, Any, Union, Callable
+from sklearn.metrics import r2_score, mean_squared_error
 
 
 class SimplePFNTrainer:
@@ -29,7 +31,10 @@ class SimplePFNTrainer:
         save_dir: str = None,
         save_every: int = 0,
         run_name: str = None,
-        bar_distribution: Optional[object] = None  # BarDistribution for probabilistic training
+        bar_distribution: Optional[object] = None,  # BarDistribution for probabilistic training
+        eval_dataloader: Optional[DataLoader] = None,  # Evaluation dataloader (can be same as training)
+        eval_every: int = 0,  # Evaluate every N steps (0 to disable)
+        eval_batches: int = 10  # Number of batches to use for evaluation
     ):
         self.model = model
         self.dataloader = dataloader
@@ -42,6 +47,11 @@ class SimplePFNTrainer:
         self.save_every = save_every
         self.run_name = run_name or f"model_{int(time.time())}"
         self.bar_distribution = bar_distribution  # Store BarDistribution
+        
+        # Evaluation parameters
+        self.eval_dataloader = eval_dataloader
+        self.eval_every = eval_every
+        self.eval_batches = eval_batches
         
         # Create a run-specific subfolder for checkpoints
         self.run_save_dir = None
@@ -206,6 +216,176 @@ class SimplePFNTrainer:
         signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
         signal.signal(signal.SIGTERM, signal_handler) # Termination request
 
+    def evaluate(self) -> Dict[str, float]:
+        """
+        Run evaluation on the evaluation dataset and compute comprehensive metrics.
+        
+        Returns:
+            Dict containing evaluation metrics including:
+            - negative log likelihood (loss)
+            - mean and median MSE 
+            - mean and median R²
+            - IQR and standard deviation for all metrics
+        """
+        if self.eval_dataloader is None:
+            print("Warning: No evaluation dataloader provided, skipping evaluation")
+            return {}
+            
+        print(f"Running evaluation on {self.eval_batches} batches...")
+        
+        self.model.eval()
+        eval_losses = []
+        eval_mses = []
+        eval_r2s = []
+        
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(self.eval_dataloader):
+                if batch_idx >= self.eval_batches:
+                    break
+                    
+                X_train, y_train, X_test, y_test = self._process_batch(batch)
+                
+                # Forward pass
+                output = self.model(X_train, y_train, X_test)
+                
+                # Extract predictions
+                if isinstance(output, dict) and 'predictions' in output:
+                    predictions = output['predictions']
+                else:
+                    predictions = output
+                
+                # Compute loss (negative log likelihood)
+                if self.bar_distribution is not None:
+                    # BarDistribution loss
+                    log_prob = self.bar_distribution.average_log_prob(predictions, y_test)
+                    loss = -log_prob.mean()
+                    
+                    # For MSE and R² metrics, extract mean predictions from BarDistribution
+                    # predictions shape: (batch_size, n_test, K+4)
+                    # We need to get the mean of the distribution
+                    pred_mean = self.bar_distribution.mean(predictions)  # (batch_size, n_test)
+                    pred_np = pred_mean.cpu().numpy()
+                else:
+                    # MSE loss
+                    if len(predictions.shape) == 3 and predictions.shape[-1] == 1:
+                        predictions = predictions.squeeze(-1)
+                    loss = self.criterion(predictions, y_test)
+                    
+                    # Convert to numpy for sklearn metrics
+                    pred_np = predictions.cpu().numpy()
+                
+                # Check for NaN/infinite values and skip problematic batches
+                loss_value = loss.item()
+                y_test_np = y_test.cpu().numpy()
+                
+                # Check if loss is NaN or infinite
+                if not np.isfinite(loss_value):
+                    print(f"   Skipping batch {batch_idx}: loss contains NaN/inf (loss={loss_value})")
+                    continue
+                    
+                # Check if predictions contain NaN or infinite values
+                if not np.all(np.isfinite(pred_np)):
+                    nan_count = np.sum(~np.isfinite(pred_np))
+                    print(f"   Skipping batch {batch_idx}: predictions contain {nan_count} NaN/inf values")
+                    continue
+                    
+                # Check if targets contain NaN or infinite values
+                if not np.all(np.isfinite(y_test_np)):
+                    nan_count = np.sum(~np.isfinite(y_test_np))
+                    print(f"   Skipping batch {batch_idx}: targets contain {nan_count} NaN/inf values")
+                    continue
+                
+                # If we get here, the batch is valid
+                eval_losses.append(loss_value)
+                
+                # Compute metrics for each sample in the batch
+                batch_mses = []
+                batch_r2s = []
+                
+                for i in range(pred_np.shape[0]):
+                    # Double-check individual samples for safety
+                    if not (np.all(np.isfinite(pred_np[i])) and np.all(np.isfinite(y_test_np[i]))):
+                        continue  # Skip this sample if it has NaN/inf
+                    
+                    # MSE for this sample
+                    try:
+                        mse = mean_squared_error(y_test_np[i], pred_np[i])
+                        if np.isfinite(mse):
+                            batch_mses.append(mse)
+                    except (ValueError, RuntimeWarning):
+                        continue  # Skip if MSE computation fails
+                    
+                    # R² for this sample (handle case where y has no variance)
+                    try:
+                        r2 = r2_score(y_test_np[i], pred_np[i])
+                        if np.isfinite(r2):
+                            batch_r2s.append(r2)
+                    except (ValueError, RuntimeWarning):
+                        # R² is undefined when y has no variance or other issues
+                        continue
+                
+                eval_mses.extend(batch_mses)
+                eval_r2s.extend(batch_r2s)
+        
+        self.model.train()  # Return to training mode
+        
+        # Convert to numpy arrays for statistics
+        eval_losses = np.array(eval_losses)
+        eval_mses = np.array(eval_mses)
+        eval_r2s = np.array(eval_r2s)
+        
+        # Check if we have any valid data
+        if len(eval_losses) == 0:
+            print("Warning: No valid evaluation data collected (all batches contained NaN/inf)")
+            return {}
+        
+        if len(eval_mses) == 0:
+            print("Warning: No valid MSE/R² samples collected")
+            # Return only loss metrics
+            metrics = {
+                'eval/loss_mean': float(np.mean(eval_losses)),
+                'eval/loss_median': float(np.median(eval_losses)),
+                'eval/loss_std': float(np.std(eval_losses)),
+                'eval/loss_iqr': float(np.percentile(eval_losses, 75) - np.percentile(eval_losses, 25)),
+                'eval/num_batches': len(eval_losses),
+                'eval/num_samples': 0
+            }
+        else:
+            # Compute comprehensive statistics
+            metrics = {
+                # Loss (negative log likelihood)
+                'eval/loss_mean': float(np.mean(eval_losses)),
+                'eval/loss_median': float(np.median(eval_losses)),
+                'eval/loss_std': float(np.std(eval_losses)),
+                'eval/loss_iqr': float(np.percentile(eval_losses, 75) - np.percentile(eval_losses, 25)),
+                
+                # MSE
+                'eval/mse_mean': float(np.mean(eval_mses)),
+                'eval/mse_median': float(np.median(eval_mses)),
+                'eval/mse_std': float(np.std(eval_mses)),
+                'eval/mse_iqr': float(np.percentile(eval_mses, 75) - np.percentile(eval_mses, 25)),
+                
+                # R²
+                'eval/r2_mean': float(np.mean(eval_r2s)),
+                'eval/r2_median': float(np.median(eval_r2s)),
+                'eval/r2_std': float(np.std(eval_r2s)),
+                'eval/r2_iqr': float(np.percentile(eval_r2s, 75) - np.percentile(eval_r2s, 25)),
+                
+                # Additional summary stats
+                'eval/num_batches': len(eval_losses),
+                'eval/num_samples': len(eval_mses)
+            }
+        
+        # Print evaluation summary
+        print(f"Evaluation Results ({len(eval_mses)} samples from {len(eval_losses)} valid batches):")
+        if len(eval_losses) > 0:
+            print(f"   Loss (NLL): {metrics['eval/loss_mean']:.6f} ± {metrics['eval/loss_std']:.6f} (median: {metrics['eval/loss_median']:.6f})")
+        if len(eval_mses) > 0:
+            print(f"   MSE: {metrics['eval/mse_mean']:.6f} ± {metrics['eval/mse_std']:.6f} (median: {metrics['eval/mse_median']:.6f})")
+            print(f"   R²: {metrics['eval/r2_mean']:.6f} ± {metrics['eval/r2_std']:.6f} (median: {metrics['eval/r2_median']:.6f})")
+        
+        return metrics
+
     def fit(self):
         """Train the SimplePFN model."""
         print(f"Training SimplePFN for {self.max_steps} steps with learning rate {self.learning_rate}")
@@ -330,6 +510,17 @@ class SimplePFNTrainer:
             # Save model checkpoint if requested
             if self.run_save_dir and self.save_every > 0 and self.global_step % self.save_every == 0:
                 self.save_model()
+                
+            # Run evaluation if requested
+            if (self.eval_dataloader is not None and 
+                self.eval_every > 0 and 
+                self.global_step % self.eval_every == 0):
+                
+                eval_metrics = self.evaluate()
+                
+                # Log evaluation metrics to wandb
+                if self.wandb_run and eval_metrics:
+                    self.wandb_run.log(eval_metrics, step=self.global_step)
         
         # End total timing
         total_end_time = time.time()

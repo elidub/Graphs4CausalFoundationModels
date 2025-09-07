@@ -24,7 +24,7 @@ class MLP(nn.Module):
 
 
 class TwoWayBlock(nn.Module):
-    def __init__(self, dim: int, heads_feat: int, heads_samp: int, dropout: float = 0.0):
+    def __init__(self, dim: int, heads_feat: int, heads_samp: int, dropout: float = 0.0, hidden_mult: int = 4):
         super().__init__()
         self.feat_attn = nn.MultiheadAttention(embed_dim=dim, num_heads=heads_feat, batch_first=True)
         self.ln_feat = nn.LayerNorm(dim)
@@ -33,7 +33,7 @@ class TwoWayBlock(nn.Module):
         self.ln_samp = nn.LayerNorm(dim)
         self.heads_samp = heads_samp
 
-        self.mlp = MLP(dim, hidden_mult=4, dropout=dropout)
+        self.mlp = MLP(dim, hidden_mult=hidden_mult, dropout=dropout)
         self.ln_mlp = nn.LayerNorm(dim)
         self.drop = nn.Dropout(dropout)
 
@@ -80,6 +80,7 @@ class SimplePFNRegressor(nn.Module):
         heads_samp: int = 8,
         dropout: float = 0.0,
         output_dim: int = 1,  # New parameter for high-dimensional output
+        hidden_mult: int = 4,  # MLP hidden layer multiplier
     ):
         super().__init__()
         self.num_features = num_features
@@ -100,7 +101,7 @@ class SimplePFNRegressor(nn.Module):
 
         # Stacked two-way blocks
         self.blocks = nn.ModuleList([
-            TwoWayBlock(d_model, heads_feat, heads_samp, dropout=dropout)
+            TwoWayBlock(d_model, heads_feat, heads_samp, dropout=dropout, hidden_mult=hidden_mult)
             for _ in range(depth)
         ])
 
