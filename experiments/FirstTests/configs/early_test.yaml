@@ -1,7 +1,14 @@
 # ===============================================================================
 # Early Test 1 Configuration - First Pipeline Test
 # ===============================================================================
-# This configuration serves as the initial end-to-end test of the SimplePFN
+# This configuration serves as the initial end-to-en  # Evaluation Configuration
+  # ------------------------
+eval_enabled:
+  value: true  # Whether to run evaluation during training
+eval_every:
+  value: 100  # Evaluate every N steps (0 to disable)
+eval_batches:
+  value: 50   # Number of batches to use for evaluation (from training data)the SimplePFN
 # training pipeline. It uses minimal settings based on default configurations
 # to ensure quick execution while testing all components.
 #
@@ -12,8 +19,8 @@
 # - debug_config (training parameters)
 # ===============================================================================
 
-experiment_name: "early_test1_low_model_dim"
-description: "First pipeline test - debug scale with fixed seeds for reproducibility"
+experiment_name: "early_test1"
+description: "First pipeline test. debug scale with fixed seeds for reproducibility"
 
 # ===============================================================================
 # SCM Configuration (Structural Causal Model Generation)
@@ -25,10 +32,10 @@ scm_config:
   # -------------------------
   num_nodes:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 3, high: 8}
+    distribution_parameters: {low: 3, high: 20}
   graph_edge_prob:
     distribution: "beta"
-    distribution_parameters: {alpha: 2, beta: 3}
+    distribution_parameters: {alpha: 2, beta: 5}
   graph_seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -37,7 +44,7 @@ scm_config:
   # ------------------------
   xgboost_prob:
     distribution: "uniform"
-    distribution_parameters: {low: 0.0, high: 0.3}
+    distribution_parameters: {low: 0.0, high: 0.2}
   mechanism_seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -51,10 +58,10 @@ scm_config:
     distribution_parameters: {choices: [0, 1,2], probabilities: [0.7, 0.15, 0.15]}
   mlp_hidden_dim:
     distribution: "categorical"
-    distribution_parameters: {choices: [2, 4, 8, 16, 32]}
+    distribution_parameters: {choices: [4, 8, 16, 32], probabilities: [0.5, 0.25, 0.125, 0.125]}
   mlp_activation_mode:
     distribution: "categorical"
-    distribution_parameters: {choices: ["pre", "post"]}
+    distribution_parameters: {choices: ["pre", "post"], probabilities: [0.9, 0.1]}
   mlp_node_shape:
     value: [1]
     
@@ -75,7 +82,7 @@ scm_config:
     distribution_parameters: {low: 100, high: 500}
   xgb_add_noise:
     distribution: "categorical"
-    distribution_parameters: {choices: [true, false], probabilities: [0.9, 0.1]}
+    distribution_parameters: {choices: [true, false], probabilities: [0.2, 0.8]}
     
   # Noise Distribution Parameters
   # -----------------------------
@@ -91,7 +98,7 @@ scm_config:
   # Random Standard Deviation Parameters
   exo_std_mean:
     distribution: "lognormal"
-    distribution_parameters: {mean: 0.5, std: 2.0}
+    distribution_parameters: {mean: 1.0, std: 1.0}
   exo_std_std:
     distribution: "uniform"
     distribution_parameters: {low: 0.01, high: 2.0}
@@ -100,7 +107,7 @@ scm_config:
     distribution_parameters: {mean: -3.0, std: 0.6}
   endo_std_std:
     distribution: "uniform"
-    distribution_parameters: {low: 0.1, high: 1.0}
+    distribution_parameters: {low: 0.01, high: 0.5}
     
   # SCM Implementation Settings
   # ---------------------------
@@ -121,13 +128,13 @@ dataset_config:
   dataset_size:
     value: 100000000  # size of meta-dataset  #100000000
   max_number_samples:
-    value: 500  # Maximum samples per individual dataset (keep default)
+    value: 250  # Maximum samples per individual dataset (keep default)
   max_number_features:
-    value: 10  # Much smaller feature space (vs default 101) for faster processing
+    value: 20  # Much smaller feature space (vs default 101) for faster processing
   number_samples_per_dataset:
     # Distribution over actual samples per dataset (within max_number_samples)
     distribution: "uniform"
-    distribution_parameters: {low: 499, high: 500}  # Smaller range for testing
+    distribution_parameters: {low: 249, high: 250}  # Smaller range for testing
   seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -141,7 +148,7 @@ preprocessing_config:
   train_fraction:
     value: 0.5  # 70% training, 30% test (vs default 50-50)
   dropout_prob:
-    value: 0.1  # Feature dropout probability for regularization
+    value: 0.3  # Feature dropout probability 
   transformation_type:
     value: "standardize"  # Normalization method (vs "yeo_johnson")
   shuffle_data:
@@ -151,6 +158,8 @@ preprocessing_config:
   random_seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
+  use_target_encoding:
+    value: true  # Whether to apply target encoding to categorical features
 
 # ===============================================================================
 # Model Configuration (SimplePFN Architecture)
@@ -162,7 +171,7 @@ model_config:
   # ----------------------------
   d_model:
     value: 256      # Moderately sized embedding dimension
-  depth:
+  depth:  
     value: 6     # Number of transformer blocks
   heads_feat:
     value: 4    # Attention heads for feature-wise attention
@@ -170,6 +179,8 @@ model_config:
     value: 4    # Attention heads for sample-wise attention
   dropout:
     value: 0.1     # Dropout probability for regularization
+  hidden_mult:
+    value: 2       # MLP hidden layer multiplier (hidden_dim = hidden_mult * d_model)
   
   # Critical Parameter (automatically calculated)
   # ---------------------------------------------
@@ -183,19 +194,19 @@ model_config:
   use_bar_distribution:
     value: true  # Set to true to enable probabilistic outputs
   num_bars:
-    value: 11                 # Number of bars in the distribution (default: 11)
+    value: 1000                 # Number of bars in the distribution (default: 11)
   min_width:
     value: 1e-6             # Minimum width for bars (default: 1e-6)
   scale_floor:
-    value: 1e-6           # Minimum scale parameter (default: 1e-6)
+    value: 1e-3           # Minimum scale parameter (default: 1e-6)
   max_fit_items:
-    value: null         # Maximum items to use for fitting (null = use all)
+    value: 100000         # Maximum items to use for fitting (null = use all)
   max_fit_batches:
-    value: null       # Maximum batches to use for fitting (null = use all)
+    value: 100000       # Maximum batches to use for fitting (null = use all)
   log_prob_clip_min:
-    value: -50.0    # Minimum log probability clipping (default: -50.0)
+    value: -1000000.0    # Minimum log probability clipping (default: -50.0)
   log_prob_clip_max:
-    value: 50.0     # Maximum log probability clipping (default: 50.0)
+    value: 1000000.0     # Maximum log probability clipping (default: 50.0)
 
 # ===============================================================================
 # Training Configuration (PyTorch Lightning Setup)
@@ -218,11 +229,11 @@ training_config:
   # Data Loading Parameters
   # -----------------------
   batch_size:
-    value: 128   # Reduce memory pressure for multiprocessing segfault testing
+    value: 64   # Reduce memory pressure for multiprocessing segfault testing
   num_workers:
     value: 64  # Match the number of requested CPUs
     
-  # Training Control
+  # Training Control  
   # ----------------  
   early_stopping_patience:
     value: 0   # Disable early stopping (no validation setup needed)
@@ -231,7 +242,7 @@ training_config:
   scheduler_type:
     value: "linear_warmup_cosine_decay"  # Linear warmup + cosine decay LR schedule
   warmup_ratio:
-    value: 0.05  # Warmup for 5% of total training steps
+    value: 0.1  # Warmup for 5% of total training steps
   min_lr_ratio:
     value: 0.1  # Minimum LR as a ratio of initial LR (10% of max)
   
@@ -263,10 +274,21 @@ training_config:
   checkpoint_every_n_steps:
     value: 500  # Save model every 25 steps (from debug_config)
     
+  # Evaluation Configuration
+  # ------------------------
+  eval_enabled:
+    value: true  # Whether to run evaluation during training
+  eval_every:
+    value: 100  # Evaluate every N steps (0 to disable)
+  eval_batches:
+    value: 100   # Number of batches to use for evaluation
+  eval_dataset_size:
+    value: 100000 # Size of evaluation dataset (separate from training)
+    
   # Weights & Biases Integration
   # ----------------------------
   wandb_project:
-    value: null  # Disable W&B for testing
+    value: "DoPFN_v2"  # Enable W&B for experiment tracking
   wandb_run_name:
     value: null  # Auto-generate from experiment_name
   wandb_tags:

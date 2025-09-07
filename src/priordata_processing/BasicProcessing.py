@@ -30,6 +30,7 @@ class BasicProcessing:
         shuffle_data (bool, optional): Whether to shuffle samples and features. Defaults to True
         target_feature (int, optional): Specific target feature index. If None, randomly selected
         random_seed (int, optional): Random seed for reproducibility. Defaults to None
+        use_target_encoding (bool, optional): Whether to apply target encoding to categorical features. Defaults to False
         
     Example:
         >>> processor = BasicProcessing(max_num_samples=1000, max_num_features=10)
@@ -46,7 +47,8 @@ class BasicProcessing:
         transformation_type: str = 'standardize',
         shuffle_data: bool = True,
         target_feature: Optional[int] = None,
-        random_seed: Optional[int] = None
+        random_seed: Optional[int] = None,
+        use_target_encoding: bool = False
     ):
         """Initialize the BasicProcessing instance with configuration parameters."""
         self.max_num_samples = max_num_samples
@@ -57,6 +59,7 @@ class BasicProcessing:
         self.shuffle_data = shuffle_data
         self.target_feature = target_feature
         self.random_seed = random_seed
+        self.use_target_encoding = use_target_encoding
         
         # Don't set global seed in __init__ - do it per process call
     
@@ -116,6 +119,13 @@ class BasicProcessing:
                 target_idx = self._select_target_feature(feature_indices, mode)
             target_col = feature_indices.index(target_idx)
 
+        # Step 3.5: Apply target encoding to categorical features (if enabled)
+        target_encoding_params = {}
+        if self.use_target_encoding:
+            data_tensor, target_encoding_params = self._apply_target_encoding(
+                data_tensor, target_col, mode
+            )
+
         # Step 4: Pre-process features
         data_tensor, transformation_params = self._transform_features(data_tensor, mode)
 
@@ -150,6 +160,8 @@ class BasicProcessing:
             'target_col': target_col,
             'transformation_type': self.transformation_type,
             'transformation_params': transformation_params,
+            'use_target_encoding': self.use_target_encoding,
+            'target_encoding_params': target_encoding_params,
             'original_num_samples': original_num_samples,
             'original_num_features': original_num_features,
             'final_num_samples': padded_tensor.shape[0],
@@ -339,3 +351,137 @@ class BasicProcessing:
         padded_tensor[:current_samples, :current_features] = data_tensor
         
         return padded_tensor
+    
+    def _detect_categorical_features(self, data_tensor: torch.Tensor, mode: str) -> torch.Tensor:
+        """
+        Detect categorical features based on heuristics.
+        
+        A feature is considered categorical if:
+        1. It has a small number of unique values (≤ 10% of sample size or ≤ 20 unique values)
+        2. All values are integers (within a small tolerance)
+        
+        Args:
+            data_tensor: Input data tensor [n_samples, n_features]
+            mode: Processing mode ('fast' or 'safe')
+            
+        Returns:
+            Boolean tensor indicating which features are categorical [n_features]
+        """
+        n_samples, n_features = data_tensor.shape
+        categorical_mask = torch.zeros(n_features, dtype=torch.bool)
+        
+        for i in range(n_features):
+            feature_data = data_tensor[:, i]
+            
+            # Check if values are close to integers (tolerance for floating point errors)
+            is_integer_like = torch.all(torch.abs(feature_data - torch.round(feature_data)) < 1e-6)
+            
+            # Count unique values
+            unique_values = torch.unique(feature_data)
+            n_unique = len(unique_values)
+            
+            # Heuristic: categorical if integer-like and few unique values
+            max_categories = min(20, max(2, int(0.1 * n_samples)))  # At most 10% of samples or 20 categories
+            
+            is_categorical = is_integer_like and n_unique <= max_categories
+            categorical_mask[i] = is_categorical
+            
+            if mode == 'safe' and is_categorical:
+                print(f"Feature {i}: Detected as categorical ({n_unique} unique values: {unique_values.tolist()})")
+        
+        return categorical_mask
+    
+    def _apply_target_encoding(
+        self, 
+        data_tensor: torch.Tensor, 
+        target_col: int, 
+        mode: str
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        """
+        Apply target encoding to categorical features.
+        
+        Target encoding replaces categorical values with the mean of the target variable
+        for each category. To prevent overfitting, we use leave-one-out encoding.
+        
+        Args:
+            data_tensor: Input data tensor [n_samples, n_features] 
+            target_col: Index of the target column
+            mode: Processing mode ('fast' or 'safe')
+            
+        Returns:
+            Tuple of (encoded_data_tensor, encoding_parameters)
+        """
+        n_samples, n_features = data_tensor.shape
+        target_values = data_tensor[:, target_col]
+        
+        # Detect categorical features (excluding target)
+        categorical_mask = self._detect_categorical_features(data_tensor, mode)
+        categorical_mask[target_col] = False  # Don't encode the target itself
+        
+        categorical_indices = torch.where(categorical_mask)[0].tolist()
+        
+        if not categorical_indices:
+            # No categorical features found
+            return data_tensor, {
+                'categorical_features': [],
+                'encoding_maps': {},
+                'global_means': {}
+            }
+        
+        encoded_tensor = data_tensor.clone()
+        encoding_maps = {}
+        global_means = {}
+        
+        for feat_idx in categorical_indices:
+            feature_data = data_tensor[:, feat_idx]
+            
+            # Get unique categories
+            unique_categories = torch.unique(feature_data)
+            
+            # Calculate global mean for fallback
+            global_mean = target_values.mean()
+            global_means[feat_idx] = global_mean.item()
+            
+            # Create encoding map using leave-one-out mean
+            encoding_map = {}
+            encoded_values = torch.zeros_like(feature_data, dtype=torch.float32)
+            
+            for category in unique_categories:
+                category_item = category.item()
+                category_mask = (feature_data == category)
+                category_targets = target_values[category_mask]
+                
+                if len(category_targets) == 1:
+                    # If only one sample, use global mean
+                    category_mean = global_mean
+                else:
+                    # Leave-one-out encoding: for each sample in this category,
+                    # use the mean of all OTHER samples in the same category
+                    category_indices = torch.where(category_mask)[0]
+                    for idx in category_indices:
+                        # Mean of all other samples in this category
+                        other_indices = category_indices[category_indices != idx]
+                        if len(other_indices) > 0:
+                            encoded_values[idx] = target_values[other_indices].mean()
+                        else:
+                            encoded_values[idx] = global_mean
+                    
+                    # For the encoding map, store the overall mean for this category
+                    category_mean = category_targets.mean()
+                
+                encoding_map[category_item] = category_mean.item()
+            
+            # Apply leave-one-out encoded values
+            encoded_tensor[:, feat_idx] = encoded_values
+            encoding_maps[feat_idx] = encoding_map
+        
+        encoding_params = {
+            'categorical_features': categorical_indices,
+            'encoding_maps': encoding_maps,
+            'global_means': global_means
+        }
+        
+        if mode == 'safe':
+            print(f"Target encoding applied to {len(categorical_indices)} categorical features: {categorical_indices}")
+        
+        return encoded_tensor, encoding_params

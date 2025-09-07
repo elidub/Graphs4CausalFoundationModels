@@ -535,8 +535,38 @@ class DataloaderDatasetVisualizer:
         df = pd.DataFrame(X_train_filtered, columns=active_feature_names)
         df['target'] = y_train_filtered
         
+        # ORIGINAL DATA PREDICTABILITY ANALYSIS (before filtering)
+        # ========================================================
+        self.log("="*80)
+        self.log("               ORIGINAL DATA PREDICTABILITY ANALYSIS")
+        self.log("               (BEFORE padding/filtering removal)")
+        self.log("="*80)
+        
+        # Create feature names for original data (all features)
+        original_feature_names = [f'X{i}' for i in range(n_features)]
+        
+        # Flatten y arrays to 1D for analysis (remove any extra dimensions)
+        y_train_orig = y_train.squeeze() if len(y_train.shape) > 1 else y_train
+        y_test_orig = y_test.squeeze() if len(y_test.shape) > 1 else y_test
+        
+        self.log(f"[INFO] Original data analysis using ALL data (including padding):")
+        self.log(f"[INFO]   X_train: {X_train.shape}, y_train: {y_train_orig.shape}")
+        self.log(f"[INFO]   X_test: {X_test.shape}, y_test: {y_test_orig.shape}")
+        self.log(f"[INFO] This includes any padding that was added during data processing.")
+        self.log(f"[INFO] Features with zero variance will still be included in the analysis.")
+        
+        # Analyze predictability using original unfiltered data
+        self._analyze_predictability_train_test(X_train, y_train_orig, X_test, y_test_orig, original_feature_names)
+        
+        # FILTERED DATA PREDICTABILITY ANALYSIS (current approach)
+        # =========================================================
+        self.log("="*80)
+        self.log("                FILTERED DATA PREDICTABILITY ANALYSIS")
+        self.log("                (AFTER padding/filtering removal)")
+        self.log("="*80)
+        
         # Predictability Analysis - Train on train, evaluate on test!
-        self.log("[INFO] Analyzing target predictability (train->test)...")
+        self.log("[INFO] Analyzing target predictability (train->test) on filtered data...")
         self._analyze_predictability_train_test(X_train_filtered, y_train_filtered, X_test_filtered, y_test_filtered, active_feature_names)
         
         # Create figure with subplots
@@ -668,6 +698,7 @@ class DataloaderDatasetVisualizer:
             from sklearn.linear_model import LinearRegression
             from sklearn.ensemble import RandomForestRegressor
             from sklearn.model_selection import cross_val_score
+            from sklearn.metrics import r2_score
             
             n_samples, n_features = X.shape
             
@@ -682,7 +713,9 @@ class DataloaderDatasetVisualizer:
             try:
                 linear_model = LinearRegression()
                 linear_model.fit(X, y)
-                linear_r2 = linear_model.score(X, y)
+                # Use sklearn r2_score instead of model.score()
+                y_pred = linear_model.predict(X)
+                linear_r2 = r2_score(y, y_pred)
                 
                 # Cross-validation if enough samples
                 if n_samples >= 20:
@@ -701,7 +734,9 @@ class DataloaderDatasetVisualizer:
             try:
                 rf_model = RandomForestRegressor(n_estimators=50, random_state=42, max_depth=5)
                 rf_model.fit(X, y)
-                rf_r2 = rf_model.score(X, y)
+                # Use sklearn r2_score instead of model.score()
+                y_pred = rf_model.predict(X)
+                rf_r2 = r2_score(y, y_pred)
                 
                 # Cross-validation if enough samples
                 if n_samples >= 20:
@@ -745,7 +780,7 @@ class DataloaderDatasetVisualizer:
         try:
             from sklearn.linear_model import LinearRegression
             from sklearn.ensemble import RandomForestRegressor
-            from sklearn.metrics import mean_squared_error
+            from sklearn.metrics import mean_squared_error, r2_score
             import numpy as np
             
             n_train, n_features = X_train.shape
@@ -796,9 +831,9 @@ class DataloaderDatasetVisualizer:
                 train_pred = linear_model.predict(X_train)
                 test_pred = linear_model.predict(X_test)
                 
-                # Evaluate on both train and test
-                train_r2 = linear_model.score(X_train, y_train)
-                test_r2 = linear_model.score(X_test, y_test)
+                # Evaluate on both train and test using sklearn r2_score
+                train_r2 = r2_score(y_train, train_pred)
+                test_r2 = r2_score(y_test, test_pred)
                 
                 train_mse = mean_squared_error(y_train, train_pred)
                 test_mse = mean_squared_error(y_test, test_pred)
@@ -882,9 +917,9 @@ class DataloaderDatasetVisualizer:
                 train_pred = rf_model.predict(X_train)
                 test_pred = rf_model.predict(X_test)
                 
-                # Evaluate on both train and test
-                train_r2 = rf_model.score(X_train, y_train)
-                test_r2 = rf_model.score(X_test, y_test)
+                # Evaluate on both train and test using sklearn r2_score
+                train_r2 = r2_score(y_train, train_pred)
+                test_r2 = r2_score(y_test, test_pred)
                 
                 train_mse = mean_squared_error(y_train, train_pred)
                 test_mse = mean_squared_error(y_test, test_pred)

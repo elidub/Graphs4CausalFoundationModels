@@ -38,6 +38,7 @@ class MakePurelyObservationalDataset:
         "shuffle_data": bool,
         "target_feature": (int, type(None)),
         "random_seed": (int, type(None)),
+        "use_target_encoding": bool,
     }
     
     # Define expected dataset configuration parameters and their types

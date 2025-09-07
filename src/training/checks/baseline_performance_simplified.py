@@ -418,7 +418,7 @@ class BaselineModelEvaluator:
                 print("\n[INFO] Random Forest:")
                 
                 start_time = time.time()
-                model = RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42)
+                model = RandomForestRegressor(n_estimators=50, max_depth=5, random_state=42)
                 model.fit(X_train, y_train)
                 
                 # Get predictions
@@ -462,7 +462,7 @@ class BaselineModelEvaluator:
                 print("\n[INFO] XGBoost:")
                 
                 start_time = time.time()
-                model = xgb.XGBRegressor(n_estimators=100, max_depth=6, learning_rate=0.1, random_state=42)
+                model = xgb.XGBRegressor(n_estimators=100, max_depth=100, early_stopping_rounds=10)
                 model.fit(X_train, y_train)
                 
                 # Get predictions
@@ -562,6 +562,224 @@ class BaselineModelEvaluator:
         print(f"[INFO] Results will be saved to: {results_dir}")
         
         return results_dir
+    
+    def _plot_score_distributions(self, model_display_names, display_to_key):
+        """Generate histogram plots for the distribution of R² and MSE scores for each model."""
+        
+        # Get all models that have data
+        models_with_data = []
+        for model_key in self.models_to_evaluate:
+            if (model_key in self.all_stats['model_performances'] and 
+                len(self.all_stats['model_performances'][model_key]['test_r2']) > 0):
+                models_with_data.append(model_key)
+        
+        if not models_with_data:
+            print("[WARNING] No models with data found for histogram plotting")
+            return
+        
+        # Set up colors for each model
+        colors = plt.cm.tab10(np.linspace(0, 1, len(models_with_data)))
+        
+        # 1. R² Score Distribution Histograms
+        # Individual histograms for each model
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        axes = axes.flatten()
+        
+        for i, model_key in enumerate(models_with_data):
+            if i >= len(axes):
+                break
+                
+            display_name = model_display_names.get(model_key, model_key)
+            r2_values = self.all_stats['model_performances'][model_key]['test_r2']
+            
+            # Filter out NaN values
+            r2_values = [v for v in r2_values if not np.isnan(v)]
+            
+            if len(r2_values) == 0:
+                axes[i].text(0.5, 0.5, 'No valid data', transform=axes[i].transAxes, ha='center')
+                axes[i].set_title(f'{display_name} - Test R² Distribution')
+                continue
+            
+            # Plot histogram
+            axes[i].hist(r2_values, bins=min(20, max(5, len(r2_values)//2)), 
+                        color=colors[i], alpha=0.7, edgecolor='black', linewidth=0.8)
+            
+            # Add statistics text
+            mean_r2 = np.mean(r2_values)
+            median_r2 = np.median(r2_values)
+            std_r2 = np.std(r2_values)
+            
+            axes[i].axvline(mean_r2, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_r2:.3f}')
+            axes[i].axvline(median_r2, color='orange', linestyle='--', linewidth=2, label=f'Median: {median_r2:.3f}')
+            
+            axes[i].set_title(f'{display_name} - Test R² Distribution\n(σ={std_r2:.3f}, n={len(r2_values)})')
+            axes[i].set_xlabel('Test R² Score')
+            axes[i].set_ylabel('Frequency')
+            axes[i].legend(fontsize=8)
+            axes[i].grid(alpha=0.3)
+        
+        # Hide unused subplots
+        for i in range(len(models_with_data), len(axes)):
+            axes[i].set_visible(False)
+        
+        plt.tight_layout()
+        plt.savefig(self.results_dir / 'r2_score_distributions_individual.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Combined R² histogram (overlapping)
+        plt.figure(figsize=(12, 8))
+        
+        for i, model_key in enumerate(models_with_data):
+            display_name = model_display_names.get(model_key, model_key)
+            r2_values = self.all_stats['model_performances'][model_key]['test_r2']
+            r2_values = [v for v in r2_values if not np.isnan(v)]
+            
+            if len(r2_values) > 0:
+                plt.hist(r2_values, bins=20, alpha=0.6, label=display_name, 
+                        color=colors[i], edgecolor='black', linewidth=0.5)
+        
+        plt.xlabel('Test R² Score')
+        plt.ylabel('Frequency')
+        plt.title('Test R² Score Distributions - All Models')
+        plt.legend()
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(self.results_dir / 'r2_score_distributions_combined.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # 2. MSE Score Distribution Histograms
+        # Individual histograms for each model
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        axes = axes.flatten()
+        
+        for i, model_key in enumerate(models_with_data):
+            if i >= len(axes):
+                break
+                
+            display_name = model_display_names.get(model_key, model_key)
+            mse_values = self.all_stats['model_performances'][model_key]['test_mse']
+            
+            # Filter out NaN values
+            mse_values = [v for v in mse_values if not np.isnan(v)]
+            
+            if len(mse_values) == 0:
+                axes[i].text(0.5, 0.5, 'No valid data', transform=axes[i].transAxes, ha='center')
+                axes[i].set_title(f'{display_name} - Test MSE Distribution')
+                continue
+            
+            # Plot histogram
+            axes[i].hist(mse_values, bins=min(20, max(5, len(mse_values)//2)), 
+                        color=colors[i], alpha=0.7, edgecolor='black', linewidth=0.8)
+            
+            # Add statistics text
+            mean_mse = np.mean(mse_values)
+            median_mse = np.median(mse_values)
+            std_mse = np.std(mse_values)
+            
+            axes[i].axvline(mean_mse, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_mse:.3g}')
+            axes[i].axvline(median_mse, color='orange', linestyle='--', linewidth=2, label=f'Median: {median_mse:.3g}')
+            
+            axes[i].set_title(f'{display_name} - Test MSE Distribution\n(σ={std_mse:.3g}, n={len(mse_values)})')
+            axes[i].set_xlabel('Test MSE Score')
+            axes[i].set_ylabel('Frequency')
+            axes[i].legend(fontsize=8)
+            axes[i].grid(alpha=0.3)
+        
+        # Hide unused subplots
+        for i in range(len(models_with_data), len(axes)):
+            axes[i].set_visible(False)
+        
+        plt.tight_layout()
+        plt.savefig(self.results_dir / 'mse_score_distributions_individual.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Combined MSE histogram (overlapping) - using log scale for better visualization
+        plt.figure(figsize=(12, 8))
+        
+        for i, model_key in enumerate(models_with_data):
+            display_name = model_display_names.get(model_key, model_key)
+            mse_values = self.all_stats['model_performances'][model_key]['test_mse']
+            mse_values = [v for v in mse_values if not np.isnan(v) and v > 0]  # Remove negative/zero values for log scale
+            
+            if len(mse_values) > 0:
+                plt.hist(mse_values, bins=20, alpha=0.6, label=display_name, 
+                        color=colors[i], edgecolor='black', linewidth=0.5)
+        
+        plt.xlabel('Test MSE Score')
+        plt.ylabel('Frequency')
+        plt.title('Test MSE Score Distributions - All Models')
+        plt.yscale('log')  # Use log scale for better visualization of MSE distributions
+        plt.legend()
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(self.results_dir / 'mse_score_distributions_combined.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # 3. Box plots for better comparison of distributions
+        # R² Box plot
+        plt.figure(figsize=(12, 6))
+        
+        r2_data = []
+        r2_labels = []
+        
+        for model_key in models_with_data:
+            display_name = model_display_names.get(model_key, model_key)
+            r2_values = self.all_stats['model_performances'][model_key]['test_r2']
+            r2_values = [v for v in r2_values if not np.isnan(v)]
+            
+            if len(r2_values) > 0:
+                r2_data.append(r2_values)
+                r2_labels.append(display_name)
+        
+        if r2_data:
+            bp = plt.boxplot(r2_data, labels=r2_labels, patch_artist=True)
+            
+            # Color the boxes
+            for patch, color in zip(bp['boxes'], colors[:len(r2_data)]):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.7)
+        
+        plt.title('Test R² Score Distributions - Box Plot Comparison')
+        plt.ylabel('Test R² Score')
+        plt.xticks(rotation=45, ha='right')
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(self.results_dir / 'r2_score_distributions_boxplot.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # MSE Box plot
+        plt.figure(figsize=(12, 6))
+        
+        mse_data = []
+        mse_labels = []
+        
+        for model_key in models_with_data:
+            display_name = model_display_names.get(model_key, model_key)
+            mse_values = self.all_stats['model_performances'][model_key]['test_mse']
+            mse_values = [v for v in mse_values if not np.isnan(v)]
+            
+            if len(mse_values) > 0:
+                mse_data.append(mse_values)
+                mse_labels.append(display_name)
+        
+        if mse_data:
+            bp = plt.boxplot(mse_data, labels=mse_labels, patch_artist=True)
+            
+            # Color the boxes
+            for patch, color in zip(bp['boxes'], colors[:len(mse_data)]):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.7)
+        
+        plt.title('Test MSE Score Distributions - Box Plot Comparison')
+        plt.ylabel('Test MSE Score')
+        plt.yscale('log')  # Use log scale for MSE
+        plt.xticks(rotation=45, ha='right')
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(self.results_dir / 'mse_score_distributions_boxplot.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"[OK] Score distribution histograms and box plots saved to {self.results_dir}")
     
     def generate_performance_visualizations(self):
         """Generate visualizations of model performance."""
@@ -927,6 +1145,9 @@ class BaselineModelEvaluator:
                         f"{row['Test_MSE_Median']} | {row['Test_MSE_Mean']} | " +
                         f"{row['Runtime_Median']} | {row['Runtime_Mean']} |\n")
         
+        # 7. Generate histograms for score distributions
+        self._plot_score_distributions(model_display_names, display_to_key)
+        
         print(f"[OK] Visualizations saved to {self.results_dir}")
         
         # 6. Save raw statistics and summary metrics as JSON for further analysis
@@ -1091,9 +1312,9 @@ class BaselineModelEvaluator:
 def main():
     # Configuration constants
     CONFIG_PATH = "experiments/FirstTests/configs/early_test.yaml"  # Path to configuration YAML file
-    SEED = 42                 # Random seed for reproducibility
+    SEED = 43               # Random seed for reproducibility
     NUM_BATCHES = 1           # Number of batches to process
-    DATASETS_PER_BATCH = 1000    # Number of datasets per batch
+    DATASETS_PER_BATCH = 500    # Number of datasets per batch
     VISUALIZE = True          # Generate performance visualizations
     
     # Create evaluator

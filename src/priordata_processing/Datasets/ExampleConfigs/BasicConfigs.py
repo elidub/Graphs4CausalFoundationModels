@@ -45,5 +45,8 @@ default_preprocessing_config = {
     "random_seed": {  # seed for reproducibility
         "distribution": "discrete_uniform",
         "distribution_parameters": {"low": 0, "high": 100_000_000}
+    },
+    "use_target_encoding": {  # whether to apply target encoding to categorical features
+        "value": False
     }
 }
