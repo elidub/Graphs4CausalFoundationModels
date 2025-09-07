@@ -42,9 +42,11 @@ class SimplePFNSklearn:
       satisfy the sklearn convention.
     - `predict` accepts numpy arrays or torch tensors. It accepts both batched inputs
       (B, N, F) and single-dataset inputs (N, F) which are treated as batch size 1.
+    - Input shapes are automatically converted to match training format: y_train becomes (B, N, 1)
     - When BarDistribution is enabled (use_bar_distribution=true in config), the model
       outputs high-dimensional parameters that are processed through BarDistribution
       to extract posterior statistics.
+    - All input validation ensures consistency with training data format.
     """
 
     def __init__(
@@ -296,6 +298,12 @@ class SimplePFNSklearn:
                     if y_te_tensor.ndim == 1:
                         y_te_tensor = y_te_tensor.unsqueeze(0)
                         
+                    # CRITICAL FIX: Ensure y tensors have the training-expected shape (B, N, 1)
+                    if y_tr_tensor.ndim == 2:
+                        y_tr_tensor = y_tr_tensor.unsqueeze(-1)  # (B, N) -> (B, N, 1)
+                    if y_te_tensor.ndim == 2:
+                        y_te_tensor = y_te_tensor.unsqueeze(-1)  # (B, M) -> (B, M, 1)
+                        
                     yield (X_tr_tensor, y_tr_tensor, X_te_tensor, y_te_tensor)
         
         data_iter = SimpleDataIterator(X_train_data, y_train_data, X_test_data, y_test_data)
@@ -321,17 +329,20 @@ class SimplePFNSklearn:
         return self
 
     def predict(self, X_train: Any, y_train: Any, X_test: Any, 
-                prediction_type: Literal["point", "mode", "mean", "sample"] = "point",
+                prediction_type: Literal["point", "mode", "mean", "sample"] = "mean",
                 num_samples: int = 100) -> np.ndarray:
         """
         Run the PFN forward pass and return predictions as a numpy array.
 
         Args:
             X_train, y_train, X_test: Input data (numpy arrays or torch tensors)
-                Shapes accepted:
-                - X_train: (N, F) or (B, N, F)
-                - y_train: (N,) or (N,1) or (B, N) or (B,N,1)  
-                - X_test: (M, F) or (B, M, F)
+                Accepted input shapes (automatically converted to training format):
+                - X_train: (N, F) or (B, N, F) -> converted to (B, N, F)
+                - y_train: (N,) or (N,1) or (B, N) or (B,N,1) -> converted to (B, N, 1)  
+                - X_test: (M, F) or (B, M, F) -> converted to (B, M, F)
+                
+                Note: All shapes are validated to ensure consistency with training format.
+                
             prediction_type: Type of prediction to return
                 - "point": Raw model output (default for MSE) or mode (default for BarDistribution)
                 - "mode": Posterior mode (requires BarDistribution)
@@ -343,6 +354,10 @@ class SimplePFNSklearn:
             numpy array of predictions:
             - For "point", "mode", "mean": shape (B, M) or (M,) for batch size 1
             - For "sample": shape (B, num_samples, M) or (num_samples, M) for batch size 1
+            
+        Raises:
+            ValueError: If input shapes are inconsistent or incompatible with training format
+            RuntimeError: If model not loaded or BarDistribution not fitted when required
         """
         if self.model is None:
             raise RuntimeError("Model not built. Call load() before predict().")
@@ -375,15 +390,21 @@ class SimplePFNSklearn:
         if ytr.ndim == 1:
             ytr = ytr.unsqueeze(0)
 
-        # ensure y has shape (B, N) or (B, N, 1) acceptable to model
-        if ytr.ndim == 3 and ytr.shape[-1] == 1:
-            pass
-        elif ytr.ndim == 2:
-            # ok
+        # CRITICAL FIX: Ensure y_train has the same shape as during training
+        # Training expects y_train with shape (B, N, 1), but sklearn interface was providing (B, N)
+        # This ensures consistency between training and inference
+        if ytr.ndim == 2:
+            # Add the feature dimension that training expects: (B, N) -> (B, N, 1)
+            ytr = ytr.unsqueeze(-1)
+        elif ytr.ndim == 3 and ytr.shape[-1] == 1:
+            # Already correct shape (B, N, 1)
             pass
         else:
-            # try to squeeze last dim
-            ytr = ytr.squeeze(-1)
+            # Try to reshape to correct format
+            if ytr.ndim == 3:
+                ytr = ytr.squeeze(-1).unsqueeze(-1)  # Ensure (B, N, 1)
+            else:
+                raise ValueError(f"Cannot handle y_train shape {ytr.shape}. Expected shapes that can be converted to (B, N, 1).")
 
         # move to device
         Xtr = Xtr.to(self.device)
@@ -393,8 +414,30 @@ class SimplePFNSklearn:
         # shape checks
         B, N, F = Xtr.shape
         _, M, F2 = Xte.shape
+        B_y, N_y, F_y = ytr.shape
+        
+        # Validate consistency
+        if F != F2:
+            raise ValueError(f"X_train and X_test must have same number of features: {F} vs {F2}")
         if F != self.model.num_features:
             raise ValueError(f"Model expects num_features={self.model.num_features}, but got input with {F} features")
+        if B != B_y:
+            raise ValueError(f"X_train and y_train must have same batch size: {B} vs {B_y}")
+        if N != N_y:
+            raise ValueError(f"X_train and y_train must have same number of training samples: {N} vs {N_y}")
+        if F_y != 1:
+            raise ValueError(f"y_train must have shape (B, N, 1), got shape {ytr.shape} with last dim = {F_y}")
+            
+        if self.verbose:
+            print(f"[SimplePFNSklearn] Input shapes validated: X_train{Xtr.shape}, y_train{ytr.shape}, X_test{Xte.shape}")
+            
+        # Warning for potentially problematic context lengths
+        if N < 10 or M < 5:
+            if self.verbose:
+                print(f"[SimplePFNSklearn] Warning: Small context sizes (N_train={N}, N_test={M}) may differ from training distribution")
+        if N > 1000 or M > 1000:
+            if self.verbose:
+                print(f"[SimplePFNSklearn] Warning: Large context sizes (N_train={N}, N_test={M}) may differ from training distribution")
 
         # run model
         self.model.eval()

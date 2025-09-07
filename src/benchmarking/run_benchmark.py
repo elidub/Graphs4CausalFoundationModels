@@ -72,6 +72,7 @@ def main(args):
         use_target_encoding=not args.no_target_encoding,
         verbose=not args.quiet,
         only_numeric=getattr(args, "only_numeric", False),
+        #transformation_type = "yeo_johnson"
     )
 
     def _serializable(obj):
@@ -193,7 +194,10 @@ def main(args):
                 use_bar_distribution = model_cfg.get("use_bar_distribution", {}).get("value", False)
 
                 # prepare wrapper with config path so it can detect BarDistribution settings
-                pfn = SimplePFNSklearn(config_path=cfg_path, checkpoint_path=ckpt, device=args.device, verbose=not args.quiet)
+                pfn = SimplePFNSklearn(config_path=cfg_path, 
+                                        checkpoint_path=ckpt, 
+                                        device=args.device, 
+                                        verbose=not args.quiet,)
                 
                 # Override num_features to match dataset and read other parameters from config
                 mkwargs = {
@@ -294,17 +298,17 @@ if __name__ == "__main__":
     MAX_TASKS = 20
     DATA_DIR = "data_cache"
     CONFIG = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/configs/early_test.yaml"
-    CHECKPOINT = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_0/final_model_with_bardist.pt"
+    CHECKPOINT = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16419211/step_10000.pt"
     DEVICE = "cuda"
     OUTPUT = "benchmark_results.csv"  # Process ID will be automatically added: benchmark_results_pid12345.csv
-    NO_TARGET_ENCODING = False
+    NO_TARGET_ENCODING = True
     QUIET = False
 
     # Build a simple args object similar to argparse.Namespace
     from types import SimpleNamespace
 
     # Subsampling env vars (optional) - read from ALL_CAPS environment variables so submit files can set them
-    N_FEATURES = 7
+    N_FEATURES = 10
     MAX_N_FEATURES = 19
     N_TRAIN = 125
     N_TEST = 125
