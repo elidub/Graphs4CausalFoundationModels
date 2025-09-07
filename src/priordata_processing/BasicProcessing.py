@@ -14,6 +14,18 @@ class BasicProcessing:
     through a comprehensive pipeline including data transformation, target selection, shuffling, 
     feature dropout, normalization, and padding.
     
+    COMPATIBILITY NOTE: The preprocessing in this class has been designed to be similar to
+    SimpleOpenMLLoader when configured with matching parameters:
+    - transformation_type: 'standardize' or 'yeo_johnson'
+    - use_target_encoding: True/False
+    - Categorical detection and leave-one-out encoding
+    
+    Key differences that remain:
+    - BasicProcessing: Operates on torch tensors, splits AFTER preprocessing (data leakage)
+    - SimpleOpenMLLoader: Operates on pandas DataFrames, splits BEFORE preprocessing (correct)
+    - BasicProcessing: Includes feature shuffling, dropout, and zero-padding
+    - SimpleOpenMLLoader: No shuffling/dropout/padding (returns actual data dimensions)
+    
     Features:
     - Fast and safe processing modes for different use cases
     - Flexible normalization (standardization or Yeo-Johnson + standardization)
@@ -48,7 +60,8 @@ class BasicProcessing:
         shuffle_data: bool = True,
         target_feature: Optional[int] = None,
         random_seed: Optional[int] = None,
-        use_target_encoding: bool = False
+        use_target_encoding: bool = False,
+        handle_missing_values: bool = False
     ):
         """Initialize the BasicProcessing instance with configuration parameters."""
         self.max_num_samples = max_num_samples
@@ -60,6 +73,7 @@ class BasicProcessing:
         self.target_feature = target_feature
         self.random_seed = random_seed
         self.use_target_encoding = use_target_encoding
+        self.handle_missing_values = handle_missing_values
         
         # Don't set global seed in __init__ - do it per process call
     
@@ -101,17 +115,21 @@ class BasicProcessing:
         # Step 0: Transform data into tensor
         data_tensor, feature_indices = self._dict_to_tensor(dataset, mode)
 
-        # Step 1: Randomly decide target feature
+        # Step 1: Handle missing values (if enabled)
+        if self.handle_missing_values:
+            data_tensor = self._handle_missing_values(data_tensor, mode)
+
+        # Step 2: Randomly decide target feature
         target_idx = self._select_target_feature(feature_indices, mode)
         target_col = feature_indices.index(target_idx)
 
-        # Step 2: Shuffle the data (features and samples)
+        # Step 3: Shuffle the data (features and samples)
         if self.shuffle_data:
             data_tensor, feature_indices = self._shuffle_data(data_tensor, feature_indices, mode)
             # Update target_col after shuffling features
             target_col = feature_indices.index(target_idx)
 
-        # Step 3: Drop out some features
+        # Step 4: Drop out some features
         if self.dropout_prob > 0:
             data_tensor, feature_indices = self._dropout_features(data_tensor, feature_indices, mode)
             # If target feature dropped, pick a new one
@@ -119,7 +137,7 @@ class BasicProcessing:
                 target_idx = self._select_target_feature(feature_indices, mode)
             target_col = feature_indices.index(target_idx)
 
-        # Step 3.5: Apply target encoding to categorical features (if enabled)
+        # Step 4.5: Apply target encoding to categorical features (if enabled)
         target_encoding_params = {}
         if self.use_target_encoding:
             data_tensor, target_encoding_params = self._apply_target_encoding(
@@ -240,6 +258,46 @@ class BasicProcessing:
                 raise RuntimeError(f"Tensor concatenation failed: expected {expected_shape}, got {data_tensor.shape}")
         
         return data_tensor, feature_indices
+    
+    def _handle_missing_values(self, data_tensor, mode):
+        """
+        Handle missing values in the data tensor.
+        
+        Currently implements simple mean imputation for numerical features.
+        Could be extended to support different strategies.
+        
+        Args:
+            data_tensor: Tensor of shape (n_samples, n_features)
+            mode: String indicating whether this is 'train' or 'test' mode
+            
+        Returns:
+            data_tensor: Tensor with missing values filled
+        """
+        # Check if there are any NaN values
+        if not torch.isnan(data_tensor).any():
+            return data_tensor
+            
+        # For train mode, compute means and store them
+        if mode == 'train':
+            # Store feature means for test mode
+            self._feature_means = torch.nanmean(data_tensor, dim=0)
+            
+        # Fill NaN values with feature means
+        nan_mask = torch.isnan(data_tensor)
+        if hasattr(self, '_feature_means'):
+            # Use stored means from training
+            means = self._feature_means
+        else:
+            # Compute means from current data (fallback)
+            means = torch.nanmean(data_tensor, dim=0)
+            
+        # Replace NaN values with means
+        data_tensor = data_tensor.clone()
+        for feat_idx in range(data_tensor.shape[1]):
+            if nan_mask[:, feat_idx].any():
+                data_tensor[nan_mask[:, feat_idx], feat_idx] = means[feat_idx]
+                
+        return data_tensor
     
     def _select_target_feature(self, feature_indices: list, mode: str) -> int:
         """Select target feature index."""
