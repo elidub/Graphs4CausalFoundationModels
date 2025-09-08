@@ -8,78 +8,110 @@ from .Preprocessor import Preprocessor
 
 
 class BasicProcessing:
-    """Lightweight wrapper around Preprocessor.
+    """Wrapper around `Preprocessor` exposing its full capability set.
 
-    Responsibilities kept here (as requested):
-      1. Select the target feature (user specified or random).
-      2. Hide (drop) some features via dropout_prob (never dropping the target).
+    This class ONLY adds:
+      - Target feature selection (user-specified or random).
+      - Optional feature hiding (dropout probability) excluding the target.
 
-    All *actual* preprocessing (shuffling, splitting, winsorization, Yeo-Johnson,
-    standardization, optional scaling and padding) is delegated to `Preprocessor`.
+    All other preprocessing (shuffling, train/test split, outlier winsorization,
+    Yeo-Johnson, standardization, optional [-1,1] scaling, padding) is done by
+    `Preprocessor` using parameters passed directly here.
 
-    Previous functionality such as target encoding, manual transforms, manual padding
-    has been removed to avoid duplication.
-
-    Parameters
-    ----------
-    max_num_samples : int
-        Maximum total samples (train+test) before per-split padding.
-    max_num_features : int
-        Maximum number of (non-target) features after padding.
-    train_fraction : float, default 0.5
-        Fraction of samples used for training (rest for test).
+    Parameters (mirror `Preprocessor` + wrapper extras)
+    --------------------------------------------------
+    n_features : int
+        Number of (non-target) features to keep (before padding). Must be <= max_n_features.
+    max_n_features : int
+        Maximum number of features for padding.
+    n_train_samples : int
+        Number of training samples (non-zero) required.
+    max_n_train_samples : int
+        Maximum padded training samples.
+    n_test_samples : int
+        Number of test samples (non-zero) required.
+    max_n_test_samples : int
+        Maximum padded test samples.
     dropout_prob : float, default 0.0
-        Probability of dropping EACH non-target feature (feature hiding). Ensures at least one remains.
-    transformation_type : str, {'standardize','yeo_johnson'}
-        Chooses which transformation pipeline the underlying Preprocessor applies.
-        'standardize' -> standardization only.
-        'yeo_johnson' -> Yeo-Johnson then standardization.
-    shuffle_data : bool, default True
-        If True, enables both sample and feature shuffling inside the Preprocessor.
+        Probability of dropping each non-target feature.
     target_feature : Optional[int]
-        If provided, use this feature index as target; else choose randomly.
+        Fixed target feature index; if None choose randomly.
     random_seed : Optional[int]
-        Reproducibility for target selection, feature dropout, and underlying shuffles.
-
-    Notes
-    -----
-    - The target column is removed from the feature tensor before calling the Preprocessor.
-    - We wrap data into a single batch (B=1) for the Preprocessor which expects [B,N,F].
-    - Output batch dimension is stripped to keep the legacy BasicProcessing API.
+        Reproducibility for target selection, dropout & shuffling.
+    negative_one_one_scaling : bool
+        Apply [-1,1] scaling after other transforms.
+    standardize : bool
+        Apply per-feature standardization.
+    yeo_johnson : bool
+        Apply Yeo-Johnson before standardization.
+    remove_outliers : bool
+        Winsorize using (1-outlier_quantile, outlier_quantile) on train.
+    outlier_quantile : float
+        Upper quantile for winsorization (e.g. 0.95).
+    shuffle_samples : bool
+        Shuffle rows before split.
+    shuffle_features : bool
+        Shuffle columns before feature selection (affects which features kept when overcomplete).
+    y_clip_quantile : Optional[float]
+        Optional winsorization of target.
+    eps : float
+        Numerical epsilon.
+    device / dtype : torch.device / torch.dtype
+        Optional output casting.
     """
 
     def __init__(
         self,
-        max_num_samples: int,
-        max_num_features: int,
-        train_fraction: float = 0.5,
+        n_features: int,
+        max_n_features: int,
+        n_train_samples: int,
+        max_n_train_samples: int,
+        n_test_samples: int,
+        max_n_test_samples: int,
         dropout_prob: float = 0.0,
-        transformation_type: str = 'standardize',
-        shuffle_data: bool = True,
         target_feature: Optional[int] = None,
         random_seed: Optional[int] = None,
-        negative_one_one_scaling: bool = False,
-        remove_outliers: bool = False,
+        negative_one_one_scaling: bool = True,
+        standardize: bool = True,
+        yeo_johnson: bool = False,
+        remove_outliers: bool = True,
         outlier_quantile: float = 0.95,
-        yeo_johnson_grid: bool = True,
+        shuffle_samples: bool = True,
+        shuffle_features: bool = True,
+        y_clip_quantile: Optional[float] = None,
+        eps: float = 1e-8,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
     ):
-        self.max_num_samples = max_num_samples
-        self.max_num_features = max_num_features
-        self.train_fraction = train_fraction
+        # Store wrapper-specific
         self.dropout_prob = dropout_prob
-        self.transformation_type = transformation_type
-        self.shuffle_data = shuffle_data
         self.target_feature = target_feature
         self.random_seed = random_seed
+
+        # Store Preprocessor-compatible config
+        self.n_features = n_features
+        self.max_n_features = max_n_features
+        self.n_train_samples = n_train_samples
+        self.max_n_train_samples = max_n_train_samples
+        self.n_test_samples = n_test_samples
+        self.max_n_test_samples = max_n_test_samples
         self.negative_one_one_scaling = negative_one_one_scaling
+        self.standardize = standardize
+        self.yeo_johnson = yeo_johnson
         self.remove_outliers = remove_outliers
         self.outlier_quantile = outlier_quantile
-        self.yeo_johnson_grid = yeo_johnson_grid  # currently unused but placeholder if customizing
+        self.shuffle_samples = shuffle_samples
+        self.shuffle_features = shuffle_features
+        self.y_clip_quantile = y_clip_quantile
+        self.eps = eps
+        self.device = device
+        self.dtype = dtype
 
-        if not (0.0 < train_fraction < 1.0):
-            raise ValueError("train_fraction must be in (0,1)")
-        if transformation_type not in {"standardize", "yeo_johnson"}:
-            raise ValueError("transformation_type must be 'standardize' or 'yeo_johnson'")
+        # Basic validations mirroring Preprocessor expectations
+        assert 0 < outlier_quantile <= 1.0, "outlier_quantile must be in (0,1]"
+        assert n_features <= max_n_features, "n_features <= max_n_features"
+        assert n_train_samples <= max_n_train_samples, "n_train_samples <= max_n_train_samples"
+        assert n_test_samples <= max_n_test_samples, "n_test_samples <= max_n_test_samples"
 
     # ------------------------------------------------------------------
     def process(
@@ -102,71 +134,67 @@ class BasicProcessing:
         original_num_samples = next(iter(dataset.values())).shape[0]
 
         # Build data tensor [N,F_total]
-        data_tensor = torch.cat([dataset[i] for i in feature_indices], dim=1)  # (N,F)
+        data_tensor = torch.cat([dataset[i] for i in feature_indices], dim=1)
 
-        # Select target feature
+        # Target selection
         target_feat = self._select_target_feature(feature_indices)
         target_col = feature_indices.index(target_feat)
         target_values = data_tensor[:, target_col]
 
-        # Build list of candidate feature columns excluding target
+        # Candidate (non-target) columns
         remaining_cols = [i for i in range(len(feature_indices)) if i != target_col]
 
-        # Apply feature hiding (dropout) on remaining columns
+        # Feature dropout
         kept_cols, dropped_original_indices = self._apply_feature_dropout(remaining_cols, feature_indices)
+        if len(kept_cols) < self.n_features:
+            # Not enough features after dropout to satisfy required n_features
+            if mode == 'safe':
+                raise ValueError(f"Not enough features after dropout: have {len(kept_cols)}, need {self.n_features}")
+            return {}, {"error": "insufficient_features_after_dropout"}
 
-        if len(kept_cols) == 0:
-            # Should never happen; safeguard
-            kept_cols = [remaining_cols[0]]
+        # Enforce requested n_features (truncate if surplus)
+        kept_cols = kept_cols[: self.n_features]
 
-        # Truncate to max_num_features (non-padded) if needed
-        kept_cols = kept_cols[: self.max_num_features]
+        X_no_target = data_tensor[:, kept_cols]  # (N, n_features)
+        Y_tensor = target_values.unsqueeze(-1)
 
-        X_no_target = data_tensor[:, kept_cols]  # (N, F_kept)
-        Y_tensor = target_values.unsqueeze(-1)  # (N,1)
-
-        # Prepare shapes for Preprocessor: we want [B,N,F] and Y [B,N]
-        X_batch = X_no_target.unsqueeze(0)  # [1,N,F_kept]
+        # Batch dimension for Preprocessor
+        X_batch = X_no_target.unsqueeze(0)  # [1,N,F]
         Y_batch = Y_tensor.squeeze(-1).unsqueeze(0)  # [1,N]
 
-        # Derive train/test counts
-        n_total = X_batch.shape[1]
-        n_train = int(n_total * self.train_fraction)
-        n_train = max(1, min(n_train, n_total - 1))  # ensure at least 1 test sample
-        n_test = n_total - n_train
-
-        max_n_train = int(self.max_num_samples * self.train_fraction)
-        max_n_train = max(1, max_n_train)
-        max_n_test = self.max_num_samples - max_n_train
-        max_n_test = max(1, max_n_test)
-
-        # Setup Preprocessor flags based on transformation_type
-        use_yj = self.transformation_type == 'yeo_johnson'
-        use_std = True  # both original modes end with standardization
+        # Validate sample requirements early
+        if original_num_samples < (self.n_train_samples + self.n_test_samples):
+            if mode == 'safe':
+                raise ValueError(
+                    f"Not enough samples: have {original_num_samples}, need {self.n_train_samples + self.n_test_samples}"
+                )
+            return {}, {"error": "insufficient_samples"}
 
         preproc = Preprocessor(
-            n_features=X_no_target.shape[1],
-            max_n_features=self.max_num_features,
-            n_train_samples=n_train,
-            max_n_train_samples=max_n_train,
-            n_test_samples=n_test,
-            max_n_test_samples=max_n_test,
+            n_features=self.n_features,
+            max_n_features=self.max_n_features,
+            n_train_samples=self.n_train_samples,
+            max_n_train_samples=self.max_n_train_samples,
+            n_test_samples=self.n_test_samples,
+            max_n_test_samples=self.max_n_test_samples,
             negative_one_one_scaling=self.negative_one_one_scaling,
-            standardize=use_std,
-            yeo_johnson=use_yj,
+            standardize=self.standardize,
+            yeo_johnson=self.yeo_johnson,
             remove_outliers=self.remove_outliers,
             outlier_quantile=self.outlier_quantile,
-            shuffle_samples=self.shuffle_data,
-            shuffle_features=self.shuffle_data,
+            shuffle_samples=self.shuffle_samples,
+            shuffle_features=self.shuffle_features,
+            y_clip_quantile=self.y_clip_quantile,
+            eps=self.eps,
+            device=self.device,
+            dtype=self.dtype,
         )
 
         processed = preproc.process(X_batch, Y_batch)
         if processed is None:
-            raise RuntimeError("Preprocessor returned None (insufficient samples or features).")
+            raise RuntimeError("Preprocessor returned None (internal size validation failed).")
 
-        X_train_b, X_test_b, Y_train_b, Y_test_b = processed  # each with batch dim
-
-        # Strip batch dimension and align shapes with legacy API (Y has last dim=1)
+        X_train_b, X_test_b, Y_train_b, Y_test_b = processed
         X_train = X_train_b[0]
         X_test = X_test_b[0]
         Y_train = Y_train_b[0].unsqueeze(-1)
@@ -187,22 +215,26 @@ class BasicProcessing:
             'dropped_feature_original_indices': dropped_original_indices,
             'original_num_features': original_num_features,
             'original_num_samples': original_num_samples,
-            'train_fraction': self.train_fraction,
-            'n_train_requested': n_train,
-            'n_test_requested': n_test,
-            'max_num_samples': self.max_num_samples,
-            'max_num_features': self.max_num_features,
-            'transformation_type': self.transformation_type,
+            'n_train_samples': self.n_train_samples,
+            'n_test_samples': self.n_test_samples,
+            'max_n_train_samples': self.max_n_train_samples,
+            'max_n_test_samples': self.max_n_test_samples,
+            'n_features': self.n_features,
+            'max_n_features': self.max_n_features,
             'negative_one_one_scaling': self.negative_one_one_scaling,
+            'standardize': self.standardize,
+            'yeo_johnson': self.yeo_johnson,
             'remove_outliers': self.remove_outliers,
             'outlier_quantile': self.outlier_quantile,
+            'y_clip_quantile': self.y_clip_quantile,
             'dropout_prob': self.dropout_prob,
-            'shuffle_data': self.shuffle_data,
+            'shuffle_samples': self.shuffle_samples,
+            'shuffle_features': self.shuffle_features,
             'random_seed': self.random_seed,
-            'preprocessor_padding': {
-                'X_train_shape': tuple(X_train.shape),
-                'X_test_shape': tuple(X_test.shape),
-            },
+            'device': str(self.device) if self.device else None,
+            'dtype': str(self.dtype) if self.dtype else None,
+            'X_train_shape': tuple(X_train.shape),
+            'X_test_shape': tuple(X_test.shape),
         }
 
         return X_train, Y_train, X_test, Y_test
