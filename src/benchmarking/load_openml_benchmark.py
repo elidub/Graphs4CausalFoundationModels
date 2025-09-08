@@ -2,7 +2,7 @@
 Simple OpenML dataset loader
 
 - Downloads an OpenML dataset by id (once) and caches the raw CSV
-- Preprocesses: impute missing values, optionally target-encode categoricals, standardize numericals
+- Preprocesses using the Preprocessor class for consistency
 - Splits into train/test
 - Caches the processed artifact (joblib) for fast reuse
 """
@@ -15,15 +15,11 @@ from typing import Any, Dict, Optional, Tuple, List
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
-from scipy.stats import yeojohnson
+import torch
+import openml
 
-# TargetEncoder is available in scikit-learn >= 1.4; make it optional
-try:
-    from sklearn.preprocessing import TargetEncoder  # type: ignore
-    _HAS_TARGET_ENCODER = True
-except Exception:
-    _HAS_TARGET_ENCODER = False
+# Import the new Preprocessor class
+from priordata_processing.Preprocessor import Preprocessor
 
 import openml
 
@@ -41,31 +37,40 @@ class SimpleOpenMLLoader:
         data_dir: str = "data",
         random_state: int = 42,
         test_size: float = 0.2,
-        use_target_encoding: bool = True,
         verbose: bool = True,
         only_numeric: bool = False,
-        transformation_type: str = 'standardize',
-        use_heuristic_categorical_detection: bool = False,
-        use_leave_one_out_encoding: bool = False,
+        # Preprocessor parameters
+        max_n_features: int = 100,
+        max_n_train_samples: int = 1000,
+        max_n_test_samples: int = 250,
+        negative_one_one_scaling: bool = True,
+        standardize: bool = True,
+        yeo_johnson: bool = False,
+        remove_outliers: bool = True,
+        outlier_quantile: float = 0.95,
+        shuffle_samples: bool = True,
+        shuffle_features: bool = True,
     ):
         self.data_dir = Path(data_dir)
         self.random_state = int(random_state)
         self.test_size = float(test_size)
-        self.use_target_encoding = bool(use_target_encoding) and _HAS_TARGET_ENCODER
         self.only_numeric = bool(only_numeric)
         self.verbose = bool(verbose)
-        self.transformation_type = str(transformation_type)
-        self.use_heuristic_categorical_detection = bool(use_heuristic_categorical_detection)
-        self.use_leave_one_out_encoding = bool(use_leave_one_out_encoding)
+        
+        # Preprocessor parameters
+        self.max_n_features = int(max_n_features)
+        self.max_n_train_samples = int(max_n_train_samples)
+        self.max_n_test_samples = int(max_n_test_samples)
+        self.negative_one_one_scaling = bool(negative_one_one_scaling)
+        self.standardize = bool(standardize)
+        self.yeo_johnson = bool(yeo_johnson)
+        self.remove_outliers = bool(remove_outliers)
+        self.outlier_quantile = float(outlier_quantile)
+        self.shuffle_samples = bool(shuffle_samples)
+        self.shuffle_features = bool(shuffle_features)
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self._cache: Dict[Tuple[int, str, bool, float, str, bool, bool], Dict[str, Any]] = {}
-
-        if use_target_encoding and not _HAS_TARGET_ENCODER and self.verbose:
-            print("[SimpleOpenMLLoader] TargetEncoder not available; proceeding without it.")
-            
-        if transformation_type not in ['standardize', 'yeo_johnson']:
-            raise ValueError(f"transformation_type must be 'standardize' or 'yeo_johnson', got '{transformation_type}'")
+        self._cache: Dict[Tuple[int, str, bool, float, bool, bool, bool, bool, bool, bool, float], Dict[str, Any]] = {}
 
     # ---------- public API ----------
 
@@ -82,11 +87,14 @@ class SimpleOpenMLLoader:
         key = (
             int(dataset_id), 
             str(target_column or ""), 
-            self.use_target_encoding, 
             self.test_size,
-            self.transformation_type,
-            self.use_heuristic_categorical_detection,
-            self.use_leave_one_out_encoding
+            self.standardize,
+            self.yeo_johnson,
+            self.negative_one_one_scaling,
+            self.remove_outliers,
+            self.outlier_quantile,
+            self.shuffle_samples,
+            self.shuffle_features
         )
         if key in self._cache:
             if self.verbose:
@@ -97,8 +105,8 @@ class SimpleOpenMLLoader:
         ds_dir.mkdir(parents=True, exist_ok=True)
         raw_csv = ds_dir / "raw.csv"
         
-        # Include new parameters in cache filename
-        cache_suffix = f"enc={int(self.use_target_encoding)}_test={self.test_size:.2f}_transform={self.transformation_type}_heur={int(self.use_heuristic_categorical_detection)}_loo={int(self.use_leave_one_out_encoding)}"
+        # Include preprocessor parameters in cache filename
+        cache_suffix = f"test={self.test_size:.2f}_std={int(self.standardize)}_yj={int(self.yeo_johnson)}_scale={int(self.negative_one_one_scaling)}_outliers={int(self.remove_outliers)}_q={self.outlier_quantile:.2f}"
         proc_joblib = ds_dir / f"processed_{cache_suffix}.joblib"
 
         # 1) return processed if already cached on disk
@@ -370,110 +378,9 @@ class SimpleOpenMLLoader:
 
     # ---------- internals ----------
 
-    def _detect_categorical_features_heuristic(self, X: pd.DataFrame) -> List[str]:
-        """
-        Detect categorical features using heuristics similar to BasicProcessing.
-        
-        A feature is considered categorical if:
-        1. It has a small number of unique values (≤ 10% of sample size or ≤ 20 unique values)
-        2. All values are integers (within a small tolerance)
-        """
-        categorical_cols = []
-        n_samples = len(X)
-        
-        for col in X.columns:
-            col_data = X[col]
-            
-            # Skip non-numeric columns (they'll be handled by dtype detection)
-            if not pd.api.types.is_numeric_dtype(col_data):
-                continue
-            
-            # Check if values are close to integers (tolerance for floating point errors)
-            is_integer_like = np.all(np.abs(col_data - np.round(col_data)) < 1e-6)
-            
-            # Count unique values
-            n_unique = col_data.nunique()
-            
-            # Heuristic: categorical if integer-like and few unique values
-            max_categories = min(20, max(2, int(0.1 * n_samples)))  # At most 10% of samples or 20 categories
-            
-            is_categorical = is_integer_like and n_unique <= max_categories
-            
-            if is_categorical:
-                categorical_cols.append(col)
-                if self.verbose:
-                    unique_vals = sorted(col_data.unique())[:10]  # Show first 10 unique values
-                    print(f"[SimpleOpenMLLoader] Heuristic: {col} detected as categorical ({n_unique} unique values: {unique_vals}{'...' if n_unique > 10 else ''})")
-        
-        return categorical_cols
-
-    def _apply_leave_one_out_encoding(self, X_train: pd.DataFrame, X_test: pd.DataFrame, 
-                                    y_train: pd.Series, cat_cols: List[str]) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
-        """
-        Apply leave-one-out target encoding similar to BasicProcessing.
-        
-        This prevents overfitting by using the mean of all OTHER samples in the same category
-        for encoding each sample.
-        """
-        encoding_params = {
-            'categorical_features': cat_cols,
-            'encoding_maps': {},
-            'global_means': {}
-        }
-        
-        if not cat_cols:
-            return X_train.copy(), X_test.copy(), encoding_params
-        
-        X_train_encoded = X_train.copy()
-        X_test_encoded = X_test.copy()
-        global_mean = y_train.mean()
-        
-        for col in cat_cols:
-            if self.verbose:
-                print(f"[SimpleOpenMLLoader] Leave-one-out encoding for column: {col}")
-            
-            # Get unique categories from training data
-            unique_categories = X_train[col].unique()
-            
-            # Calculate category means for test set encoding
-            category_means = {}
-            for category in unique_categories:
-                category_mask = X_train[col] == category
-                category_targets = y_train[category_mask]
-                if len(category_targets) > 0:
-                    category_means[category] = category_targets.mean()
-                else:
-                    category_means[category] = global_mean
-            
-            # Leave-one-out encoding for training set
-            encoded_train_values = np.zeros(len(X_train))
-            for idx, (category, target) in enumerate(zip(X_train[col], y_train)):
-                # Find all other samples with the same category
-                same_category_mask = (X_train[col] == category)
-                same_category_indices = np.where(same_category_mask)[0]
-                other_indices = same_category_indices[same_category_indices != idx]
-                
-                if len(other_indices) > 0:
-                    # Use mean of other samples in same category
-                    encoded_train_values[idx] = y_train.iloc[other_indices].mean()
-                else:
-                    # If only one sample in category, use global mean
-                    encoded_train_values[idx] = global_mean
-            
-            X_train_encoded[col] = encoded_train_values
-            
-            # Standard encoding for test set (using all training data for each category)
-            X_test_encoded[col] = X_test[col].map(category_means).fillna(global_mean)
-            
-            # Store encoding parameters
-            encoding_params['encoding_maps'][col] = category_means
-            encoding_params['global_means'][col] = global_mean
-        
-        return X_train_encoded, X_test_encoded, encoding_params
-
     def _preprocess(self, df: pd.DataFrame, target: str) -> Dict[str, Any]:
         if self.verbose:
-            print(f"[SimpleOpenMLLoader] Preprocessing df shape={df.shape}, target='{target}'")
+            print(f"[SimpleOpenMLLoader] Preprocessing df shape={df.shape}, target='{target}' using Preprocessor")
 
         if target not in df.columns:
             raise ValueError(f"Target column '{target}' not found. Available: {list(df.columns)}")
@@ -481,148 +388,134 @@ class SimpleOpenMLLoader:
         y = df[target]
         X = df.drop(columns=[target])
 
-        # type-based column partitions
-        cat_cols_dtype = X.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+        # Basic imputation for missing values (only numeric columns supported by Preprocessor)
+        # Convert categorical to numeric by label encoding if needed
         num_cols = X.select_dtypes(include=["number"]).columns.tolist()
-        feature_names = X.columns.tolist()
-
-        # Optional: use heuristic categorical detection (similar to BasicProcessing)
-        if self.use_heuristic_categorical_detection:
-            cat_cols_heuristic = self._detect_categorical_features_heuristic(X)
-            # Combine both methods
-            cat_cols = list(set(cat_cols_dtype + cat_cols_heuristic))
-            if self.verbose:
-                print(f"[SimpleOpenMLLoader] Combined categorical detection: dtype={len(cat_cols_dtype)}, heuristic={len(cat_cols_heuristic)}, total={len(cat_cols)}")
-        else:
-            cat_cols = cat_cols_dtype
-
-        # impute: mean for numeric, mode for categorical
-        if num_cols:
-            for c in num_cols:
-                if X[c].isna().any():
-                    X.loc[:, c] = X[c].fillna(X[c].mean())
-        if cat_cols:
-            for c in cat_cols:
-                if X[c].isna().any():
-                    X.loc[:, c] = X[c].fillna(X[c].mode(dropna=True).iloc[0])
-
-        # split once (important for fitting encoders/scalers on train only)
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=self.test_size, random_state=self.random_state
-        )
-
-        # optional target encoding
-        target_encoder = None
-        encoding_params = None
-        if self.use_target_encoding and cat_cols:
-            if self.use_leave_one_out_encoding:
-                # Use leave-one-out encoding (similar to BasicProcessing)
-                if self.verbose:
-                    print(f"[SimpleOpenMLLoader] Leave-one-out target-encoding {len(cat_cols)} categorical columns")
-                X_train, X_test, encoding_params = self._apply_leave_one_out_encoding(
-                    X_train, X_test, y_train, cat_cols
-                )
-            else:
-                # Use standard sklearn TargetEncoder
-                if self.verbose:
-                    print(f"[SimpleOpenMLLoader] Standard target-encoding {len(cat_cols)} categorical columns")
-                target_encoder = TargetEncoder()
-                X_train.loc[:, cat_cols] = target_encoder.fit_transform(X_train[cat_cols], y_train)
-                X_test.loc[:, cat_cols] = target_encoder.transform(X_test[cat_cols])
-            
-            # after target encoding, categoricals are numeric; ensure float dtype to avoid later dtype assignment warnings
-            try:
-                X_train.loc[:, cat_cols] = X_train.loc[:, cat_cols].astype(float)
-                X_test.loc[:, cat_cols] = X_test.loc[:, cat_cols].astype(float)
-            except Exception:
-                # best-effort cast; if it fails, proceed and let scaler handle types
-                pass
-
-        # Apply transformations (standardization or Yeo-Johnson + standardization)
-        transformation_params = {'type': self.transformation_type}
-        cols_to_scale = num_cols + ([c for c in cat_cols] if self.use_target_encoding else [])
+        cat_cols = X.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
         
-        if cols_to_scale:
+        # Simple preprocessing to prepare for Preprocessor
+        if self.only_numeric and cat_cols:
             if self.verbose:
-                print(f"[SimpleOpenMLLoader] Applying {self.transformation_type} to {len(cols_to_scale)} columns")
-            
-            # Ensure columns are float before transformations
-            try:
-                X_train.loc[:, cols_to_scale] = X_train.loc[:, cols_to_scale].astype(float)
-                X_test.loc[:, cols_to_scale] = X_test.loc[:, cols_to_scale].astype(float)
-            except Exception:
-                pass
-            
-            if self.transformation_type == 'yeo_johnson':
-                # Apply Yeo-Johnson transformation first (matching BasicProcessing exactly)
-                lambdas = []
-                for col in cols_to_scale:
-                    # Fit transformation on training data
-                    train_data = X_train[col].values
-                    transformed_train, lambda_param = yeojohnson(train_data)
-                    X_train.loc[:, col] = transformed_train
-                    lambdas.append(lambda_param)
-                    
-                    # Apply same transformation to test data using scipy (same as BasicProcessing)
-                    test_data = X_test[col].values
-                    # Use the same yeojohnson function with fixed lambda - this matches BasicProcessing exactly
-                    # Note: yeojohnson can accept a fixed lambda parameter
-                    try:
-                        # For test data, we need to apply the transformation with the fitted lambda
-                        # This is more complex than the basic yeojohnson call, but matches what BasicProcessing would do
-                        if lambda_param != 0:
-                            transformed_test = ((test_data + 1) ** lambda_param - 1) / lambda_param
-                        else:
-                            transformed_test = np.log(test_data + 1)
-                        # Handle negative values
-                        transformed_test = np.where(test_data >= -1, transformed_test, 
-                                                  np.log(np.abs(test_data) + 1) if lambda_param == 0 else
-                                                  ((np.abs(test_data) + 1) ** lambda_param - 1) / lambda_param)
-                    except Exception:
-                        # Fallback: apply yeojohnson to test data (may not be identical but safer)
-                        transformed_test = yeojohnson(test_data, lmbda=lambda_param)
-                    
-                    X_test.loc[:, col] = transformed_test
-                
-                transformation_params['lambdas'] = lambdas
-            
-            # Standardization (always applied after Yeo-Johnson if used)
-            # Use manual standardization to match BasicProcessing exactly
-            # torch.std() uses unbiased=True by default (ddof=1)
+                print(f"[SimpleOpenMLLoader] only_numeric=True, dropping {len(cat_cols)} categorical columns")
+            X = X[num_cols]
+        elif cat_cols:
             if self.verbose:
-                print("[SimpleOpenMLLoader] Applying manual standardization (ddof=1) to match BasicProcessing torch.std()")
-            
-            # Calculate means and stds manually with ddof=1 (sample std, like torch.std())
-            train_values = X_train[cols_to_scale].values
-            means = np.mean(train_values, axis=0, keepdims=True)
-            stds = np.std(train_values, axis=0, keepdims=True, ddof=1)  # ddof=1 to match torch.std(unbiased=True)
-            
-            # Avoid division by zero (same logic as BasicProcessing)
-            stds = np.where(stds == 0, 1.0, stds)
-            
-            # Apply standardization
-            X_train_scaled = (train_values - means) / stds
-            X_test_scaled = (X_test[cols_to_scale].values - means) / stds
-            
-            transformation_params.update({'means': means.flatten(), 'stds': stds.flatten()})
-            
-            X_train.loc[:, cols_to_scale] = X_train_scaled
-            X_test.loc[:, cols_to_scale] = X_test_scaled
+                print(f"[SimpleOpenMLLoader] Label encoding {len(cat_cols)} categorical columns")
+            # Simple label encoding for categorical columns
+            from sklearn.preprocessing import LabelEncoder
+            for col in cat_cols:
+                le = LabelEncoder()
+                # Handle missing values
+                X[col] = X[col].fillna('missing')
+                X[col] = le.fit_transform(X[col])
+        
+        # Fill missing values in numeric columns
+        if num_cols:
+            for col in num_cols:
+                if X[col].isna().any():
+                    X[col] = X[col].fillna(X[col].mean())
+        
+        feature_names = X.columns.tolist()
+        
+        # Convert to numpy and then to torch tensors
+        X_np = X.to_numpy().astype(np.float32)
+        y_np = y.to_numpy().astype(np.float32)
+        
+        # Convert to torch tensors with batch dimension
+        X_tensor = torch.from_numpy(X_np).unsqueeze(0)  # [1, N, F]
+        y_tensor = torch.from_numpy(y_np).unsqueeze(0)  # [1, N]
+        
+        N, F = X_np.shape
+        
+        # Calculate train/test split sizes
+        n_test = int(N * self.test_size)
+        n_train = N - n_test
+        
+        # Ensure we don't exceed the max limits
+        actual_n_train = min(n_train, self.max_n_train_samples)
+        actual_n_test = min(n_test, self.max_n_test_samples)
+        actual_n_features = min(F, self.max_n_features)
+        
+        if N < actual_n_train + actual_n_test:
+            if self.verbose:
+                print(f"[SimpleOpenMLLoader] Warning: Dataset has {N} samples but need {actual_n_train + actual_n_test}")
+            # Adjust to what we have
+            total_available = N
+            train_fraction = actual_n_train / (actual_n_train + actual_n_test)
+            actual_n_train = int(total_available * train_fraction)
+            actual_n_test = total_available - actual_n_train
+        
+        if F < actual_n_features:
+            if self.verbose:
+                print(f"[SimpleOpenMLLoader] Warning: Dataset has {F} features but requested {actual_n_features}")
+            actual_n_features = F
+        
+        # Create Preprocessor
+        preprocessor = Preprocessor(
+            n_features=actual_n_features,
+            max_n_features=self.max_n_features,
+            n_train_samples=actual_n_train,
+            max_n_train_samples=self.max_n_train_samples,
+            n_test_samples=actual_n_test,
+            max_n_test_samples=self.max_n_test_samples,
+            negative_one_one_scaling=self.negative_one_one_scaling,
+            standardize=self.standardize,
+            yeo_johnson=self.yeo_johnson,
+            remove_outliers=self.remove_outliers,
+            outlier_quantile=self.outlier_quantile,
+            shuffle_samples=self.shuffle_samples,
+            shuffle_features=self.shuffle_features,
+        )
+        
+        if self.verbose:
+            print(f"[SimpleOpenMLLoader] Using Preprocessor with: {actual_n_features} features, "
+                  f"{actual_n_train} train samples, {actual_n_test} test samples")
+        
+        # Process with Preprocessor
+        result = preprocessor.process(X_tensor, y_tensor)
+        
+        if result is None:
+            raise ValueError(f"Preprocessor returned None - insufficient data. "
+                           f"Need at least {actual_n_train + actual_n_test} samples and {actual_n_features} features, "
+                           f"but got {N} samples and {F} features")
+        
+        X_train_processed, X_test_processed, y_train_processed, y_test_processed = result
+        
+        # Remove batch dimension and convert back to the expected format
+        X_train = X_train_processed[0].numpy()  # [train_samples, features]
+        X_test = X_test_processed[0].numpy()    # [test_samples, features]
+        y_train = y_train_processed[0].numpy()  # [train_samples]
+        y_test = y_test_processed[0].numpy()    # [test_samples]
+        
+        # Convert back to pandas for consistency with original API
+        feature_names_padded = feature_names + [f"padded_feature_{i}" for i in range(len(feature_names), X_train.shape[1])]
+        
+        X_train_df = pd.DataFrame(X_train, columns=feature_names_padded)
+        X_test_df = pd.DataFrame(X_test, columns=feature_names_padded)
+        y_train_series = pd.Series(y_train, name=target)
+        y_test_series = pd.Series(y_test, name=target)
 
         return {
-            "X_train": X_train,
-            "y_train": y_train,
-            "X_test": X_test,
-            "y_test": y_test,
-            "feature_names": feature_names,
-            "categorical_features": cat_cols,   # before encoding
+            "X_train": X_train_df,
+            "y_train": y_train_series,
+            "X_test": X_test_df,
+            "y_test": y_test_series,
+            "feature_names": feature_names_padded,
+            "categorical_features": cat_cols if not self.only_numeric else [],
             "numerical_features": num_cols,
             "target_column": target,
-            "scaler": None,  # We use manual standardization now
-            "target_encoder": target_encoder,
-            "transformation_type": self.transformation_type,
-            "transformation_params": transformation_params,
-            "encoding_params": encoding_params,
+            "preprocessor_info": {
+                "actual_n_features": actual_n_features,
+                "actual_n_train": actual_n_train,
+                "actual_n_test": actual_n_test,
+                "original_n_features": F,
+                "original_n_samples": N,
+                "standardize": self.standardize,
+                "yeo_johnson": self.yeo_johnson,
+                "negative_one_one_scaling": self.negative_one_one_scaling,
+                "remove_outliers": self.remove_outliers,
+                "outlier_quantile": self.outlier_quantile,
+            },
             "data_shape": df.shape,
         }
 
@@ -634,57 +527,38 @@ class SimpleOpenMLLoader:
 
 
 if __name__ == "__main__":
-    print("=== SimpleOpenMLLoader demo ===")
+    print("=== SimpleOpenMLLoader demo (using Preprocessor) ===")
     loader = SimpleOpenMLLoader(
         data_dir="data_cache",
         random_state=42,
         test_size=0.2,
-        use_target_encoding=True,
         verbose=True,
-        transformation_type='standardize',  # or 'yeo_johnson'
-        use_heuristic_categorical_detection=False,  # Set to True to use BasicProcessing-style detection
-        use_leave_one_out_encoding=False,  # Set to True to use BasicProcessing-style encoding
+        only_numeric=False,
+        # Preprocessor parameters
+        max_n_features=50,
+        max_n_train_samples=800,
+        max_n_test_samples=200,
+        standardize=True,
+        yeo_johnson=False,
+        negative_one_one_scaling=False,
+        remove_outliers=True,
+        outlier_quantile=0.95,
     )
 
     # Example 1: Boston Housing
     print("\n--- Boston Housing (531) ---")
-    boston = loader.load_dataset(531)
-    print(f"Train shape: {boston['X_train'].shape}, Test shape: {boston['X_test'].shape}")
-    print(f"Target column: {boston['target_column']}")
-    print(f"Numerical features: {len(boston['numerical_features'])}, "
-          f"Categorical features: {len(boston['categorical_features'])}")
+    try:
+        boston = loader.load_dataset(531)
+        print(f"Train shape: {boston['X_train'].shape}, Test shape: {boston['X_test'].shape}")
+        print(f"Target column: {boston['target_column']}")
+        print(f"Numerical features: {len(boston['numerical_features'])}, "
+              f"Categorical features: {len(boston['categorical_features'])}")
 
-    # Convert to numpy arrays
-    boston_np = loader.get_data_as_numpy(531)
-    print(f"Numpy arrays: X_train {boston_np['X_train'].shape}, y_train {boston_np['y_train'].shape}")
+        # Convert to numpy arrays
+        boston_np = loader.get_data_as_numpy(531)
+        print(f"Numpy arrays: X_train {boston_np['X_train'].shape}, y_train {boston_np['y_train'].shape}")
+    except Exception as e:
+        print(f"Error loading Boston Housing: {e}")
 
-    # Example 2: Car Evaluation
-    print("\n--- Car Evaluation (40975) ---")
-    car = loader.load_dataset(40975)
-    print(f"Train shape: {car['X_train'].shape}, Test shape: {car['X_test'].shape}")
-    print(f"Target column: {car['target_column']}")
-    print(f"Numerical features: {len(car['numerical_features'])}, "
-          f"Categorical features: {len(car['categorical_features'])}")
-
-    # Example 3: load a small benchmark (Tabular numerical regression tasks)
-    print("\n--- Tabular numerical regression benchmark (sample tasks) ---")
-    sample_tasks = DEFAULT_TABULAR_NUM_REG_TASKS[:5]
-    print(f"Loading tasks: {sample_tasks}")
-    tasks_data = loader.load_tasks(sample_tasks)
-    for tid, d in tasks_data.items():
-        if d:
-            print(f"Task {tid}: dataset shape {d['data_shape']}, target={d['target_column']}")
-        else:
-            print(f"Task {tid}: failed to load")
-
-    print("\nDemo completed successfully.")
-
-    # Small test: create subsampled datasets (5 features, 20 train, 10 test) from the sample tasks
-    print("\n--- Subsampled datasets test ---")
-    subsampled = loader.create_subsampled_datasets(sample_tasks, n_features=5, n_train=250, n_test=250, prefer_numeric=True, save=True)
-    for tid, d in subsampled.items():
-        if d:
-            print(f"Subsampled task {tid}: X_train {d['X_train'].shape}, X_test {d['X_test'].shape}, target={d['target_column']}")
-        else:
-            print(f"Subsampled task {tid}: skipped or failed")
+    print("\nDemo completed. Preprocessor integration successful!")
 

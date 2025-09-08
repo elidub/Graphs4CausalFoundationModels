@@ -57,11 +57,7 @@ class PurelyObservationalDataset(Dataset):
 
         dataset = scm.propagate(num_samples=number_samples_per_dataset) 
 
-        data, metadata = self.priodata_processor.process(dataset)
+        X_train, Y_train, X_test, Y_test = self.priodata_processor.process(dataset)
 
-        X_train = data['X_train'].cpu().numpy()
-        y_train = data['Y_train'].cpu().numpy()
-        X_test = data['X_test'].cpu().numpy()
-        y_test = data['Y_test'].cpu().numpy()
-
-        return X_train, y_train, X_test, y_test
+        # Return tensors directly (keeping them as PyTorch tensors)
+        return X_train, Y_train, X_test, Y_test

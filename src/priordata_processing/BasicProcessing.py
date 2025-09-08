@@ -205,7 +205,7 @@ class BasicProcessing:
             },
         }
 
-        return output, metadata
+        return X_train, Y_train, X_test, Y_test
 
     # ------------------------------------------------------------------
     def _validate(self, dataset: Dict[int, torch.Tensor], mode: str) -> None:

@@ -33,12 +33,15 @@ class MakePurelyObservationalDataset:
     # Define expected hyperparameters for preprocessing and their types
     EXPECTED_PREPROCESSING_HYPERPARAMETERS = {
         "train_fraction": float,
-        "dropout_prob": (float, type(None)),
-        "transformation_type": (str, type(None)),
+        "dropout_prob": float,
+        "transformation_type": str,
         "shuffle_data": bool,
         "target_feature": (int, type(None)),
         "random_seed": (int, type(None)),
-        "use_target_encoding": bool,
+        "negative_one_one_scaling": bool,
+        "remove_outliers": bool,
+        "outlier_quantile": float,
+        "yeo_johnson_grid": bool,
     }
     
     # Define expected dataset configuration parameters and their types
@@ -251,7 +254,11 @@ class MakePurelyObservationalDataset:
             transformation_type=preprocessing_params["transformation_type"],
             shuffle_data=preprocessing_params["shuffle_data"],
             target_feature=preprocessing_params["target_feature"],
-            random_seed=preprocessing_params["random_seed"]
+            random_seed=preprocessing_params["random_seed"],
+            negative_one_one_scaling=preprocessing_params["negative_one_one_scaling"],
+            remove_outliers=preprocessing_params["remove_outliers"],
+            outlier_quantile=preprocessing_params["outlier_quantile"],
+            yeo_johnson_grid=preprocessing_params["yeo_johnson_grid"]
         )
         
         # Get the number of samples per dataset distribution from config

@@ -46,7 +46,16 @@ default_preprocessing_config = {
         "distribution": "discrete_uniform",
         "distribution_parameters": {"low": 0, "high": 100_000_000}
     },
-    "use_target_encoding": {  # whether to apply target encoding to categorical features
+    "negative_one_one_scaling": {  # whether to scale features to [-1, 1] range
         "value": False
+    },
+    "remove_outliers": {  # whether to remove outliers during preprocessing
+        "value": False
+    },
+    "outlier_quantile": {  # quantile threshold for outlier removal
+        "value": 0.95
+    },
+    "yeo_johnson_grid": {  # whether to use grid search for Yeo-Johnson parameters
+        "value": True
     }
 }

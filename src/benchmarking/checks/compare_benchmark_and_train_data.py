@@ -94,6 +94,26 @@ def analyze_dataloader_batch(dataloader, n_batches=3):
             zero_cols_train = np.all(X_train_single == 0, axis=0)
             zero_cols_test = np.all(X_test_single == 0, axis=0)
             
+            # Add per-feature statistics for this dataset
+            feature_statistics = {}
+            for feat_idx in range(n_features):
+                train_feature = X_train_single[:, feat_idx]
+                test_feature = X_test_single[:, feat_idx]
+                
+                feature_statistics[feat_idx] = {
+                    'train_mean': float(np.mean(train_feature)),
+                    'train_std': float(np.std(train_feature)),
+                    'train_min': float(np.min(train_feature)),
+                    'train_max': float(np.max(train_feature)),
+                    'test_mean': float(np.mean(test_feature)),
+                    'test_std': float(np.std(test_feature)),
+                    'test_min': float(np.min(test_feature)),
+                    'test_max': float(np.max(test_feature)),
+                    'is_zero_padded': bool(zero_cols_train[feat_idx] or zero_cols_test[feat_idx]),
+                    'train_n_zeros': int(np.sum(train_feature == 0)),
+                    'test_n_zeros': int(np.sum(test_feature == 0))
+                }
+            
             dataset_analysis = {
                 'dataset_idx_in_batch': dataset_idx,
                 'X_train_shape': X_train_single.shape,
@@ -104,6 +124,7 @@ def analyze_dataloader_batch(dataloader, n_batches=3):
                 'zero_cols_test': int(np.sum(zero_cols_test)),
                 'zero_col_indices_train': np.where(zero_cols_train)[0].tolist(),
                 'zero_col_indices_test': np.where(zero_cols_test)[0].tolist(),
+                'feature_statistics': feature_statistics,  # Add per-feature stats
                 'X_train_stats': {
                     'mean': float(np.mean(X_train_single)),
                     'std': float(np.std(X_train_single)),
@@ -181,21 +202,9 @@ def analyze_dataloader_batch(dataloader, n_batches=3):
         print(f"  Data range (test): [{np.min(X_test_flat):.3f}, {np.max(X_test_flat):.3f}]")
     
     # Compute global statistics across all datasets and batches
-    print(f"\n" + "=" * 60)
+    print("\n" + "=" * 60)
     print("GLOBAL TRAINING DATA STATISTICS")
     print("=" * 60)
-    
-    # Collect all values for global analysis
-    all_X_train_values = []
-    all_X_test_values = []
-    all_y_train_values = []
-    all_y_test_values = []
-    
-    for batch in batch_info:
-        for dataset in batch['individual_datasets']:
-            # Reconstruct the data from stored statistics to get actual values
-            # Note: This is a limitation - we need to collect raw values during analysis
-            pass  # We'll add this collection in the loop above
     
     # For now, compute statistics from what we have
     total_datasets = sum(len(batch['individual_datasets']) for batch in batch_info)
@@ -721,13 +730,13 @@ def main():
     BENCHMARK_DATA_DIR = "data_cache"
     BENCHMARK_N_FEATURES = 7
     BENCHMARK_MAX_N_FEATURES = 19
-    BENCHMARK_N_TRAIN = 250
-    BENCHMARK_N_TEST = 250
+    BENCHMARK_N_TRAIN = 125
+    BENCHMARK_N_TEST = 125
     BENCHMARK_PREFER_NUMERIC = True
     BENCHMARK_NO_TARGET_ENCODING = False
     
     # Analysis parameters
-    DATALOADER_BATCHES_TO_ANALYZE = 2
+    DATALOADER_BATCHES_TO_ANALYZE = 1
     
     print("=" * 80)
     print("BENCHMARK vs TRAINING DATA COMPARISON")
