@@ -39,6 +39,9 @@ sys.path.append(str(repo_root))
 from src.benchmarking.load_openml_benchmark import SimpleOpenMLLoader, DEFAULT_TABULAR_NUM_REG_TASKS
 from src.models.SimplePFN_sklearn import SimplePFNSklearn
 
+# Fix import path for Preprocessor in load_openml_benchmark
+import sys
+sys.path.insert(0, str(repo_root / "src"))
 
 # we'll record MSE and R^2 for each model
 
@@ -67,12 +70,26 @@ def to_numpy_arrays(d: dict):
 
 
 def main(args):
+    # Create loader with Preprocessor parameters
+    max_n_features = getattr(args, "max_n_features", 100) or 100
+    max_n_train_samples = getattr(args, "max_n_train_samples", 1000) or 1000  
+    max_n_test_samples = getattr(args, "max_n_test_samples", 250) or 250
+    
     loader = SimpleOpenMLLoader(
         data_dir=args.data_dir,
-        use_target_encoding=not args.no_target_encoding,
         verbose=not args.quiet,
         only_numeric=getattr(args, "only_numeric", False),
-        #transformation_type = "yeo_johnson"
+        # Preprocessor parameters
+        max_n_features=max_n_features,
+        max_n_train_samples=max_n_train_samples,
+        max_n_test_samples=max_n_test_samples,
+        negative_one_one_scaling=getattr(args, "negative_one_one_scaling", True),
+        standardize=getattr(args, "standardize", True),
+        yeo_johnson=getattr(args, "yeo_johnson", False),
+        remove_outliers=getattr(args, "remove_outliers", True),
+        outlier_quantile=getattr(args, "outlier_quantile", 0.95),
+        shuffle_samples=getattr(args, "shuffle_samples", True),
+        shuffle_features=getattr(args, "shuffle_features", True),
     )
 
     def _serializable(obj):
@@ -314,6 +331,17 @@ if __name__ == "__main__":
     N_TEST = 125
     PREFER_NUMERIC = True
     ONLY_NUMERIC = False
+    
+    # Preprocessor parameters
+    MAX_N_TRAIN_SAMPLES = 1000
+    MAX_N_TEST_SAMPLES = 250
+    NEGATIVE_ONE_ONE_SCALING = True
+    STANDARDIZE = True
+    YEO_JOHNSON = False
+    REMOVE_OUTLIERS = True
+    OUTLIER_QUANTILE = 0.95
+    SHUFFLE_SAMPLES = True
+    SHUFFLE_FEATURES = True
 
     args = SimpleNamespace(
         tasks=TASKS,
@@ -332,6 +360,16 @@ if __name__ == "__main__":
         n_test=int(N_TEST) if N_TEST else 0,
         prefer_numeric=PREFER_NUMERIC,
         only_numeric=ONLY_NUMERIC,
+        # Preprocessor parameters
+        max_n_train_samples=int(MAX_N_TRAIN_SAMPLES),
+        max_n_test_samples=int(MAX_N_TEST_SAMPLES),
+        negative_one_one_scaling=NEGATIVE_ONE_ONE_SCALING,
+        standardize=STANDARDIZE,
+        yeo_johnson=YEO_JOHNSON,
+        remove_outliers=REMOVE_OUTLIERS,
+        outlier_quantile=OUTLIER_QUANTILE,
+        shuffle_samples=SHUFFLE_SAMPLES,
+        shuffle_features=SHUFFLE_FEATURES,
     )
 
     main(args)
