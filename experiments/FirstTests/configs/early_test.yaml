@@ -44,7 +44,7 @@ scm_config:
   # ------------------------
   xgboost_prob:
     distribution: "uniform"
-    distribution_parameters: {low: 0.0, high: 0.1}
+    distribution_parameters: {low: 0.0, high: 0.2}
   mechanism_seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -148,9 +148,7 @@ preprocessing_config:
   train_fraction:
     value: 0.5  # 50% training, 50% test (default split)
   dropout_prob:
-    value: 0.2  # Feature dropout probability 
-  transformation_type:
-    value: "standardize"  # Normalization method (vs "yeo_johnson")
+    value: 0.3  # Feature dropout probability 
   shuffle_data:
     value: true  # Shuffle samples and features
   target_feature:
@@ -289,7 +287,7 @@ training_config:
   eval_every:
     value: 100  # Evaluate every N steps (0 to disable)
   eval_batches:
-    value: 200   # Number of batches to use for evaluation
+    value: 100   # Number of batches to use for evaluation
   eval_dataset_size:
     value: 1000000 # Size of evaluation dataset (separate from training)
     
