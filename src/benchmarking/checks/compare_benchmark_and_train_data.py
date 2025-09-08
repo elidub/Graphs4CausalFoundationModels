@@ -6,6 +6,9 @@ This script compares the data shapes and processing between:
 1. Training data from dataloader (MakePurelyObservationalDataset)
 2. Benchmark data from OpenML (SimpleOpenMLLoader + run_benchmark.py processing)
 
+UPDATED: Now uses the new Preprocessor-based architecture for consistent preprocessing
+across both training and benchmark data pipelines.
+
 It helps understand where zero-padding occurs and how shapes differ between the two data sources.
 """
 
@@ -27,6 +30,237 @@ from benchmarking.load_openml_benchmark import SimpleOpenMLLoader, DEFAULT_TABUL
 from training.training_utils import load_yaml_config, extract_config_values
 
 
+def compute_unified_statistics(datasets_info, data_source_name):
+    """
+    Compute unified statistics for either training or benchmark datasets.
+    
+    Args:
+        datasets_info: List of dataset dictionaries containing X_train, X_test, y_train, y_test, etc.
+        data_source_name: String name for the data source (e.g., "Training", "Benchmark")
+    
+    Returns:
+        Dictionary with comprehensive statistics
+    """
+    if not datasets_info:
+        return {}
+    
+    n_datasets = len(datasets_info)
+    
+    # Shape analysis
+    train_shapes = [d['X_train_shape'] for d in datasets_info]
+    test_shapes = [d['X_test_shape'] for d in datasets_info]
+    
+    max_features = max(shape[-1] for shape in train_shapes)
+    min_features = min(shape[-1] for shape in train_shapes)
+    avg_features = np.mean([shape[-1] for shape in train_shapes])
+    
+    # Global feature analysis - check which features are active vs zero-padded
+    feature_analysis = {}
+    for feat_idx in range(max_features):
+        active_count = 0
+        zero_padded_count = 0
+        
+        for d in datasets_info:
+            if 'feature_statistics' in d and feat_idx in d['feature_statistics']:
+                feat_stats = d['feature_statistics'][feat_idx]
+                if feat_stats['is_zero_padded']:
+                    zero_padded_count += 1
+                else:
+                    active_count += 1
+            elif feat_idx < d['X_train_shape'][-1]:
+                # Fallback: assume not zero-padded if we don't have specific info
+                active_count += 1
+        
+        total_with_feature = active_count + zero_padded_count
+        if total_with_feature > 0:
+            zero_padded_percentage = (zero_padded_count / total_with_feature) * 100
+            feature_analysis[feat_idx] = {
+                'active_count': active_count,
+                'zero_padded_count': zero_padded_count,
+                'zero_padded_percentage': zero_padded_percentage,
+                'total_datasets_with_feature': total_with_feature
+            }
+    
+    # Classify features
+    active_features = [idx for idx, stats in feature_analysis.items() 
+                      if stats['zero_padded_percentage'] <= 50]
+    zero_padded_features = [idx for idx, stats in feature_analysis.items() 
+                           if stats['zero_padded_percentage'] > 50]
+    
+    # Global data statistics
+    all_train_means = [d.get('X_train_mean', d.get('X_train_stats', {}).get('mean', 0)) for d in datasets_info]
+    all_test_means = [d.get('X_test_mean', d.get('X_test_stats', {}).get('mean', 0)) for d in datasets_info]
+    all_train_stds = [d.get('X_train_std', d.get('X_train_stats', {}).get('std', 0)) for d in datasets_info]
+    all_test_stds = [d.get('X_test_std', d.get('X_test_stats', {}).get('std', 0)) for d in datasets_info]
+    
+    all_train_mins = [d.get('X_train_min', d.get('X_train_stats', {}).get('min', 0)) for d in datasets_info]
+    all_train_maxs = [d.get('X_train_max', d.get('X_train_stats', {}).get('max', 0)) for d in datasets_info]
+    all_test_mins = [d.get('X_test_min', d.get('X_test_stats', {}).get('min', 0)) for d in datasets_info]
+    all_test_maxs = [d.get('X_test_max', d.get('X_test_stats', {}).get('max', 0)) for d in datasets_info]
+    
+    # Zero-padding statistics
+    zero_cols_train = [d.get('zero_cols_train', 0) for d in datasets_info]
+    zero_cols_test = [d.get('zero_cols_test', 0) for d in datasets_info]
+    
+    # Processing statistics (for benchmark data)
+    datasets_with_padding = sum(1 for d in datasets_info if d.get('applied_padding', False))
+    datasets_with_truncation = sum(1 for d in datasets_info if d.get('applied_truncation', False))
+    datasets_with_feature_selection = sum(1 for d in datasets_info if d.get('applied_feature_selection', False))
+    
+    # Per-feature detailed statistics (for active features)
+    feature_detailed_stats = {}
+    for feat_idx in active_features[:10]:  # Show stats for first 10 active features
+        train_values = []
+        test_values = []
+        
+        for d in datasets_info:
+            if 'feature_statistics' in d and feat_idx in d['feature_statistics']:
+                feat_stats = d['feature_statistics'][feat_idx]
+                if not feat_stats['is_zero_padded']:
+                    train_values.append(feat_stats['train_mean'])
+                    test_values.append(feat_stats['test_mean'])
+        
+        if train_values and test_values:
+            feature_detailed_stats[feat_idx] = {
+                'train_mean_avg': np.mean(train_values),
+                'train_mean_std': np.std(train_values),
+                'test_mean_avg': np.mean(test_values),
+                'test_mean_std': np.std(test_values),
+                'n_datasets': len(train_values)
+            }
+    
+    return {
+        'data_source': data_source_name,
+        'n_datasets': n_datasets,
+        'shape_stats': {
+            'min_features': min_features,
+            'max_features': max_features,
+            'avg_features': avg_features,
+            'train_shapes': train_shapes[:5],  # Show first 5 shapes
+            'test_shapes': test_shapes[:5]
+        },
+        'feature_classification': {
+            'n_active_features': len(active_features),
+            'n_zero_padded_features': len(zero_padded_features),
+            'active_features': active_features,
+            'zero_padded_features': zero_padded_features,
+            'feature_analysis': feature_analysis
+        },
+        'global_data_stats': {
+            'train_means': {
+                'avg': np.mean(all_train_means) if all_train_means else 0,
+                'std': np.std(all_train_means) if all_train_means else 0,
+                'min': np.min(all_train_means) if all_train_means else 0,
+                'max': np.max(all_train_means) if all_train_means else 0
+            },
+            'test_means': {
+                'avg': np.mean(all_test_means) if all_test_means else 0,
+                'std': np.std(all_test_means) if all_test_means else 0,
+                'min': np.min(all_test_means) if all_test_means else 0,
+                'max': np.max(all_test_means) if all_test_means else 0
+            },
+            'train_stds': {
+                'avg': np.mean(all_train_stds) if all_train_stds else 0,
+                'std': np.std(all_train_stds) if all_train_stds else 0,
+                'min': np.min(all_train_stds) if all_train_stds else 0,
+                'max': np.max(all_train_stds) if all_train_stds else 0
+            },
+            'test_stds': {
+                'avg': np.mean(all_test_stds) if all_test_stds else 0,
+                'std': np.std(all_test_stds) if all_test_stds else 0,
+                'min': np.min(all_test_stds) if all_test_stds else 0,
+                'max': np.max(all_test_stds) if all_test_stds else 0
+            },
+            'global_ranges': {
+                'train_range': [np.min(all_train_mins) if all_train_mins else 0, 
+                               np.max(all_train_maxs) if all_train_maxs else 0],
+                'test_range': [np.min(all_test_mins) if all_test_mins else 0, 
+                              np.max(all_test_maxs) if all_test_maxs else 0]
+            }
+        },
+        'zero_padding_stats': {
+            'zero_cols_train': {
+                'avg': np.mean(zero_cols_train) if zero_cols_train else 0,
+                'std': np.std(zero_cols_train) if zero_cols_train else 0,
+                'min': np.min(zero_cols_train) if zero_cols_train else 0,
+                'max': np.max(zero_cols_train) if zero_cols_train else 0
+            },
+            'zero_cols_test': {
+                'avg': np.mean(zero_cols_test) if zero_cols_test else 0,
+                'std': np.std(zero_cols_test) if zero_cols_test else 0,
+                'min': np.min(zero_cols_test) if zero_cols_test else 0,
+                'max': np.max(zero_cols_test) if zero_cols_test else 0
+            }
+        },
+        'processing_stats': {
+            'datasets_with_padding': datasets_with_padding,
+            'datasets_with_truncation': datasets_with_truncation,
+            'datasets_with_feature_selection': datasets_with_feature_selection,
+            'padding_percentage': (datasets_with_padding / n_datasets * 100) if n_datasets > 0 else 0,
+            'truncation_percentage': (datasets_with_truncation / n_datasets * 100) if n_datasets > 0 else 0,
+            'feature_selection_percentage': (datasets_with_feature_selection / n_datasets * 100) if n_datasets > 0 else 0
+        },
+        'feature_detailed_stats': feature_detailed_stats
+    }
+
+
+def print_unified_statistics(stats):
+    """Print unified statistics in a clear format."""
+    data_source = stats['data_source']
+    
+    print("=" * 60)
+    print(f"UNIFIED STATISTICS: {data_source.upper()} DATA")
+    print("=" * 60)
+    
+    # Dataset and shape information
+    print(f"Dataset Information:")
+    print(f"  Total datasets analyzed: {stats['n_datasets']}")
+    print(f"  Feature count range: {stats['shape_stats']['min_features']} - {stats['shape_stats']['max_features']}")
+    print(f"  Average features per dataset: {stats['shape_stats']['avg_features']:.1f}")
+    
+    if stats['shape_stats']['train_shapes']:
+        print(f"  Example shapes (first 5):")
+        for i, (train_shape, test_shape) in enumerate(zip(stats['shape_stats']['train_shapes'], 
+                                                           stats['shape_stats']['test_shapes'])):
+            print(f"    Dataset {i}: train={train_shape}, test={test_shape}")
+    
+    # Feature classification
+    fc = stats['feature_classification']
+    print(f"\nFeature Classification:")
+    print(f"  Active features (non-zero in >50% datasets): {fc['n_active_features']} {fc['active_features']}")
+    print(f"  Zero-padded features (zero in >50% datasets): {fc['n_zero_padded_features']} {fc['zero_padded_features']}")
+    
+    # Global data statistics
+    gds = stats['global_data_stats']
+    print(f"\nGlobal Data Statistics:")
+    print(f"  Train data means: avg={gds['train_means']['avg']:.4f}±{gds['train_means']['std']:.4f}, range=[{gds['train_means']['min']:.4f}, {gds['train_means']['max']:.4f}]")
+    print(f"  Test data means: avg={gds['test_means']['avg']:.4f}±{gds['test_means']['std']:.4f}, range=[{gds['test_means']['min']:.4f}, {gds['test_means']['max']:.4f}]")
+    print(f"  Train data stds: avg={gds['train_stds']['avg']:.4f}±{gds['train_stds']['std']:.4f}, range=[{gds['train_stds']['min']:.4f}, {gds['train_stds']['max']:.4f}]")
+    print(f"  Test data stds: avg={gds['test_stds']['avg']:.4f}±{gds['test_stds']['std']:.4f}, range=[{gds['test_stds']['min']:.4f}, {gds['test_stds']['max']:.4f}]")
+    print(f"  Global train range: [{gds['global_ranges']['train_range'][0]:.3f}, {gds['global_ranges']['train_range'][1]:.3f}]")
+    print(f"  Global test range: [{gds['global_ranges']['test_range'][0]:.3f}, {gds['global_ranges']['test_range'][1]:.3f}]")
+    
+    # Zero-padding statistics
+    zps = stats['zero_padding_stats']
+    print(f"\nZero-Padding Statistics:")
+    print(f"  Zero columns (train): avg={zps['zero_cols_train']['avg']:.1f}±{zps['zero_cols_train']['std']:.1f}, range=[{zps['zero_cols_train']['min']:.0f}, {zps['zero_cols_train']['max']:.0f}]")
+    print(f"  Zero columns (test): avg={zps['zero_cols_test']['avg']:.1f}±{zps['zero_cols_test']['std']:.1f}, range=[{zps['zero_cols_test']['min']:.0f}, {zps['zero_cols_test']['max']:.0f}]")
+    
+    # Processing statistics (mainly for benchmark data)
+    ps = stats['processing_stats']
+    if ps['datasets_with_padding'] > 0 or ps['datasets_with_truncation'] > 0 or ps['datasets_with_feature_selection'] > 0:
+        print(f"\nProcessing Statistics:")
+        print(f"  Datasets with padding: {ps['datasets_with_padding']}/{stats['n_datasets']} ({ps['padding_percentage']:.1f}%)")
+        print(f"  Datasets with truncation: {ps['datasets_with_truncation']}/{stats['n_datasets']} ({ps['truncation_percentage']:.1f}%)")
+        print(f"  Datasets with feature selection: {ps['datasets_with_feature_selection']}/{stats['n_datasets']} ({ps['feature_selection_percentage']:.1f}%)")
+    
+    # Per-feature detailed statistics (for active features)
+    if stats['feature_detailed_stats']:
+        print(f"\nPer-Feature Statistics (active features, first 5):")
+        for feat_idx, feat_stats in list(stats['feature_detailed_stats'].items())[:5]:
+            print(f"  Feature {feat_idx}: train_mean={feat_stats['train_mean_avg']:.4f}±{feat_stats['train_mean_std']:.4f}, test_mean={feat_stats['test_mean_avg']:.4f}±{feat_stats['test_mean_std']:.4f} (n={feat_stats['n_datasets']})")
+
+
 def analyze_dataloader_batch(dataloader, n_batches=3):
     """Analyze training dataloader batch structure and shapes."""
     print("=" * 60)
@@ -34,6 +268,7 @@ def analyze_dataloader_batch(dataloader, n_batches=3):
     print("=" * 60)
     
     batch_info = []
+    all_datasets_info = []  # Collect all individual dataset info for unified analysis
     
     for i, batch in enumerate(dataloader):
         if i >= n_batches:
@@ -155,6 +390,29 @@ def analyze_dataloader_batch(dataloader, n_batches=3):
                 }
             }
             dataset_analyses.append(dataset_analysis)
+            
+            # Create simplified dataset info for unified analysis
+            dataset_info = {
+                'X_train_shape': X_train_single.shape,
+                'X_test_shape': X_test_single.shape,
+                'y_train_shape': y_train_single.shape,
+                'y_test_shape': y_test_single.shape,
+                'zero_cols_train': int(np.sum(zero_cols_train)),
+                'zero_cols_test': int(np.sum(zero_cols_test)),
+                'feature_statistics': feature_statistics,
+                'X_train_mean': float(np.mean(X_train_single)),
+                'X_train_std': float(np.std(X_train_single)),
+                'X_train_min': float(np.min(X_train_single)),
+                'X_train_max': float(np.max(X_train_single)),
+                'X_test_mean': float(np.mean(X_test_single)),
+                'X_test_std': float(np.std(X_test_single)),
+                'X_test_min': float(np.min(X_test_single)),
+                'X_test_max': float(np.max(X_test_single)),
+                'applied_padding': bool(np.any(zero_cols_train) or np.any(zero_cols_test)),
+                'applied_truncation': False,
+                'applied_feature_selection': False
+            }
+            all_datasets_info.append(dataset_info)
         
         # For backward compatibility, also analyze flattened batch data
         X_train_flat = X_train_np.reshape(-1, n_features)
@@ -274,26 +532,31 @@ def analyze_dataloader_batch(dataloader, n_batches=3):
         'feature_level_statistics': aggregated_feature_stats
     }
     
+    # Compute and print unified statistics
+    training_unified_stats = compute_unified_statistics(all_datasets_info, "Training")
+    print_unified_statistics(training_unified_stats)
+    
     return {
         'batches': batch_info,
         'global_statistics': global_training_stats,
-        'n_batches_analyzed': len(batch_info)
+        'n_batches_analyzed': len(batch_info),
+        'unified_statistics': training_unified_stats
     }
 
 
 def analyze_benchmark_data(loader, task_ids, benchmark_args):
-    """Analyze benchmark data shapes and processing."""
+    """Analyze benchmark data shapes and processing using new Preprocessor-based approach."""
     print("=" * 60)
     print("ANALYZING BENCHMARK DATA")
     print("=" * 60)
     
-    # Create benchmark data using the same logic as run_benchmark.py
+    # Create benchmark data using the new Preprocessor-based SimpleOpenMLLoader
     subsample_mode = bool(getattr(benchmark_args, "n_train", 0) and 
                          getattr(benchmark_args, "n_test", 0) and 
                          getattr(benchmark_args, "n_features", 0))
     
     if subsample_mode:
-        print(f"Using subsampled mode:")
+        print(f"Using subsampled mode with new Preprocessor:")
         print(f"  n_features: {benchmark_args.n_features}")
         print(f"  n_train: {benchmark_args.n_train}")
         print(f"  n_test: {benchmark_args.n_test}")
@@ -308,10 +571,11 @@ def analyze_benchmark_data(loader, task_ids, benchmark_args):
             save=False,
         )
     else:
-        print("Using normal mode (full datasets)")
+        print("Using normal mode (full datasets) with new Preprocessor")
         data_map = loader.load_tasks(task_ids)
     
     benchmark_info = []
+    benchmark_datasets_info = []  # For unified analysis
     
     for tid in task_ids:
         if tid not in data_map or not data_map.get(tid):
@@ -320,7 +584,7 @@ def analyze_benchmark_data(loader, task_ids, benchmark_args):
             
         d = data_map[tid]
         
-        # Convert to numpy arrays (same as run_benchmark.py)
+        # Data is now already processed through Preprocessor - convert to numpy for analysis
         X_train = d["X_train"]
         X_test = d["X_test"]
         y_train = d["y_train"]
@@ -339,58 +603,24 @@ def analyze_benchmark_data(loader, task_ids, benchmark_args):
         y_train = np.asarray(y_train).reshape(-1)
         y_test = np.asarray(y_test).reshape(-1)
         
-        print(f"\nTask {tid} (before feature processing):")
+        print(f"\nTask {tid} (processed by Preprocessor):")
         print(f"  X_train: {X_train.shape} ({X_train.dtype})")
         print(f"  y_train: {y_train.shape} ({y_train.dtype})")
         print(f"  X_test:  {X_test.shape} ({X_test.dtype})")
         print(f"  y_test:  {y_test.shape} ({y_test.dtype})")
         
-        # Apply the same feature processing as run_benchmark.py
-        requested_n = int(getattr(benchmark_args, "n_features", 0) or 0)
-        max_n = int(getattr(benchmark_args, "max_n_features", 0) or 0)
-
-        original_n_features = X_train.shape[1]
+        # Analyze the preprocessed data
+        original_n_features = d.get('original_n_features', X_train.shape[1])
         
-        # Feature selection step
-        if requested_n and requested_n > 0:
-            if X_train.shape[1] >= requested_n:
-                X_train = X_train[:, :requested_n]
-                X_test = X_test[:, :requested_n]
-                print(f"  Feature selection: {original_n_features} -> {X_train.shape[1]}")
-            else:
-                print(f"  Requested n_features={requested_n} > available {X_train.shape[1]}; using available")
-
-        # Padding/truncation step
-        applied_padding = False
-        applied_truncation = False
-        if max_n and max_n > 0:
-            cur_n = X_train.shape[1]
-            if cur_n > max_n:
-                # truncate to max_n
-                X_train = X_train[:, :max_n]
-                X_test = X_test[:, :max_n]
-                applied_truncation = True
-                print(f"  Truncation: {cur_n} -> {max_n} features")
-            elif cur_n < max_n:
-                # pad with zeros on the right
-                pad_train = np.zeros((X_train.shape[0], max_n - cur_n), dtype=X_train.dtype)
-                pad_test = np.zeros((X_test.shape[0], max_n - cur_n), dtype=X_test.dtype)
-                X_train = np.concatenate([X_train, pad_train], axis=1)
-                X_test = np.concatenate([X_test, pad_test], axis=1)
-                applied_padding = True
-                print(f"  Zero-padding: {cur_n} -> {max_n} features")
-        
-        print(f"  Final shapes after processing:")
-        print(f"    X_train: {X_train.shape}")
-        print(f"    X_test:  {X_test.shape}")
-        
-        # Check for zero columns after processing
+        # Check for zero columns (indicates padding)
         zero_cols_train = np.all(X_train == 0, axis=0)
         zero_cols_test = np.all(X_test == 0, axis=0)
         
-        # Analyze padding pattern
+        # Detect padding pattern
         padding_start_train = None
         padding_start_test = None
+        applied_padding = np.any(zero_cols_train)
+        
         if applied_padding:
             # Find where padding starts (first zero column from the right)
             for i in range(X_train.shape[1] - 1, -1, -1):
@@ -402,6 +632,43 @@ def analyze_benchmark_data(loader, task_ids, benchmark_args):
                     padding_start_test = i + 1
                     break
         
+        # Determine if feature selection or truncation was applied
+        requested_n = int(getattr(benchmark_args, "n_features", 0) or 0)
+        max_n = int(getattr(benchmark_args, "max_n_features", 0) or 0)
+        
+        applied_feature_selection = requested_n > 0 and original_n_features > requested_n
+        applied_truncation = max_n > 0 and original_n_features > max_n
+        
+        print(f"  Original features: {original_n_features}")
+        print(f"  Final features: {X_train.shape[1]}")
+        if applied_feature_selection:
+            print(f"  Feature selection applied: {original_n_features} -> {requested_n}")
+        if applied_padding:
+            print(f"  Zero-padding applied: padding starts at column {padding_start_train}")
+        if applied_truncation:
+            print(f"  Truncation applied: limited to {max_n} features")
+        
+        # Add per-feature statistics for unified analysis
+        feature_statistics = {}
+        n_features = X_train.shape[1]
+        for feat_idx in range(n_features):
+            train_feature = X_train[:, feat_idx]
+            test_feature = X_test[:, feat_idx]
+            
+            feature_statistics[feat_idx] = {
+                'train_mean': float(np.mean(train_feature)),
+                'train_std': float(np.std(train_feature)),
+                'train_min': float(np.min(train_feature)),
+                'train_max': float(np.max(train_feature)),
+                'test_mean': float(np.mean(test_feature)),
+                'test_std': float(np.std(test_feature)),
+                'test_min': float(np.min(test_feature)),
+                'test_max': float(np.max(test_feature)),
+                'is_zero_padded': bool(zero_cols_train[feat_idx] or zero_cols_test[feat_idx]),
+                'train_n_zeros': int(np.sum(train_feature == 0)),
+                'test_n_zeros': int(np.sum(test_feature == 0))
+            }
+        
         task_data = {
             'task_id': tid,
             'dataset_id': d.get('dataset_id', 'unknown'),
@@ -411,7 +678,7 @@ def analyze_benchmark_data(loader, task_ids, benchmark_args):
             'final_y_train_shape': tuple(y_train.shape),
             'final_X_test_shape': tuple(X_test.shape),
             'final_y_test_shape': tuple(y_test.shape),
-            'applied_feature_selection': requested_n > 0 and original_n_features > requested_n,
+            'applied_feature_selection': applied_feature_selection,
             'applied_padding': applied_padding,
             'applied_truncation': applied_truncation,
             'zero_cols_train': int(np.sum(zero_cols_train)),
@@ -430,9 +697,34 @@ def analyze_benchmark_data(loader, task_ids, benchmark_args):
             'X_test_std': float(np.std(X_test)),
             'X_test_min': float(np.min(X_test)),
             'X_test_max': float(np.max(X_test)),
+            'preprocessing_applied': d.get('preprocessing_applied', True),
+            'feature_statistics': feature_statistics,  # Add per-feature stats
         }
         
         benchmark_info.append(task_data)
+        
+        # Create simplified dataset info for unified analysis
+        simplified_data = {
+            'X_train_shape': tuple(X_train.shape),
+            'X_test_shape': tuple(X_test.shape),
+            'y_train_shape': tuple(y_train.shape),
+            'y_test_shape': tuple(y_test.shape),
+            'zero_cols_train': task_data['zero_cols_train'],
+            'zero_cols_test': task_data['zero_cols_test'],
+            'feature_statistics': feature_statistics,
+            'X_train_mean': task_data['X_train_mean'],
+            'X_train_std': task_data['X_train_std'],
+            'X_train_min': task_data['X_train_min'],
+            'X_train_max': task_data['X_train_max'],
+            'X_test_mean': task_data['X_test_mean'],
+            'X_test_std': task_data['X_test_std'],
+            'X_test_min': task_data['X_test_min'],
+            'X_test_max': task_data['X_test_max'],
+            'applied_padding': applied_padding,
+            'applied_truncation': applied_truncation,
+            'applied_feature_selection': applied_feature_selection
+        }
+        benchmark_datasets_info.append(simplified_data)
         
         if applied_padding:
             print(f"  Zero-padding details:")
@@ -441,6 +733,7 @@ def analyze_benchmark_data(loader, task_ids, benchmark_args):
         
         print(f"  Data range (train): [{np.min(X_train):.3f}, {np.max(X_train):.3f}]")
         print(f"  Data range (test): [{np.min(X_test):.3f}, {np.max(X_test):.3f}]")
+        print(f"  Preprocessor applied: {task_data['preprocessing_applied']}")
     
     # Compute global statistics across all benchmark datasets
     print("\n" + "=" * 60)
@@ -567,10 +860,15 @@ def analyze_benchmark_data(loader, task_ids, benchmark_args):
             }
         }
         
+        # Compute and print unified statistics
+        benchmark_unified_stats = compute_unified_statistics(benchmark_datasets_info, "Benchmark")
+        print_unified_statistics(benchmark_unified_stats)
+        
         return {
             'datasets': benchmark_info,
             'global_statistics': global_benchmark_stats,
-            'n_datasets_analyzed': total_datasets
+            'n_datasets_analyzed': total_datasets,
+            'unified_statistics': benchmark_unified_stats
         }
     
     return {
@@ -579,6 +877,110 @@ def analyze_benchmark_data(loader, task_ids, benchmark_args):
         'n_datasets_analyzed': 0
     }
 
+
+def compare_unified_statistics(training_stats, benchmark_stats):
+    """Compare training and benchmark data using unified statistics."""
+    print("=" * 80)
+    print("UNIFIED STATISTICS COMPARISON")
+    print("=" * 80)
+    
+    if not training_stats or not benchmark_stats:
+        print("Missing statistics for comparison")
+        return
+    
+    print(f"SIDE-BY-SIDE COMPARISON:")
+    print(f"{'Metric':<40} {'Training':<25} {'Benchmark':<25}")
+    print("=" * 90)
+    
+    # Dataset counts
+    print(f"{'Total datasets':<40} {training_stats['n_datasets']:<25} {benchmark_stats['n_datasets']:<25}")
+    
+    # Shape statistics
+    ts = training_stats['shape_stats']
+    bs = benchmark_stats['shape_stats']
+    print(f"{'Feature count range':<40} {ts['min_features']}-{ts['max_features']:<25} {bs['min_features']}-{bs['max_features']:<25}")
+    print(f"{'Average features':<40} {ts['avg_features']:.1f:<25} {bs['avg_features']:.1f:<25}")
+    
+    # Feature classification
+    tfc = training_stats['feature_classification']
+    bfc = benchmark_stats['feature_classification']
+    print(f"{'Active features':<40} {tfc['n_active_features']:<25} {bfc['n_active_features']:<25}")
+    print(f"{'Zero-padded features':<40} {tfc['n_zero_padded_features']:<25} {bfc['n_zero_padded_features']:<25}")
+    
+    # Global data statistics
+    tgds = training_stats['global_data_stats']
+    bgds = benchmark_stats['global_data_stats']
+    print(f"\nDATA VALUE STATISTICS:")
+    print(f"{'Metric':<40} {'Training':<25} {'Benchmark':<25}")
+    print("-" * 90)
+    print(f"{'Train means (avg±std)':<40} {tgds['train_means']['avg']:.4f}±{tgds['train_means']['std']:.4f:<20} {bgds['train_means']['avg']:.4f}±{bgds['train_means']['std']:.4f:<20}")
+    print(f"{'Test means (avg±std)':<40} {tgds['test_means']['avg']:.4f}±{tgds['test_means']['std']:.4f:<20} {bgds['test_means']['avg']:.4f}±{bgds['test_means']['std']:.4f:<20}")
+    print(f"{'Train stds (avg±std)':<40} {tgds['train_stds']['avg']:.4f}±{tgds['train_stds']['std']:.4f:<20} {bgds['train_stds']['avg']:.4f}±{bgds['train_stds']['std']:.4f:<20}")
+    print(f"{'Test stds (avg±std)':<40} {tgds['test_stds']['avg']:.4f}±{tgds['test_stds']['std']:.4f:<20} {bgds['test_stds']['avg']:.4f}±{bgds['test_stds']['std']:.4f:<20}")
+    
+    # Data ranges
+    trange = tgds['global_ranges']
+    brange = bgds['global_ranges']
+    print(f"{'Global train range':<40} [{trange['train_range'][0]:.3f}, {trange['train_range'][1]:.3f}]<20 [{brange['train_range'][0]:.3f}, {brange['train_range'][1]:.3f}]<20")
+    print(f"{'Global test range':<40} [{trange['test_range'][0]:.3f}, {trange['test_range'][1]:.3f}]<20 [{brange['test_range'][0]:.3f}, {brange['test_range'][1]:.3f}]<20")
+    
+    # Zero-padding statistics
+    tzps = training_stats['zero_padding_stats']
+    bzps = benchmark_stats['zero_padding_stats']
+    print(f"\nZERO-PADDING STATISTICS:")
+    print(f"{'Metric':<40} {'Training':<25} {'Benchmark':<25}")
+    print("-" * 90)
+    print(f"{'Zero cols train (avg±std)':<40} {tzps['zero_cols_train']['avg']:.1f}±{tzps['zero_cols_train']['std']:.1f:<20} {bzps['zero_cols_train']['avg']:.1f}±{bzps['zero_cols_train']['std']:.1f:<20}")
+    print(f"{'Zero cols test (avg±std)':<40} {tzps['zero_cols_test']['avg']:.1f}±{tzps['zero_cols_test']['std']:.1f:<20} {bzps['zero_cols_test']['avg']:.1f}±{bzps['zero_cols_test']['std']:.1f:<20}")
+    
+    # Processing statistics
+    tps = training_stats['processing_stats']
+    bps = benchmark_stats['processing_stats']
+    print(f"\nPROCESSING STATISTICS:")
+    print(f"{'Metric':<40} {'Training':<25} {'Benchmark':<25}")
+    print("-" * 90)
+    print(f"{'Datasets with padding (%)':<40} {tps['padding_percentage']:.1f}%<22 {bps['padding_percentage']:.1f}%<22")
+    print(f"{'Datasets with truncation (%)':<40} {tps['truncation_percentage']:.1f}%<22 {bps['truncation_percentage']:.1f}%<22")
+    print(f"{'Datasets with feat. selection (%)':<40} {tps['feature_selection_percentage']:.1f}%<22 {bps['feature_selection_percentage']:.1f}%<22")
+    
+    # Key differences analysis
+    print(f"\nKEY DIFFERENCES ANALYSIS:")
+    print("-" * 50)
+    
+    # Feature count consistency
+    feature_count_match = (ts['min_features'] == bs['min_features'] and 
+                          ts['max_features'] == bs['max_features'])
+    print(f"Feature count consistency: {'✓ MATCH' if feature_count_match else '✗ MISMATCH'}")
+    if not feature_count_match:
+        print(f"  Training: {ts['min_features']}-{ts['max_features']} features")
+        print(f"  Benchmark: {bs['min_features']}-{bs['max_features']} features")
+    
+    # Active feature consistency
+    active_features_match = tfc['n_active_features'] == bfc['n_active_features']
+    print(f"Active features consistency: {'✓ MATCH' if active_features_match else '✗ MISMATCH'}")
+    if not active_features_match:
+        print(f"  Training: {tfc['n_active_features']} active features")
+        print(f"  Benchmark: {bfc['n_active_features']} active features")
+    
+    # Data range consistency (check if both use similar scaling)
+    train_range_similar = (abs(trange['train_range'][0] - brange['train_range'][0]) < 0.1 and 
+                          abs(trange['train_range'][1] - brange['train_range'][1]) < 0.1)
+    print(f"Data range consistency: {'✓ SIMILAR' if train_range_similar else '✗ DIFFERENT'}")
+    if not train_range_similar:
+        print(f"  Training range: [{trange['train_range'][0]:.3f}, {trange['train_range'][1]:.3f}]")
+        print(f"  Benchmark range: [{brange['train_range'][0]:.3f}, {brange['train_range'][1]:.3f}]")
+    
+    # Zero-padding consistency
+    padding_similar = (abs(tzps['zero_cols_train']['avg'] - bzps['zero_cols_train']['avg']) < 2)
+    print(f"Zero-padding consistency: {'✓ SIMILAR' if padding_similar else '✗ DIFFERENT'}")
+    if not padding_similar:
+        print(f"  Training avg zero cols: {tzps['zero_cols_train']['avg']:.1f}")
+        print(f"  Benchmark avg zero cols: {bzps['zero_cols_train']['avg']:.1f}")
+
+
+# ============
+# COMPARISON
+# ============
 
 def compare_data_structures(dataloader_info, benchmark_info, config):
     """Compare dataloader and benchmark data structures."""
@@ -733,7 +1135,7 @@ def main():
     BENCHMARK_N_TRAIN = 125
     BENCHMARK_N_TEST = 125
     BENCHMARK_PREFER_NUMERIC = True
-    BENCHMARK_NO_TARGET_ENCODING = False
+    BENCHMARK_LEAVE_ONE_OUT_ENCODING = True
     
     # Analysis parameters
     DATALOADER_BATCHES_TO_ANALYZE = 1
@@ -806,7 +1208,7 @@ def main():
             tasks=BENCHMARK_TASKS,
             max_tasks=BENCHMARK_MAX_TASKS,
             data_dir=BENCHMARK_DATA_DIR,
-            no_target_encoding=BENCHMARK_NO_TARGET_ENCODING,
+            leave_one_out_encoding=BENCHMARK_LEAVE_ONE_OUT_ENCODING,
             quiet=False,
             n_features=BENCHMARK_N_FEATURES,
             max_n_features=BENCHMARK_MAX_N_FEATURES,
@@ -815,11 +1217,21 @@ def main():
             prefer_numeric=BENCHMARK_PREFER_NUMERIC,
         )
         
-        # Create loader
+        # Create loader with new Preprocessor parameters
         loader = SimpleOpenMLLoader(
             data_dir=benchmark_args.data_dir,
-            use_target_encoding=not benchmark_args.no_target_encoding,
             verbose=not benchmark_args.quiet,
+            max_n_features=benchmark_args.max_n_features,
+            max_n_train_samples=benchmark_args.n_train,
+            max_n_test_samples=benchmark_args.n_test,
+            # Use standardization (matching typical benchmark settings)
+            standardize=True,
+            yeo_johnson=False,
+            negative_one_one_scaling=False,
+            remove_outliers=True,
+            outlier_quantile=0.95,
+            shuffle_samples=True,
+            shuffle_features=True,
         )
         
         # Get task list
@@ -839,6 +1251,14 @@ def main():
     # ============
     # COMPARISON
     # ============
+    
+    # Unified comparison using standardized statistics
+    if (dataloader_info and 'unified_statistics' in dataloader_info and 
+        benchmark_info and 'unified_statistics' in benchmark_info):
+        compare_unified_statistics(
+            dataloader_info['unified_statistics'], 
+            benchmark_info['unified_statistics']
+        )
     
     comparison_results = compare_data_structures(dataloader_info, benchmark_info, config)
     

@@ -102,14 +102,6 @@ class Preprocessor:
 
         B, N, F = X.shape
 
-        # If insufficient samples or features → return None (as requested)
-        if N < (self.n_train + self.n_test):
-            print(f"[Preprocessor] Warning: Need at least {self.n_train + self.n_test} samples, but got {N}. Returning None.")
-            return None
-        if F < self.n_features:
-            print(f"[Preprocessor] Warning: Need at least {self.n_features} features, but got {F}. Returning None.")
-            return None
-
         # Optionally shuffle samples and features (same permutation per batch for features)
         X, Y = self._maybe_shuffle(X, Y)
 

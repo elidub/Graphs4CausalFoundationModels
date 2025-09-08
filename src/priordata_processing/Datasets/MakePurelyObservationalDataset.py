@@ -34,14 +34,14 @@ class MakePurelyObservationalDataset:
     EXPECTED_PREPROCESSING_HYPERPARAMETERS = {
         "train_fraction": float,
         "dropout_prob": float,
-        "transformation_type": str,
-        "shuffle_data": bool,
+        "shuffle_data": bool,  # maps to shuffle_samples
         "target_feature": (int, type(None)),
         "random_seed": (int, type(None)),
         "negative_one_one_scaling": bool,
         "remove_outliers": bool,
         "outlier_quantile": float,
-        "yeo_johnson_grid": bool,
+        "yeo_johnson": bool,
+        "standardize": bool,
     }
     
     # Define expected dataset configuration parameters and their types
@@ -245,20 +245,34 @@ class MakePurelyObservationalDataset:
             scm_seed = (seed * 31 + 17) % (2**32)  # Derive a different seed for SCM
         scm_sampler = SCMSampler(self.scm_config, seed=scm_seed)
         
-        # Create BasicProcessing with explicit parameters
+        # Calculate train/test sample counts from train_fraction
+        max_samples = dataset_params["max_number_samples"]
+        train_fraction = preprocessing_params["train_fraction"]
+        n_train_samples = int(max_samples * train_fraction)
+        n_test_samples = max_samples - n_train_samples
+        
+        # For the dataset, we'll use the sampled number from the distribution
+        # but ensure it doesn't exceed our max counts
+        max_features = dataset_params["max_number_features"]
+        
+        # Create BasicProcessing with new parameter structure
         processor = BasicProcessing(
-            max_num_samples=dataset_params["max_number_samples"],
-            max_num_features=dataset_params["max_number_features"],
-            train_fraction=preprocessing_params["train_fraction"],
+            n_features=max_features,  # We'll use all available features initially
+            max_n_features=max_features,
+            n_train_samples=n_train_samples,
+            max_n_train_samples=n_train_samples,
+            n_test_samples=n_test_samples,
+            max_n_test_samples=n_test_samples,
             dropout_prob=preprocessing_params["dropout_prob"],
-            transformation_type=preprocessing_params["transformation_type"],
-            shuffle_data=preprocessing_params["shuffle_data"],
             target_feature=preprocessing_params["target_feature"],
             random_seed=preprocessing_params["random_seed"],
             negative_one_one_scaling=preprocessing_params["negative_one_one_scaling"],
+            standardize=preprocessing_params["standardize"],
+            yeo_johnson=preprocessing_params["yeo_johnson"],
             remove_outliers=preprocessing_params["remove_outliers"],
             outlier_quantile=preprocessing_params["outlier_quantile"],
-            yeo_johnson_grid=preprocessing_params["yeo_johnson_grid"]
+            shuffle_samples=preprocessing_params["shuffle_data"],
+            shuffle_features=True,  # Default from new BasicProcessing
         )
         
         # Get the number of samples per dataset distribution from config
@@ -451,7 +465,7 @@ if __name__ == "__main__":
     try:
         # Import the default configs
         from priors.causal_prior.ExampleConfigs.Basic_Configs import default_sampling_config
-        from priordata_processing.ExampleConfigs.BasicConfigs import default_dataset_config, default_preprocessing_config
+        from priordata_processing.Datasets.ExampleConfigs.BasicConfigs import default_dataset_config, default_preprocessing_config
         
         # Create the dataset factory
         factory = MakePurelyObservationalDataset(

@@ -146,12 +146,7 @@ class BasicProcessing:
 
         # Feature dropout
         kept_cols, dropped_original_indices = self._apply_feature_dropout(remaining_cols, feature_indices)
-        if len(kept_cols) < self.n_features:
-            # Not enough features after dropout to satisfy required n_features
-            if mode == 'safe':
-                raise ValueError(f"Not enough features after dropout: have {len(kept_cols)}, need {self.n_features}")
-            return {}, {"error": "insufficient_features_after_dropout"}
-
+        
         # Enforce requested n_features (truncate if surplus)
         kept_cols = kept_cols[: self.n_features]
 
@@ -161,15 +156,6 @@ class BasicProcessing:
         # Batch dimension for Preprocessor
         X_batch = X_no_target.unsqueeze(0)  # [1,N,F]
         Y_batch = Y_tensor.squeeze(-1).unsqueeze(0)  # [1,N]
-
-        # Validate sample requirements early
-        if original_num_samples < (self.n_train_samples + self.n_test_samples):
-            if mode == 'safe':
-                raise ValueError(
-                    f"Not enough samples: have {original_num_samples}, need {self.n_train_samples + self.n_test_samples}"
-                )
-            return {}, {"error": "insufficient_samples"}
-
         preproc = Preprocessor(
             n_features=self.n_features,
             max_n_features=self.max_n_features,
@@ -228,7 +214,7 @@ class BasicProcessing:
             'outlier_quantile': self.outlier_quantile,
             'y_clip_quantile': self.y_clip_quantile,
             'dropout_prob': self.dropout_prob,
-            'shuffle_samples': self.shuffle_samples,
+            'shuffle_samples': self.shuffle_samples,            
             'shuffle_features': self.shuffle_features,
             'random_seed': self.random_seed,
             'device': str(self.device) if self.device else None,
