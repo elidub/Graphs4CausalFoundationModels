@@ -39,9 +39,6 @@ sys.path.append(str(repo_root))
 from src.benchmarking.load_openml_benchmark import SimpleOpenMLLoader, DEFAULT_TABULAR_NUM_REG_TASKS
 from src.models.SimplePFN_sklearn import SimplePFNSklearn
 
-# Fix import path for Preprocessor in load_openml_benchmark
-import sys
-sys.path.insert(0, str(repo_root / "src"))
 
 # we'll record MSE and R^2 for each model
 
@@ -70,26 +67,11 @@ def to_numpy_arrays(d: dict):
 
 
 def main(args):
-    # Create loader with Preprocessor parameters
-    max_n_features = getattr(args, "max_n_features", 100) or 100
-    max_n_train_samples = getattr(args, "max_n_train_samples", 1000) or 1000  
-    max_n_test_samples = getattr(args, "max_n_test_samples", 250) or 250
-    
     loader = SimpleOpenMLLoader(
         data_dir=args.data_dir,
         verbose=not args.quiet,
         only_numeric=getattr(args, "only_numeric", False),
-        # Preprocessor parameters
-        max_n_features=max_n_features,
-        max_n_train_samples=max_n_train_samples,
-        max_n_test_samples=max_n_test_samples,
-        negative_one_one_scaling=getattr(args, "negative_one_one_scaling", True),
-        standardize=getattr(args, "standardize", True),
-        yeo_johnson=getattr(args, "yeo_johnson", False),
-        remove_outliers=getattr(args, "remove_outliers", True),
-        outlier_quantile=getattr(args, "outlier_quantile", 0.95),
-        shuffle_samples=getattr(args, "shuffle_samples", True),
-        shuffle_features=getattr(args, "shuffle_features", True),
+        #transformation_type = "yeo_johnson"
     )
 
     def _serializable(obj):
@@ -290,6 +272,41 @@ def main(args):
 
     df = pd.DataFrame(results)
     
+    # Calculate median and mean overall performance
+    median_mse = df[['mse_lr', 'mse_rf', 'mse_pfn']].median()
+    mean_mse = df[['mse_lr', 'mse_rf', 'mse_pfn']].mean()
+    median_r2 = df[['r2_lr', 'r2_rf', 'r2_pfn']].median()
+    mean_r2 = df[['r2_lr', 'r2_rf', 'r2_pfn']].mean()
+
+    # Append these statistics to the DataFrame
+    summary_stats = {
+        'process_id': 'summary',
+        'timestamp': datetime.now().isoformat(),
+        'checkpoint_path': 'N/A',
+        'task_id': 'N/A',
+        'dataset_shape': 'N/A',
+        'num_features': 'N/A',
+        'n_train': 'N/A',
+        'n_test': 'N/A',
+        'mse_lr': median_mse['mse_lr'],
+        'mse_rf': median_mse['mse_rf'],
+        'mse_pfn': median_mse['mse_pfn'],
+        'r2_lr': median_r2['r2_lr'],
+        'r2_rf': median_r2['r2_rf'],
+        'r2_pfn': median_r2['r2_pfn'],
+    }
+    df = pd.concat([df, pd.DataFrame([summary_stats])], ignore_index=True)
+
+    # Print the statistics
+    print("\nMedian MSE:")
+    print(median_mse)
+    print("\nMean MSE:")
+    print(mean_mse)
+    print("\nMedian R²:")
+    print(median_r2)
+    print("\nMean R²:")
+    print(mean_r2)
+
     # Generate output filename with process ID
     process_id = os.getpid()
     out_file_path = Path(args.output)
@@ -315,33 +332,22 @@ if __name__ == "__main__":
     MAX_TASKS = 20
     DATA_DIR = "data_cache"
     CONFIG = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/configs/early_test.yaml"
-    CHECKPOINT = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16419211/step_10000.pt"
+    CHECKPOINT = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16423778/final_model_with_bardist.pt"
     DEVICE = "cuda"
     OUTPUT = "benchmark_results.csv"  # Process ID will be automatically added: benchmark_results_pid12345.csv
-    NO_TARGET_ENCODING = True
+    NO_TARGET_ENCODING = False
     QUIET = False
 
     # Build a simple args object similar to argparse.Namespace
     from types import SimpleNamespace
 
     # Subsampling env vars (optional) - read from ALL_CAPS environment variables so submit files can set them
-    N_FEATURES = 10
+    N_FEATURES = 19
     MAX_N_FEATURES = 19
     N_TRAIN = 125
     N_TEST = 125
     PREFER_NUMERIC = True
-    ONLY_NUMERIC = False
-    
-    # Preprocessor parameters
-    MAX_N_TRAIN_SAMPLES = 1000
-    MAX_N_TEST_SAMPLES = 250
-    NEGATIVE_ONE_ONE_SCALING = True
-    STANDARDIZE = True
-    YEO_JOHNSON = False
-    REMOVE_OUTLIERS = True
-    OUTLIER_QUANTILE = 0.95
-    SHUFFLE_SAMPLES = True
-    SHUFFLE_FEATURES = True
+    ONLY_NUMERIC = True
 
     args = SimpleNamespace(
         tasks=TASKS,
@@ -360,16 +366,6 @@ if __name__ == "__main__":
         n_test=int(N_TEST) if N_TEST else 0,
         prefer_numeric=PREFER_NUMERIC,
         only_numeric=ONLY_NUMERIC,
-        # Preprocessor parameters
-        max_n_train_samples=int(MAX_N_TRAIN_SAMPLES),
-        max_n_test_samples=int(MAX_N_TEST_SAMPLES),
-        negative_one_one_scaling=NEGATIVE_ONE_ONE_SCALING,
-        standardize=STANDARDIZE,
-        yeo_johnson=YEO_JOHNSON,
-        remove_outliers=REMOVE_OUTLIERS,
-        outlier_quantile=OUTLIER_QUANTILE,
-        shuffle_samples=SHUFFLE_SAMPLES,
-        shuffle_features=SHUFFLE_FEATURES,
     )
 
     main(args)

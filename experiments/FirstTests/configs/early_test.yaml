@@ -6,7 +6,7 @@
 eval_enabled:
   value: true  # Whether to run evaluation during training
 eval_every:
-  value: 100  # Evaluate every N steps (0 to disable)
+  value: 200  # Evaluate every N steps (0 to disable)
 eval_batches:
   value: 50   # Number of batches to use for evaluation (from training data)the SimplePFN
 # training pipeline. It uses minimal settings based on default configurations
@@ -44,7 +44,7 @@ scm_config:
   # ------------------------
   xgboost_prob:
     distribution: "uniform"
-    distribution_parameters: {low: 0.0, high: 0.2}
+    distribution_parameters: {low: 0.0, high: 0.1}
   mechanism_seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -134,7 +134,7 @@ dataset_config:
   number_samples_per_dataset:
     # Distribution over actual samples per dataset (within max_number_samples)
     distribution: "uniform"
-    distribution_parameters: {low: 249, high: 250}  # Smaller range for testing
+    distribution_parameters: {low: 100, high: 250}  # Smaller range for testing
   seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -148,7 +148,7 @@ preprocessing_config:
   train_fraction:
     value: 0.5  # 50% training, 50% test (default split)
   dropout_prob:
-    value: 0.3  # Feature dropout probability 
+    value: 0.2  # Feature dropout probability   
   shuffle_data:
     value: true  # Shuffle samples and features
   target_feature:
@@ -158,12 +158,12 @@ preprocessing_config:
     distribution_parameters: {low: 0, high: 100000}
   negative_one_one_scaling:
     value: true  # Whether to scale features to [-1, 1] range
+  standardize:
+    value: true
   remove_outliers:
     value: true  # Whether to remove outliers during preprocessing
   outlier_quantile:
     value: 0.95  # Quantile threshold for outlier removal (when remove_outliers=true)
-  standardize:
-    value: true
   yeo_johnson:
     value: false  # Whether to use grid search for Yeo-Johnson parameters
 
@@ -178,15 +178,15 @@ model_config:
   d_model:
     value: 256      # Moderately sized embedding dimension
   depth:  
-    value: 6     # Number of transformer blocks
+    value: 8     # Number of transformer blocks
   heads_feat:
-    value: 4    # Attention heads for feature-wise attention
+    value: 8    # Attention heads for feature-wise attention
   heads_samp:
-    value: 4    # Attention heads for sample-wise attention
+    value: 8    # Attention heads for sample-wise attention
   dropout:
     value: 0.1     # Dropout probability for regularization
   hidden_mult:
-    value: 2       # MLP hidden layer multiplier (hidden_dim = hidden_mult * d_model)
+    value: 2      # MLP hidden layer multiplier (hidden_dim = hidden_mult * d_model)
   
   # Critical Parameter (automatically calculated)
   # ---------------------------------------------
@@ -200,7 +200,7 @@ model_config:
   use_bar_distribution:
     value: true  # Set to true to enable probabilistic outputs
   num_bars:
-    value: 500                 # Number of bars in the distribution (default: 11)
+    value: 1000                 # Number of bars in the distribution (default: 11)
   min_width:
     value: 1e-6             # Minimum width for bars (default: 1e-6)
   scale_floor:
@@ -227,7 +227,7 @@ training_config:
   weight_decay:
     value: 0.000001  # L2 regularization weight (from debug_config)
   max_steps:
-    value: 10000  # 
+    value: 40000  # 
   max_epochs:
     value: 1   # Single epoch (standard for synthetic data)
 # eta_min is no longer needed as we use min_lr_ratio directly
@@ -235,7 +235,7 @@ training_config:
   # Data Loading Parameters
   # -----------------------
   batch_size:
-    value: 64   # Reduce memory pressure for multiprocessing segfault testing
+    value: 32   # Reduce memory pressure for multiprocessing segfault testing
   num_workers:
     value: 128  # Match the number of requested CPUs
     
@@ -285,9 +285,9 @@ training_config:
   eval_enabled:
     value: true  # Whether to run evaluation during training
   eval_every:
-    value: 100  # Evaluate every N steps (0 to disable)
+    value: 300  # Evaluate every N steps (0 to disable)
   eval_batches:
-    value: 100   # Number of batches to use for evaluation
+    value: 200   # Number of batches to use for evaluation
   eval_dataset_size:
     value: 1000000 # Size of evaluation dataset (separate from training)
     
