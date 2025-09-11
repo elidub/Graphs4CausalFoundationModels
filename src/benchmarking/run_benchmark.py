@@ -363,7 +363,7 @@ if __name__ == "__main__":
     MAX_TASKS = 20
     DATA_DIR = "data_cache"
     CONFIG = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/configs/early_test.yaml"
-    CHECKPOINT = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16423778/final_model_with_bardist.pt"
+    CHECKPOINT = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16433178/final_model_with_bardist.pt"
     DEVICE = "cuda"
     OUTPUT = "benchmark_results.csv"  # Process ID will be automatically added: benchmark_results_pid12345.csv
     NO_TARGET_ENCODING = False
@@ -377,8 +377,8 @@ if __name__ == "__main__":
     MAX_N_FEATURES = 50
     N_TRAIN = 250
     MAX_N_TRAIN = 250
-    N_TEST = 1000
-    MAX_N_TEST =    
+    N_TEST = 250
+    MAX_N_TEST = 250
     PREFER_NUMERIC = False
     ONLY_NUMERIC = False
 

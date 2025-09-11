@@ -32,10 +32,10 @@ scm_config:
   # -------------------------
   num_nodes:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 3, high: 20}
+    distribution_parameters: {low: 3, high: 51}
   graph_edge_prob:
     distribution: "beta"
-    distribution_parameters: {alpha: 2, beta: 5}
+    distribution_parameters: {alpha: 2, beta: 8}
   graph_seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -132,11 +132,11 @@ dataset_config:
   max_number_test_samples:
     value: 125   # Maximum test samples per individual dataset (smaller for efficiency)
   max_number_features:
-    value: 19  # Much smaller feature space (vs default 101) for faster processing
+    value: 50  # Much smaller feature space (vs default 101) for faster processing
   number_train_samples_per_dataset:
     # Distribution over actual train samples per dataset (within max_number_train_samples)
     distribution: "uniform"
-    distribution_parameters: {low: 75, high: 125}  # Favor more training samples
+    distribution_parameters: {low: 100, high: 250}  # Favor more training samples
   number_test_samples_per_dataset:
     # Distribution over actual test samples per dataset (within max_number_test_samples)
     value: 125
@@ -181,7 +181,7 @@ model_config:
   d_model:
     value: 256      # Moderately sized embedding dimension
   depth:  
-    value: 8     # Number of transformer blocks
+    value: 6     # Number of transformer blocks
   heads_feat:
     value: 8    # Attention heads for feature-wise attention
   heads_samp:
@@ -189,12 +189,12 @@ model_config:
   dropout:
     value: 0.1     # Dropout probability for regularization
   hidden_mult:
-    value: 2      # MLP hidden layer multiplier (hidden_dim = hidden_mult * d_model)
+    value: 1      # MLP hidden layer multiplier (hidden_dim = hidden_mult * d_model)
   
   # Critical Parameter (automatically calculated)
   # ---------------------------------------------
   num_features:
-    value: 19  # MUST be max_number_features - 1 (10-1=9)
+    value: 50  # MUST be max_number_features - 1 (10-1=9)
               # One feature becomes the target, leaving 9 input features
   
   # BarDistribution Configuration (optional)
@@ -230,7 +230,7 @@ training_config:
   weight_decay:
     value: 0.000001  # L2 regularization weight (from debug_config)
   max_steps:
-    value: 40000  # 
+    value: 10000  # 
   max_epochs:
     value: 1   # Single epoch (standard for synthetic data)
 # eta_min is no longer needed as we use min_lr_ratio directly
@@ -238,7 +238,7 @@ training_config:
   # Data Loading Parameters
   # -----------------------
   batch_size:
-    value: 32   # Reduce memory pressure for multiprocessing segfault testing
+    value: 16   # Reduce memory pressure for multiprocessing segfault testing
   num_workers:
     value: 128  # Match the number of requested CPUs
     
