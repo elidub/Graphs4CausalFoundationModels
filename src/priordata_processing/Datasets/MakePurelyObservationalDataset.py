@@ -32,7 +32,6 @@ class MakePurelyObservationalDataset:
     
     # Define expected hyperparameters for preprocessing and their types
     EXPECTED_PREPROCESSING_HYPERPARAMETERS = {
-        "train_fraction": float,
         "dropout_prob": float,
         "shuffle_data": bool,  # maps to shuffle_samples
         "target_feature": (int, type(None)),
@@ -47,9 +46,11 @@ class MakePurelyObservationalDataset:
     # Define expected dataset configuration parameters and their types
     EXPECTED_DATASET_HYPERPARAMETERS = {
         "dataset_size": int,
-        "max_number_samples": int,
         "max_number_features": int,
-        "number_samples_per_dataset": torch.distributions.Distribution,
+        "max_number_train_samples": int,
+        "max_number_test_samples": int,
+        "number_train_samples_per_dataset": (torch.distributions.Distribution, int),
+        "number_test_samples_per_dataset": (torch.distributions.Distribution, int),
         "seed": (int, type(None)),
     }
     
@@ -119,27 +120,27 @@ class MakePurelyObservationalDataset:
     def _build_samplers(self, config: Dict[str, Any], expected_params: Dict[str, Any], config_name: str) -> Dict[str, Any]:
         """Build sampler objects from the configuration, following SCMHyperparameterSampler pattern."""
         samplers = {}
-        
+
         for param_name, param_config in config.items():
             # Check if parameter is known
             if param_name not in expected_params:
                 raise ValueError(f"Unknown {config_name} hyperparameter: {param_name}")
-            
+
             # Handle shorthand fixed value notation
             if "value" in param_config and "distribution" not in param_config:
-                if param_name == "number_samples_per_dataset":
-                    # Special case: if it's a fixed distribution, create it directly
-                    sampler = param_config["value"]
+                if param_name in ["number_train_samples_per_dataset", "number_test_samples_per_dataset"]:
+                    # Special case: if it's a fixed value, wrap it in a FixedSampler
+                    sampler = FixedSampler(param_config["value"])
                 else:
                     sampler = FixedSampler(param_config["value"])
             elif "distribution" in param_config:
                 dist_type = param_config["distribution"]
-                
-                if param_name == "number_samples_per_dataset":
+
+                if param_name in ["number_train_samples_per_dataset", "number_test_samples_per_dataset"]:
                     # Special case: create PyTorch distribution directly
                     if dist_type not in self.TORCH_DISTRIBUTION_FACTORIES:
                         raise ValueError(f"Unknown distribution type for {param_name}: {dist_type}")
-                    
+
                     dist_params = param_config.get("distribution_parameters", {})
                     try:
                         sampler = self.TORCH_DISTRIBUTION_FACTORIES[dist_type](dist_params)
@@ -149,14 +150,14 @@ class MakePurelyObservationalDataset:
                     # Regular parameter: create sampler
                     if dist_type not in self.DISTRIBUTION_FACTORIES:
                         raise ValueError(f"Unknown distribution type: {dist_type}")
-                    
+
                     # Get distribution parameters
                     dist_params = param_config.get("distribution_parameters", {})
                     if dist_type == "fixed":
                         if "value" not in param_config:
                             raise ValueError(f"Fixed distribution for {param_name} requires 'value' key")
                         dist_params = {"value": param_config["value"]}
-                    
+
                     # Create sampler
                     try:
                         sampler = self.DISTRIBUTION_FACTORIES[dist_type](dist_params)
@@ -164,37 +165,51 @@ class MakePurelyObservationalDataset:
                         raise ValueError(f"Error creating sampler for {config_name}.{param_name}: {e}")
             else:
                 raise ValueError(f"Configuration for {config_name}.{param_name} must specify 'distribution' or 'value'")
-            
+
             samplers[param_name] = sampler
-        
+
         # Check that all required parameters are specified
         required_params = set(expected_params.keys())
         provided_params = set(config.keys())
         missing_params = required_params - provided_params
         if missing_params:
             raise ValueError(f"Missing required {config_name} parameters: {missing_params}")
-        
+
         return samplers
     
     def _sample_parameters(self, samplers: Dict[str, Any], expected_types: Dict[str, Any], 
                           config_name: str, generator: torch.Generator) -> Dict[str, Any]:
         """Sample parameters from samplers with type validation."""
         sampled_params = {}
-        
+
         for param_name, sampler in samplers.items():
-            if param_name == "number_samples_per_dataset":
-                # Special case: this is already a PyTorch distribution, not a sampler
-                value = sampler
+            if param_name in ["number_train_samples_per_dataset", "number_test_samples_per_dataset"]:
+                # Special case: handle FixedSampler, PyTorch distribution, or int directly
+                if isinstance(sampler, FixedSampler):
+                    value = sampler.sample(generator)
+                elif isinstance(sampler, torch.distributions.Distribution):
+                    value = sampler
+                elif isinstance(sampler, int):
+                    value = sampler  # Directly use the fixed integer value
+                else:
+                    raise ValueError(f"Parameter {config_name}.{param_name} has invalid type. Expected FixedSampler, torch.distributions.Distribution, or int, got {type(sampler)}")
             else:
                 value = sampler.sample(generator)
-            
+
             # Type validation (following SCMHyperparameterSampler pattern)
             expected_type = expected_types[param_name]
             if not isinstance(value, expected_type):
-                # Special handling for distribution types
-                if param_name == "number_samples_per_dataset" and isinstance(value, torch.distributions.Distribution):
-                    # This is correct - it's a PyTorch distribution
-                    pass
+                # Special handling for distribution types and tuples of allowed types
+                if param_name in ["number_train_samples_per_dataset", "number_test_samples_per_dataset"]:
+                    # For these parameters, we allow either torch.distributions.Distribution or int
+                    if isinstance(expected_type, tuple):
+                        if not isinstance(value, expected_type):
+                            raise ValueError(f"Parameter {config_name}.{param_name} has invalid type. Expected one of {expected_type}, got {type(value)}")
+                    elif isinstance(value, torch.distributions.Distribution):
+                        # This is correct - it's a PyTorch distribution
+                        pass
+                    else:
+                        raise ValueError(f"Parameter {config_name}.{param_name} has invalid type. Expected {expected_type}, got {type(value)}")
                 # Try to convert if possible
                 elif isinstance(expected_type, type) and expected_type is int and isinstance(value, float):
                     value = int(value)
@@ -209,9 +224,9 @@ class MakePurelyObservationalDataset:
                         raise ValueError(f"Parameter {config_name}.{param_name} has invalid type. Expected one of {expected_type}, got {type(value)}")
                 else:
                     raise ValueError(f"Parameter {config_name}.{param_name} has invalid type. Expected {expected_type}, got {type(value)}")
-            
+
             sampled_params[param_name] = value
-        
+
         return sampled_params
     
     def create_dataset(self, seed: int = None) -> PurelyObservationalDataset:
@@ -245,24 +260,30 @@ class MakePurelyObservationalDataset:
             scm_seed = (seed * 31 + 17) % (2**32)  # Derive a different seed for SCM
         scm_sampler = SCMSampler(self.scm_config, seed=scm_seed)
         
-        # Calculate train/test sample counts from train_fraction
-        max_samples = dataset_params["max_number_samples"]
-        train_fraction = preprocessing_params["train_fraction"]
-        n_train_samples = int(max_samples * train_fraction)
-        n_test_samples = max_samples - n_train_samples
-        
-        # For the dataset, we'll use the sampled number from the distribution
-        # but ensure it doesn't exceed our max counts
+        # Get maximum sample counts and feature count from dataset config
+        max_n_train_samples = dataset_params["max_number_train_samples"]
+        max_n_test_samples = dataset_params["max_number_test_samples"] 
         max_features = dataset_params["max_number_features"]
         
+        # Get the sample count distributions (convert fixed integers to FixedSampler)
+        train_samples_distribution = dataset_params["number_train_samples_per_dataset"]
+        test_samples_distribution = dataset_params["number_test_samples_per_dataset"]
+        
+        # Convert fixed integers to FixedSampler if needed
+        if isinstance(train_samples_distribution, int):
+            train_samples_distribution = FixedSampler(train_samples_distribution)
+        if isinstance(test_samples_distribution, int):
+            test_samples_distribution = FixedSampler(test_samples_distribution)
+        
         # Create BasicProcessing with new parameter structure
+        # We'll use the maximum values for the processor, actual sampling happens in the dataset
         processor = BasicProcessing(
             n_features=max_features,  # We'll use all available features initially
             max_n_features=max_features,
-            n_train_samples=n_train_samples,
-            max_n_train_samples=n_train_samples,
-            n_test_samples=n_test_samples,
-            max_n_test_samples=n_test_samples,
+            n_train_samples=max_n_train_samples,  # Use max values here
+            max_n_train_samples=max_n_train_samples,
+            n_test_samples=max_n_test_samples,
+            max_n_test_samples=max_n_test_samples,
             dropout_prob=preprocessing_params["dropout_prob"],
             target_feature=preprocessing_params["target_feature"],
             random_seed=preprocessing_params["random_seed"],
@@ -275,9 +296,6 @@ class MakePurelyObservationalDataset:
             shuffle_features=True,  # Default from new BasicProcessing
         )
         
-        # Get the number of samples per dataset distribution from config
-        number_samples_per_dataset_distribution = dataset_params["number_samples_per_dataset"]
-        
         # Create and return the dataset
         if seed is not None:
             dataset_seed = (seed * 37 + 23) % (2**32)  # Derive another different seed for dataset
@@ -287,10 +305,12 @@ class MakePurelyObservationalDataset:
         dataset = PurelyObservationalDataset(
             scm_sampler=scm_sampler,
             priordata_processor=processor,
-            number_samples_per_dataset_distribution=number_samples_per_dataset_distribution,
+            number_train_samples_per_dataset_distribution=train_samples_distribution,
+            number_test_samples_per_dataset_distribution=test_samples_distribution,
             size=dataset_params["dataset_size"],
-            max_number_samples=dataset_params["max_number_samples"],
-            max_number_features=dataset_params["max_number_features"],
+            max_number_train_samples=max_n_train_samples,
+            max_number_test_samples=max_n_test_samples,
+            max_number_features=max_features,
             seed=dataset_seed
         )
         
@@ -388,9 +408,10 @@ class MakePurelyObservationalDataset:
         )
         
         # Convert distribution to string representation for readability
-        if "number_samples_per_dataset" in dataset_params:
-            dist_obj = dataset_params["number_samples_per_dataset"]
-            dataset_params["number_samples_per_dataset"] = f"{type(dist_obj).__name__}({dist_obj})"
+        for param_name in ["number_train_samples_per_dataset", "number_test_samples_per_dataset"]:
+            if param_name in dataset_params:
+                dist_obj = dataset_params[param_name]
+                dataset_params[param_name] = f"{type(dist_obj).__name__}({dist_obj})"
         
         return {
             "dataset_params": dataset_params,

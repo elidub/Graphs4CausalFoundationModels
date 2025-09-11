@@ -127,14 +127,19 @@ scm_config:
 dataset_config:
   dataset_size:
     value: 100000000  # size of meta-dataset  #100000000
-  max_number_samples:
-    value: 250  # Maximum samples per individual dataset (keep default)
+  max_number_train_samples:
+    value: 125  # Maximum train samples per individual dataset
+  max_number_test_samples:
+    value: 125   # Maximum test samples per individual dataset (smaller for efficiency)
   max_number_features:
     value: 19  # Much smaller feature space (vs default 101) for faster processing
-  number_samples_per_dataset:
-    # Distribution over actual samples per dataset (within max_number_samples)
+  number_train_samples_per_dataset:
+    # Distribution over actual train samples per dataset (within max_number_train_samples)
     distribution: "uniform"
-    distribution_parameters: {low: 100, high: 250}  # Smaller range for testing
+    distribution_parameters: {low: 75, high: 125}  # Favor more training samples
+  number_test_samples_per_dataset:
+    # Distribution over actual test samples per dataset (within max_number_test_samples)
+    value: 125
   seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -145,8 +150,6 @@ dataset_config:
 # Based on default_preprocessing_config from priordata_processing/ExampleConfigs/BasicConfigs.py
 # Controls how raw datasets are transformed for model input
 preprocessing_config:
-  train_fraction:
-    value: 0.5  # 50% training, 50% test (default split)
   dropout_prob:
     value: 0.2  # Feature dropout probability   
   shuffle_data:
