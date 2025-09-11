@@ -160,6 +160,37 @@ def main(args):
                     X_test = np.concatenate([X_test, pad_test], axis=1)
 
 
+            # Apply max padding/truncation for training and testing samples
+            max_n_train = int(getattr(args, "max_n_train", 0) or 0)
+            max_n_test = int(getattr(args, "max_n_test", 0) or 0)
+
+            if max_n_train and max_n_train > 0:
+                cur_n_train = X_train.shape[0]
+                if cur_n_train > max_n_train:
+                    # truncate to max_n_train
+                    X_train = X_train[:max_n_train, :]
+                    y_train = y_train[:max_n_train]
+                elif cur_n_train < max_n_train:
+                    # pad with zeros for X_train and -1 for y_train
+                    pad_train = np.zeros((max_n_train - cur_n_train, X_train.shape[1]), dtype=X_train.dtype)
+                    pad_y_train = -1 * np.ones(max_n_train - cur_n_train, dtype=y_train.dtype)
+                    X_train = np.concatenate([X_train, pad_train], axis=0)
+                    y_train = np.concatenate([y_train, pad_y_train], axis=0)
+
+            if max_n_test and max_n_test > 0:
+                cur_n_test = X_test.shape[0]
+                if cur_n_test > max_n_test:
+                    # truncate to max_n_test
+                    X_test = X_test[:max_n_test, :]
+                    y_test = y_test[:max_n_test]
+                elif cur_n_test < max_n_test:
+                    # pad with zeros for X_test and -1 for y_test
+                    pad_test = np.zeros((max_n_test - cur_n_test, X_test.shape[1]), dtype=X_test.dtype)
+                    pad_y_test = -1 * np.ones(max_n_test - cur_n_test, dtype=y_test.dtype)
+                    X_test = np.concatenate([X_test, pad_test], axis=0)
+                    y_test = np.concatenate([y_test, pad_y_test], axis=0)
+
+
             if X_train.shape[0] < 2 or X_test.shape[0] < 1:
                 print(f"Skipping task {tid}: too few samples")
                 continue
@@ -342,12 +373,14 @@ if __name__ == "__main__":
     from types import SimpleNamespace
 
     # Subsampling env vars (optional) - read from ALL_CAPS environment variables so submit files can set them
-    N_FEATURES = 19
-    MAX_N_FEATURES = 19
-    N_TRAIN = 125
-    N_TEST = 125
-    PREFER_NUMERIC = True
-    ONLY_NUMERIC = True
+    N_FEATURES = 10
+    MAX_N_FEATURES = 50
+    N_TRAIN = 250
+    MAX_N_TRAIN = 250
+    N_TEST = 500
+    MAX_N_TEST = 500
+    PREFER_NUMERIC = False
+    ONLY_NUMERIC = False
 
     args = SimpleNamespace(
         tasks=TASKS,
@@ -366,6 +399,8 @@ if __name__ == "__main__":
         n_test=int(N_TEST) if N_TEST else 0,
         prefer_numeric=PREFER_NUMERIC,
         only_numeric=ONLY_NUMERIC,
+        max_n_train=int(MAX_N_TRAIN) if MAX_N_TRAIN else 0,
+        max_n_test=int(MAX_N_TEST) if MAX_N_TEST else 0,
     )
 
     main(args)
