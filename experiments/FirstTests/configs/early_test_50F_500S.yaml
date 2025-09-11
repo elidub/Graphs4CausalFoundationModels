@@ -1,0 +1,315 @@
+# ===============================================================================
+# Early Test 1 Configuration - First Pipeline Test
+# ===============================================================================
+# This configuration serves as the initial end-to-en  # Evaluation Configuration
+  # ------------------------
+eval_enabled:
+  value: true  # Whether to run evaluation during training
+eval_every:
+  value: 200  # Evaluate every N steps (0 to disable)
+eval_batches:
+  value: 50   # Number of batches to use for evaluation (from training data)the SimplePFN
+# training pipeline. It uses minimal settings based on default configurations
+# to ensure quick execution while testing all components.
+#
+# Based on:
+# - default_sampling_config (SCM generation)
+# - default_dataset_config & default_preprocessing_config (data processing)  
+# - small_simplepfn_config (model architecture)
+# - debug_config (training parameters)
+# ===============================================================================
+
+experiment_name: "early_test1"
+description: "First pipeline test. debug scale with fixed seeds for reproducibility"
+
+# ===============================================================================
+# SCM Configuration (Structural Causal Model Generation)
+# ===============================================================================
+# Based on default_sampling_config from priors/causal_prior/ExampleConfigs/Basic_Configs.py
+# Generates synthetic causal graphs and mechanisms for the datasets
+scm_config:
+  # Graph Structure Parameters
+  # -------------------------
+  num_nodes:
+    distribution: "discrete_uniform"
+    distribution_parameters: {low: 3, high: 51}
+  graph_edge_prob:
+    distribution: "beta"
+    distribution_parameters: {alpha: 2, beta: 8}
+  graph_seed:
+    distribution: "discrete_uniform"
+    distribution_parameters: {low: 0, high: 100000}
+  
+  # Mechanism Type Selection
+  # ------------------------
+  xgboost_prob:
+    distribution: "uniform"
+    distribution_parameters: {low: 0.0, high: 0.2}
+  mechanism_seed:
+    distribution: "discrete_uniform"
+    distribution_parameters: {low: 0, high: 100000}
+    
+  # MLP Mechanism Hyperparameters
+  # ------------------------------
+  mlp_nonlins:
+    value: "tabicl"
+  mlp_num_hidden_layers:
+    distribution: "categorical"
+    distribution_parameters: {choices: [0, 1,2], probabilities: [0.7, 0.15, 0.15]}
+  mlp_hidden_dim:
+    distribution: "categorical"
+    distribution_parameters: {choices: [4, 8, 16, 32], probabilities: [0.5, 0.25, 0.125, 0.125]}
+  mlp_activation_mode:
+    distribution: "categorical"
+    distribution_parameters: {choices: ["pre", "post"], probabilities: [0.9, 0.1]}
+  mlp_node_shape:
+    value: [1]
+    
+  # XGBoost Mechanism Hyperparameters
+  # ----------------------------------
+  xgb_num_hidden_layers:
+    value: 0
+  xgb_hidden_dim:
+    distribution: "categorical"
+    distribution_parameters: {choices: [0, 16, 32, 64]}
+  xgb_activation_mode:
+    distribution: "categorical"
+    distribution_parameters: {choices: ["pre", "post"]}
+  xgb_node_shape:
+    value: [1]
+  xgb_n_training_samples:
+    distribution: "discrete_uniform"
+    distribution_parameters: {low: 100, high: 500}
+  xgb_add_noise:
+    distribution: "categorical"
+    distribution_parameters: {choices: [true, false], probabilities: [0.2, 0.8]}
+    
+  # Noise Distribution Parameters
+  # -----------------------------
+  random_additive_std:
+    value: true
+  exo_std_distribution:
+    distribution: "categorical"
+    distribution_parameters: {choices: ["gamma", "pareto"], probabilities: [1.0, 0.0]}
+  endo_std_distribution:
+    distribution: "categorical"
+    distribution_parameters: {choices: ["gamma", "pareto"], probabilities: [1.0, 0.0]}
+    
+  # Random Standard Deviation Parameters
+  exo_std_mean:
+    distribution: "lognormal"
+    distribution_parameters: {mean: 1.0, std: 1.0}
+  exo_std_std:
+    distribution: "uniform"
+    distribution_parameters: {low: 0.01, high: 2.0}
+  endo_std_mean:
+    distribution: "lognormal"
+    distribution_parameters: {mean: -3.0, std: 0.6}
+  endo_std_std:
+    distribution: "uniform"
+    distribution_parameters: {low: 0.01, high: 0.5}
+    
+  # SCM Implementation Settings
+  # ---------------------------
+  scm_fast:
+    value: true
+  use_exogenous_mechanisms:
+    value: true
+  mechanism_generator_seed:
+    distribution: "discrete_uniform"
+    distribution_parameters: {low: 0, high: 100000}
+
+# ===============================================================================
+# Dataset Configuration (Data Generation)
+# ===============================================================================
+# Based on default_dataset_config from priordata_processing/ExampleConfigs/BasicConfigs.py
+# Controls how synthetic datasets are created from the SCMs
+dataset_config:
+  dataset_size:
+    value: 100000000  # size of meta-dataset  #100000000
+  max_number_samples:
+    value: 500  # Maximum samples per individual dataset (keep default)
+  max_number_features:
+    value: 50  # Much smaller feature space (vs default 101) for faster processing
+  number_samples_per_dataset:
+    # Distribution over actual samples per dataset (within max_number_samples)
+    distribution: "uniform"
+    distribution_parameters: {low: 100, high: 500}  # Smaller range for testing
+  seed:
+    distribution: "discrete_uniform"
+    distribution_parameters: {low: 0, high: 100000}
+
+# ===============================================================================
+# Preprocessing Configuration (Data Processing)
+# ===============================================================================
+# Based on default_preprocessing_config from priordata_processing/ExampleConfigs/BasicConfigs.py
+# Controls how raw datasets are transformed for model input
+preprocessing_config:
+  train_fraction:
+    value: 0.5  # 50% training, 50% test (default split)
+  dropout_prob:
+    value: 0.2  # Feature dropout probability   
+  shuffle_data:
+    value: true  # Shuffle samples and features
+  target_feature:
+    value: null  # Randomly select target feature (vs fixed selection)
+  random_seed:
+    distribution: "discrete_uniform"
+    distribution_parameters: {low: 0, high: 100000}
+  negative_one_one_scaling:
+    value: true  # Whether to scale features to [-1, 1] range
+  standardize:
+    value: true
+  remove_outliers:
+    value: true  # Whether to remove outliers during preprocessing
+  outlier_quantile:
+    value: 0.95  # Quantile threshold for outlier removal (when remove_outliers=true)
+  yeo_johnson:
+    value: false  # Whether to use grid search for Yeo-Johnson parameters
+
+# ===============================================================================
+# Model Configuration (SimplePFN Architecture)
+# ===============================================================================
+# Based on small_simplepfn_config from models/ExampleConfigs/SimplePFN_Configs.py
+# Defines the transformer architecture for in-context learning
+model_config:
+  # Core Architecture Parameters
+  # ----------------------------
+  d_model:
+    value: 256      # Moderately sized embedding dimension
+  depth:  
+    value: 6     # Number of transformer blocks
+  heads_feat:
+    value: 8    # Attention heads for feature-wise attention
+  heads_samp:
+    value: 8    # Attention heads for sample-wise attention
+  dropout:
+    value: 0.1     # Dropout probability for regularization
+  hidden_mult:
+    value: 2      # MLP hidden layer multiplier (hidden_dim = hidden_mult * d_model)
+  
+  # Critical Parameter (automatically calculated)
+  # ---------------------------------------------
+  num_features:
+    value: 50  # MUST be max_number_features - 1 (10-1=9)
+              # One feature becomes the target, leaving 9 input features
+  
+  # BarDistribution Configuration (optional)
+  # ----------------------------------------
+  # Enable probabilistic output using BarDistribution
+  use_bar_distribution:
+    value: true  # Set to true to enable probabilistic outputs
+  num_bars:
+    value: 1000                 # Number of bars in the distribution (default: 11)
+  min_width:
+    value: 1e-6             # Minimum width for bars (default: 1e-6)
+  scale_floor:
+    value: 1e-3           # Minimum scale parameter (default: 1e-6)
+  max_fit_items:
+    value: 100000         # Maximum items to use for fitting (null = use all)
+  max_fit_batches:
+    value: 100000       # Maximum batches to use for fitting (null = use all)
+  log_prob_clip_min:
+    value: -1000000.0    # Minimum log probability clipping (default: -50.0)
+  log_prob_clip_max:
+    value: 1000000.0     # Maximum log probability clipping (default: 50.0)
+
+# ===============================================================================
+# Training Configuration (PyTorch Lightning Setup)
+# ===============================================================================
+# Based on debug_config from training/configs.py
+# Controls the training process, logging, and hardware utilization
+training_config:
+  # Core Training Parameters
+  # ------------------------
+  learning_rate:
+    value: 0.0001  # Adam learning rate (from debug_config)
+  weight_decay:
+    value: 0.000001  # L2 regularization weight (from debug_config)
+  max_steps:
+    value: 40000  # 
+  max_epochs:
+    value: 1   # Single epoch (standard for synthetic data)
+# eta_min is no longer needed as we use min_lr_ratio directly
+    
+  # Data Loading Parameters
+  # -----------------------
+  batch_size:
+    value: 16   # Reduce memory pressure for multiprocessing segfault testing
+  num_workers:
+    value: 128  # Match the number of requested CPUs
+    
+  # Training Control  
+  # ----------------  
+  early_stopping_patience:
+    value: 0   # Disable early stopping (no validation setup needed)
+  gradient_clip_val:
+    value: 1.0  # Gradient clipping for training stability
+  scheduler_type:
+    value: "linear_warmup_cosine_decay"  # Linear warmup + cosine decay LR schedule
+  warmup_ratio:
+    value: 0.1  # Warmup for 5% of total training steps
+  min_lr_ratio:
+    value: 0.1  # Minimum LR as a ratio of initial LR (10% of max)
+  
+  # Checkpointing
+  # ----------------
+  checkpoint_dir:
+    value: "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints"  # Directory to save model checkpoints
+  save_every:
+    value: 500  # Save model every N steps (0 to disable)
+    
+  # Hardware Configuration
+  # ----------------------
+  device:
+    value: "cuda"  # Use CPU since we're not requesting GPUs in Condor
+  precision:
+    value: "32"   # Full precision for numerical stability
+    
+  # Experiment Organization
+  # -----------------------
+  experiment_name:
+    value: "early_test2"  # Matches top-level experiment name
+  save_dir:
+    value: "./experiments/FirstTests/logs/early_test2"  # Organized logging structure
+  log_every_n_steps:
+    value: 5   # Frequent logging for debugging (from debug_config)
+    
+  # Model Checkpointing
+  # -------------------
+  checkpoint_every_n_steps:
+    value: 500  # Save model every 25 steps (from debug_config)
+    
+  # Evaluation Configuration
+  # ------------------------
+  eval_enabled:
+    value: true  # Whether to run evaluation during training
+  eval_every:
+    value: 300  # Evaluate every N steps (0 to disable)
+  eval_batches:
+    value: 200   # Number of batches to use for evaluation
+  eval_dataset_size:
+    value: 1000000 # Size of evaluation dataset (separate from training)
+    
+  # Model Selection Configuration
+  # -----------------------------
+  model_selection_enabled:
+    value: true  # Enable automatic best model selection
+  model_selection_metric:
+    value: "eval/mse_median"  # Metric to use for model selection (eval/mse_median, eval/loss_median, train/loss, etc.)
+  model_selection_mode:
+    value: "min"  # Whether to minimize ("min") or maximize ("max") the metric
+    
+  # Weights & Biases Integration
+  # ----------------------------
+  wandb_project:
+    value: "DoPFN_v2"  # Enable W&B for experiment tracking
+  wandb_run_name:
+    value: basic_10000step_1  # Auto-generate from experiment_name
+  wandb_tags:
+    value: ["early_test", "debug", "first_run", "simplepfn"]  # Tags for experiment tracking
+  wandb_notes:
+    value: "First end-to-end pipeline test with wandb integration"
+  wandb_offline:
+    value: false  # Use online mode for real-time experiment tracking
+

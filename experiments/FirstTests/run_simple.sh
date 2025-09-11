@@ -56,8 +56,4 @@ export VIRTUAL_ENV="${PWD}/venv"
 
 # Run SimplePFN training with config
 cd src/training
-python3 simple_run.py --config "../../early_test.yaml"
-
-# Run SimplePFN training with config
-cd src/training
-python3 simple_run.py --config "../../early_test.yaml"
+python3 simple_run.py --config "../../early_test_50F_500S_2.yaml"
