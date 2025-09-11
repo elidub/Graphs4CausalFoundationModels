@@ -377,8 +377,8 @@ if __name__ == "__main__":
     MAX_N_FEATURES = 50
     N_TRAIN = 250
     MAX_N_TRAIN = 250
-    N_TEST = 500
-    MAX_N_TEST = 500
+    N_TEST = 1000
+    MAX_N_TEST =    
     PREFER_NUMERIC = False
     ONLY_NUMERIC = False
 
