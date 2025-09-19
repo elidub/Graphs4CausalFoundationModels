@@ -1,6 +1,6 @@
 The core element of this prior is an SCM (Structural Causal Model), which can be found in causal_prior/scm/SCM.py.
 
-The overall goal is to (a) sample the SCM itself and (b) sample data from the SCM.
+The overall goal here is to (a) sample the SCM itself and (b) sample data from the SCM.
 
 ## SCM Components
 
@@ -8,7 +8,7 @@ An SCM has three components:
 
 - **A causal graph**, represented by a CausalDAG object in the file causal_prior/causal_graph/CausalDAG.py. (The CausalDAG is a relatively light wrapper of a networkx graph). Graphs can be sampled in causal_prior/causal_graph/GraphSampler.py. 
 
-- **A dictionary of mechanisms** that defines for each node, how it is computed as a function of its parents and a node-specific "endogenous" noise variable. Mechanisms are torch.nn.Module objects and need to inherit from BaseMechanism in causal_prior/mechanisms/BaseMechanism.py. Currently two types of mechanisms are used: MLPMechanisms and XGBoostMechanisms. The classes causal_prior/mechanisms/SampleMLPMechanism.py and causal_prior/mechanisms/SampleXGBoostMechanism.py implement them and, by instantiation, sample a specific mechanism. 
+- **A dictionary of mechanisms** that defines for each node, how it's value computed as a function of its parents and a node-specific "endogenous" noise variable. Mechanisms are torch.nn.Module objects and need to inherit from BaseMechanism in causal_prior/mechanisms/BaseMechanism.py. Currently two types of mechanisms are used: MLPMechanisms and XGBoostMechanisms. The classes causal_prior/mechanisms/SampleMLPMechanism.py and causal_prior/mechanisms/SampleXGBoostMechanism.py implement them and, by instantiation, sample a specific mechanism. 
 
 - **Noise distributions** in causal_prior/noise_distributions. The basic interface for a noise variable can be found in causal_prior/noise_distributions/DistributionInterface.py. Currently, the main class to sample noise is causal_prior/noise_distributions/MixedDist_RandomSTD.py that, once instantiated, allows to sample noise. 
 
@@ -42,7 +42,7 @@ Once you have an SCM (from either method above), data can be sampled via:
 1. `N_SAMPLES = 123` # Number of samples to draw
 2. `scm.sample_exogenous(N_SAMPLES)` # sample the exogenous noise 
 3. `scm.sample_endogenous_noise(N_SAMPLES)` # sample the endogenous noise
-4. `r = scm.propagate(N_SAMPLES)` # propagate the samples through the SCM
+4. `r = scm.propagate(N_SAMPLES)` # propagate the samples through the SCM to obtain the data you want
 
 ## Example Files
 

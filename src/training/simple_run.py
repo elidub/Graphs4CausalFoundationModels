@@ -250,24 +250,7 @@ def main():
             if max_fit_batches is not None:
                 print(f"   Using max {max_fit_batches} batches for fitting")
             
-            # Create a wrapper dataloader that squeezes the last dimension for BarDistribution
-            # BarDistribution expects y_train and y_test to be (B, N/M) but dataloader produces (B, N/M, 1)
-            class BarDistributionDataLoaderWrapper:
-                def __init__(self, original_dataloader):
-                    self.original_dataloader = original_dataloader
-                
-                def __iter__(self):
-                    for batch in self.original_dataloader:
-                        if len(batch) == 4:
-                            X_train, y_train, X_test, y_test = batch
-                            # Squeeze last dimension: (B, N/M, 1) -> (B, N/M)
-                            y_train_squeezed = y_train.squeeze(-1)
-                            y_test_squeezed = y_test.squeeze(-1)
-                            yield X_train, y_train_squeezed, X_test, y_test_squeezed
-                        else:
-                            yield batch
-            
-            bar_fit_dataloader = BarDistributionDataLoaderWrapper(dataloader)
+            bar_fit_dataloader = dataloader
             bar_distribution.fit(bar_fit_dataloader, max_batches=max_fit_batches)
             output_dim = bar_distribution.num_params  # K + 4 parameters
             print(f"   BarDistribution fitted with output dimension: {output_dim}")

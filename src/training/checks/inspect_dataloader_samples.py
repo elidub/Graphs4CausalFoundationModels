@@ -7,6 +7,7 @@ samples batches from the dataloader, and visualizes individual tabular datasets 
 each batch using pairwise scatterplots and correlation heatmaps.
 
 Usage:
+    You can directly run this file, or: 
     python inspect_dataloader_samples.py --config path/to/config.yaml
     python inspect_dataloader_samples.py --config ../../../experiments/FirstTests/configs/early_test.yaml
 """
@@ -1593,17 +1594,17 @@ def main():
     # Number of datasets to visualize per batch
     N_DATASETS_PER_BATCH = 100
     
-    # Results will be saved to organized folders (plots will NOT be displayed)
-    # Format: checks/Results/run_YYYYMMDD_HHMMSS/batch_X/dataset_Y/
+    # ResultsDataloaderSamples will be saved to organized folders (plots will NOT be displayed)
+    # Format: checks/ResultsDataloaderSamples/run_YYYYMMDD_HHMMSS/batch_X/dataset_Y/
     # A summary folder with overall statistics will also be created
     
     # Detect which directory we're running from to set correct results path
     if 'priors' in str(Path(__file__)):
         # We're running from src/priors/training/checks/
-        RESULTS_BASE_DIR = 'src/priors/training/checks/Results'
+        RESULTS_BASE_DIR = 'src/priors/training/checks/ResultsDataloaderSamples'
     else:
         # We're running from src/training/checks/
-        RESULTS_BASE_DIR = 'src/training/checks/Results'
+        RESULTS_BASE_DIR = 'src/training/checks/ResultsDataloaderSamples'
     
     # =============================================================
     # END CONFIGURATION

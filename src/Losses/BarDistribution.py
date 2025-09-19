@@ -5,20 +5,8 @@ import torch
 from torch import Tensor
 import math
 
+from Losses.PosteriorPredictive import PosteriorPredictive
 
-class PosteriorPredictive(ABC):
-    @abstractmethod
-    def average_log_prob(self, pred: Tensor, y: Tensor) -> Tensor:
-        pass
-
-    def mode(self, pred: Tensor) -> Tensor:
-        raise NotImplementedError
-
-    def mean(self, pred: Tensor) -> Tensor:
-        raise NotImplementedError
-
-    def sample(self, pred: Tensor, num_samples: int) -> Tensor:
-        raise NotImplementedError
 
 
 class BarDistribution(PosteriorPredictive):
@@ -26,8 +14,8 @@ class BarDistribution(PosteriorPredictive):
     Piecewise-uniform bars (fixed edges from data) + Gaussian half-tails at the ends.
 
     Model parameters per point (num_params = K + 4):
-      - logits over [LeftTail, Bar_0..Bar_{K-1}, RightTail]   (length K+2)
-      - tail scale raw params: [s_L_raw, s_R_raw]             (length 2)
+      - logits for mixture over [LeftTail, Bar_0..Bar_{K-1}, RightTail]  (length K+2)
+      - tail scale multipliers raw: [s_L_raw, s_R_raw]                   (length 2)
 
     Tails:
       Left  (y < edge_left):  f(y) = (2 p_L) * N(y; edge_left, s_L)
@@ -42,8 +30,8 @@ class BarDistribution(PosteriorPredictive):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
         max_fit_items: Optional[int] = None,
-        log_prob_clip_min: float = -50.0,
-        log_prob_clip_max: float = 50.0,
+        log_prob_clip_min: float = -50.0,  # Minimum log probability to prevent -inf
+        log_prob_clip_max: float = 50.0,   # Maximum log probability to prevent overflow
     ):
         if num_bars < 1:
             raise ValueError("num_bars must be >= 1")
@@ -64,80 +52,45 @@ class BarDistribution(PosteriorPredictive):
         self.base_s_left: Optional[Tensor] = None
         self.base_s_right: Optional[Tensor] = None
 
-        # Will be (re)built for the right dtype/device later as needed
-        self._norm_const: Optional[Tensor] = None
-        self._log_norm_const: Optional[Tensor] = None
-        self._tiny: Optional[Tensor] = None
-
-    # ------------------------- Helpers -------------------------
-
-    def _ensure_consts(self, device: torch.device, dtype: torch.dtype):
-        # dtype-aware tiny to avoid log(0), underflow, etc.
-        finfo = torch.finfo(dtype)
-        tiny_val = max(1e-38, float(finfo.tiny))  # keep >= 1e-38 for fp32; for fp16 finfo.tiny is used
-        self._tiny = torch.tensor(tiny_val, device=device, dtype=dtype)
-
-        norm_const = 1.0 / math.sqrt(2.0 * math.pi)
-        self._norm_const = torch.tensor(norm_const, device=device, dtype=dtype)
-        self._log_norm_const = torch.tensor(math.log(norm_const), device=device, dtype=dtype)
-
-    def _safe_softplus(self, x: Tensor) -> Tensor:
-        # More numerically steady softplus for large negative x (avoid denorms)
-        # torch.nn.functional.softplus has beta and threshold knobs; use a mild threshold.
-        return torch.nn.functional.softplus(x, beta=1.0, threshold=20.0)
-
-    def _safe_scale(self, base: Tensor, raw: Tensor, device: torch.device, dtype: torch.dtype) -> Tensor:
-        # s = base * (softplus(raw) + floor); clamp to dtype eps to avoid 0
-        sp = self._safe_softplus(raw)
-        out = base * (sp + self.scale_floor)
-        eps = torch.finfo(dtype).eps
-        return torch.clamp(out, min=eps)
-
-    def _safe_log(self, x: Tensor) -> Tensor:
-        # Avoid -inf by clamping with dtype-aware tiny
-        return torch.log(torch.clamp(x, min=self._tiny))
-
-    def _adopt_pred_ctx(self, pred: Tensor) -> Tuple[torch.device, torch.dtype]:
-        # Everything follows pred's device/dtype if possible (backward compatible with constructor defaults)
-        device = pred.device if pred.is_cuda or pred.device != torch.device("cpu") else self.device
-        dtype = pred.dtype if pred.dtype is not None else self.dtype
-        self._ensure_consts(device, dtype)
-        return device, dtype
+        # constants
+        self._log_floor = torch.tensor(1e-300, device=self.device, dtype=self.dtype)
+        self._norm_const = torch.tensor(1.0 / math.sqrt(2.0 * math.pi), device=self.device, dtype=self.dtype)
 
     # ------------------------- Fit bar locations -------------------------
 
     @torch.no_grad()
-    def fit(self, dataloader: Iterable[Tuple[Tensor, Tensor, Tensor, Tensor]],
+    def fit(self, dataloader: Iterable[Tuple[Tensor, Tensor, Tensor, Tensor]], 
             max_batches: Optional[int] = None) -> "BarDistribution":
         """
         Fit the BarDistribution to data from a dataloader.
-
+        
         Args:
             dataloader: DataLoader yielding (X_train, y_train, X_test, y_test) tuples
             max_batches: Maximum number of batches to use for fitting. If None, uses all batches.
-
+        
         Returns:
             self for method chaining
         """
         ys = []
         total = 0
         batch_count = 0
-
+        
         for batch in dataloader:
             if max_batches is not None and batch_count >= max_batches:
                 break
+
+        
+                
             if len(batch) != 4:
                 raise ValueError("Each dataloader item must be (X_train, y_train, X_test, y_test).")
             _, y_tr, _, y_te = batch
+            y_tr = y_tr.squeeze(-1)
+            y_te = y_te.squeeze(-1)
+            
             if y_tr.ndim != 2 or y_te.ndim != 2:
                 raise ValueError("y_train and y_test must be (B, N/M).")
-
             y_tr_flat = y_tr.reshape(-1)
             y_te_flat = y_te.reshape(-1)
-
-            # Filter non-finite early for robustness
-            y_tr_flat = y_tr_flat[torch.isfinite(y_tr_flat)]
-            y_te_flat = y_te_flat[torch.isfinite(y_te_flat)]
 
             if self.max_fit_items is not None:
                 remaining = max(0, self.max_fit_items - total)
@@ -154,37 +107,20 @@ class BarDistribution(PosteriorPredictive):
                     ys.append(y_te_flat[idx].cpu())
                     total += need_te
             else:
-                if y_tr_flat.numel() > 0:
-                    ys.append(y_tr_flat.cpu())
-                if y_te_flat.numel() > 0:
-                    ys.append(y_te_flat.cpu())
-
+                ys.append(y_tr_flat.cpu())
+                ys.append(y_te_flat.cpu())
+            
             batch_count += 1
 
         if not ys:
             raise ValueError("No y data collected for fit().")
 
-        # Use double precision for the geometry, then cast down
         y_all = torch.cat(ys, dim=0).to(torch.float64)
-        y_all = y_all[torch.isfinite(y_all)]
-        if y_all.numel() == 0:
-            raise ValueError("All y are non-finite in fit().")
-
         y_min, y_max = torch.min(y_all), torch.max(y_all)
         if not (torch.isfinite(y_min) and torch.isfinite(y_max)):
             raise ValueError("Non-finite y encountered during fit().")
 
-        # Handle near-constant data robustly
-        span = (y_max - y_min).item()
-        if span <= 0 or not math.isfinite(span):
-            # Make a tiny artificial span to define bars
-            span = 1.0
-            y_min = y_min - 0.5
-            y_max = y_min + span
-
         K = self.num_bars
-
-        # Quantile-based centers; robust monotonic enforcement
         probs = torch.linspace(0.0, 1.0, steps=K + 1, dtype=torch.float64)
         mids = (probs[:-1] + probs[1:]) * 0.5
         try:
@@ -192,45 +128,35 @@ class BarDistribution(PosteriorPredictive):
         except TypeError:
             centers = torch.quantile(y_all, mids, interpolation="linear")
 
-        # Strictly increasing centers (epsilon grows with K and span)
-        eps = max(1e-12, 1e-9 * K) * float(y_max - y_min)
-        eps = torch.tensor(eps, dtype=torch.float64)
+        # Enforce strict increasing centers (tiny jitter if needed)
+        scale = torch.maximum(y_max - y_min, torch.tensor(1.0, dtype=torch.float64))
+        eps = (1e-9 * float(K)) * scale
         for i in range(K - 1):
-            if centers[i + 1] <= centers[i]:
+            if centers[i + 1] - centers[i] <= 0:
                 centers[i + 1] = centers[i] + eps
 
         edges = torch.empty(K + 1, dtype=torch.float64)
         if K == 1:
-            # Use IQR for width, fall back to small width if degenerate
             q25, q75 = torch.quantile(y_all, torch.tensor([0.25, 0.75], dtype=torch.float64))
-            width = float(max(q75 - q25, self.min_width))
+            width = float(max(q75 - q25, 1e-6))
             edges[0] = centers[0] - 0.5 * width
             edges[1] = centers[0] + 0.5 * width
         else:
             edges[1:-1] = 0.5 * (centers[:-1] + centers[1:])
-            # Extrapolate outer edges
             edges[0] = centers[0] - 0.5 * float(centers[1] - centers[0])
             edges[-1] = centers[-1] + 0.5 * float(centers[-1] - centers[-2])
 
-        # Ensure strict monotonic edges and minimum widths
-        edges = torch.clip(edges, min=float(y_min) - 10.0 * span, max=float(y_max) + 10.0 * span)
-        widths = torch.diff(edges)
-        widths = torch.clamp(widths, min=self.min_width)
-        # Reconstruct edges from clamped widths to guarantee increasing edges
-        edges = torch.cat([edges[:1], edges[:1] + torch.cumsum(widths, dim=0)], dim=0)
+        widths = torch.diff(edges).clamp(min=self.min_width)
 
-        # Tail base scales ~ near-edge widths (clamped)
-        base_s_left = float(max(widths[0].item(), self.min_width))
-        base_s_right = float(max(widths[-1].item(), self.min_width))
+        # Tail base scales from near-edge widths
+        base_s_left = float(widths[0])
+        base_s_right = float(widths[-1])
 
-        # Cast to target dtype/device
         self.centers = centers.to(self.device, self.dtype)
         self.edges = edges.to(self.device, self.dtype)
         self.widths = widths.to(self.device, self.dtype)
         self.base_s_left = torch.tensor(base_s_left, device=self.device, dtype=self.dtype)
         self.base_s_right = torch.tensor(base_s_right, device=self.device, dtype=self.dtype)
-        # Refresh constants
-        self._ensure_consts(self.device, self.dtype)
         return self
 
     # ------------------------------ Interface ------------------------------
@@ -246,11 +172,8 @@ class BarDistribution(PosteriorPredictive):
         K = self.num_bars
         self._validate_pred(pred, (B, M, K + 4))
 
-        device, dtype = self._adopt_pred_ctx(pred)
-        y = y.to(device=device, dtype=dtype)
-
-        pdf = self._pdf_from_pred(pred, y)  # (B,M), safely clipped inside
-        logpdf = self._safe_log(pdf)
+        pdf = self._pdf_from_pred(pred, y)  # (B,M)
+        logpdf = torch.log(pdf)  # pdf is already clipped in _pdf_from_pred
         logpdf = torch.clamp(logpdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
         return logpdf.mean(dim=1)
 
@@ -263,36 +186,34 @@ class BarDistribution(PosteriorPredictive):
         K = self.num_bars
         self._validate_pred(pred, (B, M, K + 4))
 
-        device, dtype = self._adopt_pred_ctx(pred)
-
         w_logits, sL_raw, sR_raw = self._unpack(pred)
         probs = torch.softmax(w_logits, dim=-1)  # (B,M,K+2)
         pL = probs[..., 0]
         pBars = probs[..., 1:-1]                 # (B,M,K)
         pR = probs[..., -1]
 
-        sL = self._safe_scale(self.base_s_left.to(device, dtype), sL_raw, device, dtype)
-        sR = self._safe_scale(self.base_s_right.to(device, dtype), sR_raw, device, dtype)
+        sL = self.base_s_left * (torch.nn.functional.softplus(sL_raw) + self.scale_floor)
+        sR = self.base_s_right * (torch.nn.functional.softplus(sR_raw) + self.scale_floor)
 
-        # Tail densities at edges: 2 pTail * N(edge; edge, s) = 2 pTail * (norm_const / s)
+        # Tail densities at edges (Gaussian peak at mean=edge):
+        # 2 * pTail * N(edge; edge, s) = 2*pTail * (1/(sqrt(2π)*s))
         dens_left_edge = (2.0 * pL) * (self._norm_const / sL)
         dens_right_edge = (2.0 * pR) * (self._norm_const / sR)
 
-        # Max bar density (constant per bar interval)
-        widths = self.widths.view(1, 1, K).to(device=device, dtype=dtype)
-        bar_densities = pBars / widths
+        # Max bar density
+        bar_densities = pBars / self.widths.view(1, 1, K)
         max_bar_dens, max_idx = torch.max(bar_densities, dim=-1)
 
         candidates = torch.stack([dens_left_edge, max_bar_dens, dens_right_edge], dim=-1)
         arg = candidates.argmax(dim=-1)
 
-        mode_vals = torch.empty(B, M, device=device, dtype=dtype)
-        edge_left = self.edges[0].to(device=device, dtype=dtype)
-        edge_right = self.edges[-1].to(device=device, dtype=dtype)
+        mode_vals = torch.empty(B, M, device=self.device, dtype=self.dtype)
+        edge_left = self.edges[0]
+        edge_right = self.edges[-1]
         mode_vals[arg == 0] = edge_left
         mode_vals[arg == 2] = edge_right
 
-        centers = self.centers.view(1, 1, K).to(device=device, dtype=dtype).expand(B, M, K)
+        centers = self.centers.view(1, 1, K).expand(B, M, K)
         mode_bar = torch.gather(centers, dim=-1, index=max_idx.unsqueeze(-1)).squeeze(-1)
         mode_vals[arg == 1] = mode_bar[arg == 1]
         return mode_vals
@@ -302,15 +223,13 @@ class BarDistribution(PosteriorPredictive):
         Mean is always finite with Gaussian tails.
 
         Bars: mean at midpoints weighted by bar probs.
-        Left half-Gaussian:  E[y | left]  = edge_left  - sL * sqrt(2/π)
-        Right half-Gaussian: E[y | right] = edge_right + sR * sqrt(2/π)
+        Left half-Gaussian with mean at edge: E[y | left] = edge_left - sL * sqrt(2/π)
+        Right half-Gaussian with mean at edge: E[y | right] = edge_right + sR * sqrt(2/π)
         """
         self._check_ready()
         B, M, _ = pred.shape
         K = self.num_bars
         self._validate_pred(pred, (B, M, K + 4))
-
-        device, dtype = self._adopt_pred_ctx(pred)
 
         w_logits, sL_raw, sR_raw = self._unpack(pred)
         probs = torch.softmax(w_logits, dim=-1)
@@ -318,17 +237,15 @@ class BarDistribution(PosteriorPredictive):
         pBars = probs[..., 1:-1]  # (B,M,K)
         pR = probs[..., -1]
 
-        sL = self._safe_scale(self.base_s_left.to(device, dtype), sL_raw, device, dtype)
-        sR = self._safe_scale(self.base_s_right.to(device, dtype), sR_raw, device, dtype)
+        sL = self.base_s_left * (torch.nn.functional.softplus(sL_raw) + self.scale_floor)
+        sR = self.base_s_right * (torch.nn.functional.softplus(sR_raw) + self.scale_floor)
 
         mids = 0.5 * (self.edges[:-1] + self.edges[1:])       # (K,)
-        mids = mids.to(device=device, dtype=dtype)
-        bar_mean = torch.sum(pBars * mids.view(1, 1, K), dim=-1)  # (B,M)
+        bar_mean = (pBars * mids.view(1, 1, K)).sum(dim=-1)   # (B,M)
 
         c = math.sqrt(2.0 / math.pi)
-        c = torch.tensor(c, device=device, dtype=dtype)
-        edge_left = self.edges[0].to(device=device, dtype=dtype)
-        edge_right = self.edges[-1].to(device=device, dtype=dtype)
+        edge_left = self.edges[0]
+        edge_right = self.edges[-1]
         E_left = edge_left - c * sL
         E_right = edge_right + c * sR
 
@@ -345,63 +262,61 @@ class BarDistribution(PosteriorPredictive):
         K = self.num_bars
         self._validate_pred(pred, (B, M, K + 4))
 
-        device, dtype = self._adopt_pred_ctx(pred)
-
         w_logits, sL_raw, sR_raw = self._unpack(pred)
-        probs = torch.softmax(w_logits, dim=-1).to(device=device, dtype=dtype)  # (B,M,K+2)
+        probs = torch.softmax(w_logits, dim=-1)  # (B,M,K+2)
 
-        sL = self._safe_scale(self.base_s_left.to(device, dtype), sL_raw, device, dtype)  # (B,M)
-        sR = self._safe_scale(self.base_s_right.to(device, dtype), sR_raw, device, dtype)  # (B,M)
+        sL = self.base_s_left * (torch.nn.functional.softplus(sL_raw) + self.scale_floor)
+        sR = self.base_s_right * (torch.nn.functional.softplus(sR_raw) + self.scale_floor)
 
-        # --- Sample mixture component robustly (vectorized) ---
-        # Flatten (B,M,K+2) -> (BM, K+2) and sample S per row with replacement
-        comps = torch.multinomial(
-            probs.view(-1, K + 2),
-            num_samples=num_samples,
-            replacement=True
-        )  # (BM, S), values in [0, K+1]
-        comps = comps.view(B, M, num_samples).permute(0, 2, 1).contiguous()  # (B, S, M)
+        # Sample mixture component via inverse CDF on cumulative probs
+        cum = torch.cumsum(probs, dim=-1)  # (B,M,K+2)
+        u = torch.rand(B, num_samples, M, device=self.device, dtype=self.dtype)
+        
+        # Vectorized sampling: flatten and use bucketize for each (B,M) combination
+        cum_flat = cum.view(-1, cum.shape[-1])  # (B*M, K+2)
+        u_flat = u.view(-1)  # (B*S*M,)
+        
+        # For each u value, find which cumulative bin it falls into
+        comp_flat = torch.zeros_like(u_flat, dtype=torch.long)
+        for i in range(cum_flat.shape[0]):
+            # Find indices in u_flat that correspond to this (B,M) position
+            start_idx = i * num_samples
+            end_idx = (i + 1) * num_samples
+            if start_idx < u_flat.shape[0]:
+                end_idx = min(end_idx, u_flat.shape[0])
+                u_subset = u_flat[start_idx:end_idx]
+                comp_flat[start_idx:end_idx] = torch.bucketize(u_subset, cum_flat[i], right=False)
+        
+        comp = comp_flat.view(B, num_samples, M)  # (B,S,M)
 
-        # Prepare output
-        out = torch.empty(B, num_samples, M, device=device, dtype=dtype)
+        out = torch.empty(B, num_samples, M, device=self.device, dtype=self.dtype)
 
-        # Broadcast scales to (B,S,M) for masked sampling
-        sL_b = sL.unsqueeze(1).expand(B, num_samples, M)
-        sR_b = sR.unsqueeze(1).expand(B, num_samples, M)
-
-        # Masks
-        maskL = comps.eq(0)
-        maskR = comps.eq(K + 1)
-
-        # Half-normal sampler: |N(0, s^2)|
-        def sample_half_normal(scale_vals: Tensor, n: int) -> Tensor:
-            z = torch.randn(n, device=device, dtype=dtype)
-            return z.abs() * scale_vals
+        # Gaussian helpers
+        def half_normal(scale: Tensor, size_mask):
+            # |N(0, scale^2)|
+            z = torch.randn(size_mask.sum().item(), device=self.device, dtype=self.dtype)
+            return torch.abs(z) * scale[size_mask]
 
         # Left tail: y = edge_left - |N(0, sL^2)|
+        maskL = comp == 0
         if maskL.any():
-            nL = int(maskL.sum().item())
-            noise = sample_half_normal(sL_b[maskL], nL)
-            out[maskL] = self.edges[0].to(device, dtype) - noise
+            out[maskL] = self.edges[0] - half_normal(sL.unsqueeze(1).expand(B, num_samples, M), maskL)
 
-        # Bars: uniform on [edge_k, edge_{k+1}) for k in [0, K-1]
+        # Bars: uniform on [edge_k, edge_{k+1}]
+        edges = self.edges
         if K > 0:
-            edges = self.edges.to(device=device, dtype=dtype)
-            # For speed, we sample all uniforms, then pick (a,b) per mask
             for k in range(K):
-                maskK = comps.eq(k + 1)
+                maskK = comp == (k + 1)
                 if maskK.any():
-                    nK = int(maskK.sum().item())
-                    u = torch.rand(nK, device=device, dtype=dtype)
                     a = edges[k]
                     b = edges[k + 1]
-                    out[maskK] = a + (b - a) * u
+                    uK = torch.rand(maskK.sum().item(), device=self.device, dtype=self.dtype)
+                    out[maskK] = a + (b - a) * uK
 
         # Right tail: y = edge_right + |N(0, sR^2)|
+        maskR = comp == (K + 1)
         if maskR.any():
-            nR = int(maskR.sum().item())
-            noise = sample_half_normal(sR_b[maskR], nR)
-            out[maskR] = self.edges[-1].to(device, dtype) + noise
+            out[maskR] = self.edges[-1] + half_normal(sR.unsqueeze(1).expand(B, num_samples, M), maskR)
 
         return out
 
@@ -420,9 +335,8 @@ class BarDistribution(PosteriorPredictive):
         if (b, m, p) != (eb, em, ep):
             raise ValueError(f"pred has shape {(b,m,p)} but expected {(eb,em,ep)} (with P=K+4).")
 
-    def _unpack(self, pred: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+    def _unpack(self, pred: Tensor):
         K = self.num_bars
-        # Preserve pred's device/dtype
         w_logits = pred[..., : K + 2]   # (B,M,K+2)
         sL_raw = pred[..., K + 2]       # (B,M)
         sR_raw = pred[..., K + 3]       # (B,M)
@@ -434,60 +348,43 @@ class BarDistribution(PosteriorPredictive):
         y: (B,M)  -> returns (B,M)
         """
         B, M = y.shape
-        device, dtype = self._adopt_pred_ctx(pred)
-
         w_logits, sL_raw, sR_raw = self._unpack(pred)
+
         probs = torch.softmax(w_logits, dim=-1)  # (B,M,K+2)
         pL = probs[..., 0]
         pBars = probs[..., 1:-1]                 # (B,M,K)
         pR = probs[..., -1]
 
-        sL = self._safe_scale(self.base_s_left.to(device, dtype), sL_raw, device, dtype)
-        sR = self._safe_scale(self.base_s_right.to(device, dtype), sR_raw, device, dtype)
+        sL = self.base_s_left * (torch.nn.functional.softplus(sL_raw) + self.scale_floor)
+        sR = self.base_s_right * (torch.nn.functional.softplus(sR_raw) + self.scale_floor)
 
-        pdf = torch.empty_like(y, dtype=dtype, device=device)
-
-        edges = self.edges.to(device=device, dtype=dtype)
-        widths = self.widths.to(device=device, dtype=dtype)
-
-        # Regions
-        left_mask = y < edges[0]
-        right_mask = y >= edges[-1]
+        pdf = torch.empty_like(y, dtype=self.dtype, device=self.device)
+        left_mask = y < self.edges[0]
+        right_mask = y >= self.edges[-1]
         mid_mask = ~(left_mask | right_mask)
 
-        # Left half-Gaussian: f(y) = 2 pL * N(y; edge_left, sL)
+        # Left half-Gaussian
         if left_mask.any():
-            yL = y[left_mask]
-            sL_sel = sL[left_mask]
-            z = (yL - edges[0]) / sL_sel  # negative values
-            # log N = log_norm_const - log s - 0.5 z^2
-            log_gauss = self._log_norm_const - torch.log(sL_sel) - 0.5 * z * z
-            log_pdf = torch.log(torch.tensor(2.0, device=device, dtype=dtype)) + torch.log(pL[left_mask]) + log_gauss
-            pdf[left_mask] = torch.exp(torch.clamp(log_pdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max))
+            z = (y[left_mask] - self.edges[0]) / sL[left_mask]  # negative values
+            gauss = self._norm_const * torch.exp(-0.5 * z * z) / sL[left_mask]
+            pdf[left_mask] = (2.0 * pL[left_mask]) * gauss
 
         # Right half-Gaussian
         if right_mask.any():
-            yR = y[right_mask]
-            sR_sel = sR[right_mask]
-            z = (yR - edges[-1]) / sR_sel  # nonnegative
-            log_gauss = self._log_norm_const - torch.log(sR_sel) - 0.5 * z * z
-            log_pdf = torch.log(torch.tensor(2.0, device=device, dtype=dtype)) + torch.log(pR[right_mask]) + log_gauss
-            pdf[right_mask] = torch.exp(torch.clamp(log_pdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max))
+            z = (y[right_mask] - self.edges[-1]) / sR[right_mask]  # nonnegative
+            gauss = self._norm_const * torch.exp(-0.5 * z * z) / sR[right_mask]
+            pdf[right_mask] = (2.0 * pR[right_mask]) * gauss
 
-        # Bars (constant density within bar): f(y) = p_k / width_k
+        # Bars
         if mid_mask.any():
-            # internal edges are edges[1:-1]
-            internal = edges[1:-1]  # (K-1,)
-            # bucketize returns k in [0, K-1] mapping to intervals: [edge_k, edge_{k+1})
-            k = torch.bucketize(y[mid_mask], internal, right=False)
-            widths_k = widths[k]  # (num_mid,)
-            pBars_all = pBars[mid_mask]  # (num_mid, K)
+            internal = self.edges[1:-1]  # (K-1,)
+            k = torch.bucketize(y[mid_mask], internal, right=False)  # (num_mid,)
+            widths_k = self.widths[k]
+            pBars_all = pBars[mid_mask]                               # (num_mid, K)
             dens = pBars_all.gather(dim=-1, index=k.view(-1, 1)).squeeze(-1) / widths_k
-            # Directly clamp density to avoid zeros/denorms
-            pdf[mid_mask] = torch.clamp(dens, min=self._tiny.item())
+            pdf[mid_mask] = dens
 
-        # Final clamp for safety (to avoid log(0) upstream)
-        return torch.clamp(pdf, min=self._tiny.item())
+        return torch.clamp(pdf, min=torch.exp(torch.tensor(self.log_prob_clip_min, device=self.device, dtype=self.dtype)))
 
     # ------------------------- Convenience -------------------------
 

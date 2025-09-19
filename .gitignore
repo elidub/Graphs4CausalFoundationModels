@@ -13,7 +13,7 @@ __pycache__
 
 src/training/checks/Results/
 src/training/checks/Results/**
-src/priors/training/checks/Results
+src/training/checks/ResultsDataloaderSamples
 /experiments/FirstTests/checkpoints
 src/training/checks/ResultsBaselines
 /experiments/FirstTests/benchmark_results
