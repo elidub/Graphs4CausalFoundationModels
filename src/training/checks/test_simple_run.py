@@ -22,7 +22,7 @@ if str(src_dir) not in sys.path:
 def load_and_modify_existing_config():
     """Load the existing FirstTests config and modify it for quick testing."""
     # Path to the existing config (from checks/ directory, need to go up more levels)
-    config_path = Path(__file__).parent.parent.parent.parent / "experiments" / "FirstTests" / "configs" / "early_test.yaml"
+    config_path = Path(__file__).parent.parent.parent.parent / "experiments" / "FirstTests" / "configs" / "early_test2.yaml"
     
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
