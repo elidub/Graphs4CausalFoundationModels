@@ -128,10 +128,8 @@ dataset_config:   #Size of the meta-dataset (dataset of individual tabular datas
 # ===============================================================================
 preprocessing_config:   
   dropout_prob:  #probability to hide a feature after sampling a dataset
-  #TODO: make this work as a distribution
-    value: 0.2
-    #distribution: "discrete_uniform"
-    #distribution_parameters: {low: 0, high: 0.4}
+    distribution: "uniform"
+    distribution_parameters: {low: 0.1, high: 0.4}
   shuffle_data: # to make sure the data are shuffeled
     value: true
   target_feature:  # you can, in principle, fix the target.
@@ -168,7 +166,6 @@ model_config:
     value: 0.1
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
     value: 1
-
   num_features:
     value: 50  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
 
