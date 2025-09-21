@@ -18,38 +18,26 @@ This is intentionally simple and meant for small-scale testing.
 
 from __future__ import annotations
 import sys
-import os
 from pathlib import Path
-import argparse
-import json
-import math
 import numpy as np
-import pandas as pd
-import time
-from datetime import datetime
-
-from sklearn.linear_model import LinearRegression
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error, r2_score
 
 # ensure repo root is on sys.path so local imports work whether run as module or script
 repo_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(repo_root))
 
-from src.benchmarking.load_openml_benchmark import SimpleOpenMLLoader, DEFAULT_TABULAR_NUM_REG_TASKS
-from src.models.SimplePFN_sklearn import SimplePFNSklearn
+from src.benchmarking.Benchmark import Benchmark  # noqa: E402
+from src.benchmarking.load_openml_benchmark import DEFAULT_TABULAR_NUM_REG_TASKS  # noqa: E402
 
 
 # we'll record MSE and R^2 for each model
 
 
 def to_numpy_arrays(d: dict):
-    # d expected to have X_train, y_train, X_test, y_test possibly as DataFrames/Series
+    # Kept for backward compatibility; not used in the new Benchmark runner
     X_train = d["X_train"]
     X_test = d["X_test"]
     y_train = d["y_train"]
     y_test = d["y_test"]
-
     if hasattr(X_train, "to_numpy"):
         X_train = X_train.to_numpy()
     if hasattr(X_test, "to_numpy"):
@@ -58,303 +46,80 @@ def to_numpy_arrays(d: dict):
         y_train = y_train.to_numpy()
     if hasattr(y_test, "to_numpy"):
         y_test = y_test.to_numpy()
-
-    # ensure shapes: y as 1d
     y_train = np.asarray(y_train).reshape(-1)
     y_test = np.asarray(y_test).reshape(-1)
-
     return X_train, y_train, X_test, y_test
 
 
 def main(args):
-    loader = SimpleOpenMLLoader(
-        data_dir=args.data_dir,
-        verbose=not args.quiet,
-        only_numeric=getattr(args, "only_numeric", False),
-        #transformation_type = "yeo_johnson"
-    )
+    bench = Benchmark(data_dir=args.data_dir, device=args.device, verbose=not args.quiet)
 
-    def _serializable(obj):
-        # small helper to make common types JSON serializable for logging
-        try:
-            if isinstance(obj, (list, dict, str, int, float, bool)) or obj is None:
-                return obj
-            if hasattr(obj, "isoformat"):
-                return str(obj)
-            if hasattr(obj, "__dict__"):
-                return {k: _serializable(v) for k, v in obj.__dict__.items() if not k.startswith("_")}
-            return str(obj)
-        except Exception:
-            return str(obj)
-
-    if not args.quiet:
-        print("[run_benchmark] Script args:", json.dumps(_serializable(args), indent=2))
-        print("[run_benchmark] Loader init args:", json.dumps(_serializable(loader), indent=2))
-
-    # compute the list of tasks to run
-    if args.tasks:
-        tasks = [int(t) for t in args.tasks.split(",")]
-    else:
-        tasks = DEFAULT_TABULAR_NUM_REG_TASKS[: args.max_tasks]
-
-    # If user requested fixed subsampled datasets, create them once for all tasks
-    results = []
-
-    subsample_mode = bool(getattr(args, "n_train", 0) and getattr(args, "n_test", 0) and getattr(args, "n_features", 0))
-    if subsample_mode:
-        if not args.quiet:
-            print(f"Creating subsampled datasets: n_features={args.n_features}, n_train={args.n_train}, n_test={args.n_test}")
-        # create subsampled datasets across the requested tasks
-        data_map = loader.create_subsampled_datasets(
-            tasks,
-            n_features=int(args.n_features),
-            n_train=int(args.n_train),
-            n_test=int(args.n_test),
-            prefer_numeric=bool(getattr(args, "prefer_numeric", True)),
-            save=True,
-        )
-    else:
-        # default: load tasks normally (download & preprocess with train/test split)
-        data_map = loader.load_tasks(tasks)
-
-    # Read model config once
-    cfg_path = args.config or str(repo_root / "experiments/FirstTests/configs/early_test.yaml")
+    tasks = [int(t) for t in args.tasks.split(",")] if args.tasks else DEFAULT_TABULAR_NUM_REG_TASKS[: args.max_tasks]
+    cfg_path = args.config or str(repo_root / "experiments/FirstTests/configs/early_test2.yaml")
     ckpt = args.checkpoint or str(repo_root / "experiments/FirstTests/checkpoints/early_test1_32bs/step_100000.pt")
 
-    for tid in tasks:
-        if not args.quiet:
-            print(f"\n=== Processing task {tid} ===")
-        try:
-            if tid not in data_map or not data_map.get(tid):
-                print(f"Skipping task {tid}: no processed data")
-                continue
-            d = data_map[tid]
+    df = bench.run(
+        tasks=tasks,
+        max_tasks=args.max_tasks,
+        n_features=int(getattr(args, "n_features", 0) or 0),
+        max_n_features=int(getattr(args, "max_n_features", 0) or 0),
+        n_train=int(getattr(args, "n_train", 0) or 0),
+        max_n_train=int(getattr(args, "max_n_train", 0) or 0),
+        n_test=int(getattr(args, "n_test", 0) or 0),
+        max_n_test=int(getattr(args, "max_n_test", 0) or 0),
+        prefer_numeric=bool(getattr(args, "prefer_numeric", True)),
+        only_numeric=bool(getattr(args, "only_numeric", False)),
+        config_path=cfg_path,
+        checkpoint_path=ckpt,
+        output_csv=args.output,
+        device=args.device,
+        quiet=args.quiet,
+        repeats=int(getattr(args, "repeats", 1) or 1),
+        baseline_set=str(getattr(args, "baseline_set", "basic") or "basic"),
+        bootstrap_samples=int(getattr(args, "bootstrap_samples", 1000) or 1000),
+    )
 
-            X_train, y_train, X_test, y_test = to_numpy_arrays(d)
-
-            # Apply feature selection (N_FEATURES) then pad/truncate to MAX_N_FEATURES if requested
-            requested_n = int(getattr(args, "n_features", 0) or 0)
-            max_n = int(getattr(args, "max_n_features", 0) or 0)
-
-            # If a requested_n is provided and smaller than available, trim to that many features
-            if requested_n and requested_n > 0:
-                if X_train.shape[1] >= requested_n:
-                    X_train = X_train[:, :requested_n]
-                    X_test = X_test[:, :requested_n]
-                else:
-                    if not args.quiet:
-                        print(f"Requested n_features={requested_n} > available {X_train.shape[1]}; using available features")
-
-            # Apply max padding/truncation
-            if max_n and max_n > 0:
-                cur_n = X_train.shape[1]
-                if cur_n > max_n:
-                    # truncate to max_n
-                    X_train = X_train[:, :max_n]
-                    X_test = X_test[:, :max_n]
-                elif cur_n < max_n:
-                    # pad with zeros on the right
-                    pad_train = np.zeros((X_train.shape[0], max_n - cur_n), dtype=X_train.dtype)
-                    pad_test = np.zeros((X_test.shape[0], max_n - cur_n), dtype=X_test.dtype)
-                    X_train = np.concatenate([X_train, pad_train], axis=1)
-                    X_test = np.concatenate([X_test, pad_test], axis=1)
-
-
-            # Apply max padding/truncation for training and testing samples
-            max_n_train = int(getattr(args, "max_n_train", 0) or 0)
-            max_n_test = int(getattr(args, "max_n_test", 0) or 0)
-
-            if max_n_train and max_n_train > 0:
-                cur_n_train = X_train.shape[0]
-                if cur_n_train > max_n_train:
-                    # truncate to max_n_train
-                    X_train = X_train[:max_n_train, :]
-                    y_train = y_train[:max_n_train]
-                elif cur_n_train < max_n_train:
-                    # pad with zeros for X_train and -1 for y_train
-                    pad_train = np.zeros((max_n_train - cur_n_train, X_train.shape[1]), dtype=X_train.dtype)
-                    pad_y_train = -1 * np.ones(max_n_train - cur_n_train, dtype=y_train.dtype)
-                    X_train = np.concatenate([X_train, pad_train], axis=0)
-                    y_train = np.concatenate([y_train, pad_y_train], axis=0)
-
-            if max_n_test and max_n_test > 0:
-                cur_n_test = X_test.shape[0]
-                if cur_n_test > max_n_test:
-                    # truncate to max_n_test
-                    X_test = X_test[:max_n_test, :]
-                    y_test = y_test[:max_n_test]
-                elif cur_n_test < max_n_test:
-                    # pad with zeros for X_test and -1 for y_test
-                    pad_test = np.zeros((max_n_test - cur_n_test, X_test.shape[1]), dtype=X_test.dtype)
-                    pad_y_test = -1 * np.ones(max_n_test - cur_n_test, dtype=y_test.dtype)
-                    X_test = np.concatenate([X_test, pad_test], axis=0)
-                    y_test = np.concatenate([y_test, pad_y_test], axis=0)
-
-
-            if X_train.shape[0] < 2 or X_test.shape[0] < 1:
-                print(f"Skipping task {tid}: too few samples")
-                continue
-
-            # Baseline: LinearRegression
-            lr = LinearRegression()
-            lr.fit(X_train, y_train)
-            y_pred_lr = lr.predict(X_test)
-            mse_lr = float(mean_squared_error(y_test, y_pred_lr))
-            r2_lr = float(r2_score(y_test, y_pred_lr))
-
-            # Baseline: RandomForest (small)
-            rf = RandomForestRegressor(n_estimators=50, random_state=42)
-            rf.fit(X_train, y_train)
-            y_pred_rf = rf.predict(X_test)
-            mse_rf = float(mean_squared_error(y_test, y_pred_rf))
-            r2_rf = float(r2_score(y_test, y_pred_rf))
-
-            # SimplePFN: try to build wrapper with model num_features set to dataset features
-            mse_pfn = None
-            r2_pfn = None
-            try:
-                # read config model defaults
-                import yaml
-
-                with open(cfg_path, "r") as f:
-                    cfg = yaml.safe_load(f)
-                model_cfg = cfg.get("model_config", {}) if isinstance(cfg, dict) else {}
-
-                # Check if BarDistribution is enabled in the config
-                use_bar_distribution = model_cfg.get("use_bar_distribution", {}).get("value", False)
-
-                # prepare wrapper with config path so it can detect BarDistribution settings
-                pfn = SimplePFNSklearn(config_path=cfg_path, 
-                                        checkpoint_path=ckpt, 
-                                        device=args.device, 
-                                        verbose=not args.quiet,)
-                
-                # Override num_features to match dataset and read other parameters from config
-                mkwargs = {
-                    "num_features": int(getattr(args, "max_n_features", X_train.shape[1]) or X_train.shape[1]),
-                }
-                
-                # Only override if the config doesn't specify these values or they need adjustment
-                if not model_cfg.get("d_model"):
-                    mkwargs["d_model"] = 256
-                if not model_cfg.get("depth"):  
-                    mkwargs["depth"] = 8
-                if not model_cfg.get("heads_feat"):
-                    mkwargs["heads_feat"] = 8
-                if not model_cfg.get("heads_samp"):
-                    mkwargs["heads_samp"] = 8
-                if not model_cfg.get("dropout"):
-                    mkwargs["dropout"] = 0.0
-
-                if not args.quiet:
-                    print("[run_benchmark] PFN wrapper override model_kwargs:", json.dumps(mkwargs, indent=2))
-                    if use_bar_distribution:
-                        print("[run_benchmark] BarDistribution detected in config")
-                
-                pfn.load(override_kwargs=mkwargs)
-                
-                # BarDistribution should always be loaded from the trained PFN checkpoint
-                if use_bar_distribution and pfn.bar_distribution is not None:
-                    # Check if BarDistribution was properly loaded from checkpoint
-                    if (pfn.bar_distribution.centers is None or 
-                        pfn.bar_distribution.edges is None or 
-                        pfn.bar_distribution.widths is None):
-                        if not args.quiet:
-                            print("[run_benchmark] ERROR: BarDistribution not found in checkpoint!")
-                            print("[run_benchmark] BarDistribution should always be loaded from trained PFN.")
-                        raise ValueError("BarDistribution parameters missing from checkpoint. Cannot proceed without trained BarDistribution.")
-                    else:
-                        if not args.quiet:
-                            print("[run_benchmark] BarDistribution parameters loaded from checkpoint")
-                elif use_bar_distribution and pfn.bar_distribution is None:
-                    if not args.quiet:
-                        print("[run_benchmark] ERROR: BarDistribution expected but not found in model!")
-                    raise ValueError("BarDistribution expected from config but not found in loaded model.")
-
-                y_pred_pfn = pfn.predict(X_train, y_train, X_test)
-                # pfn.predict returns (M,) for batch 1
-                mse_pfn = float(mean_squared_error(y_test, y_pred_pfn))
-                r2_pfn = float(r2_score(y_test, y_pred_pfn))
-            except Exception as e:
-                print(f"SimplePFN failed for task {tid}: {e}")
-
-            results.append({
-                "process_id": os.getpid(),  # Add process ID to track which run produced these results
-                "timestamp": datetime.now().isoformat(),  # Add timestamp for run tracking
-                "checkpoint_path": os.path.basename(ckpt),  # Track which model checkpoint was used
-                "task_id": int(tid),
-                "dataset_shape": d.get("data_shape"),
-                "num_features": X_train.shape[1],
-                "n_train": X_train.shape[0],
-                "n_test": X_test.shape[0],
-                "mse_lr": mse_lr,
-                "mse_rf": mse_rf,
-                "mse_pfn": mse_pfn,
-                "r2_lr": r2_lr,
-                "r2_rf": r2_rf,
-                "r2_pfn": r2_pfn,
-            })
-
-            if not args.quiet:
-                print(f"Task {tid} — MSE LR: {mse_lr:.4f}, RF: {mse_rf:.4f}, PFN: {mse_pfn}; R2 LR: {r2_lr:.4f}, RF: {r2_rf:.4f}, PFN: {r2_pfn}")
-
-        except Exception as e:
-            print(f"Error processing task {tid}: {e}")
-
-    df = pd.DataFrame(results)
-    
-    # Calculate median and mean overall performance
-    median_mse = df[['mse_lr', 'mse_rf', 'mse_pfn']].median()
-    mean_mse = df[['mse_lr', 'mse_rf', 'mse_pfn']].mean()
-    median_r2 = df[['r2_lr', 'r2_rf', 'r2_pfn']].median()
-    mean_r2 = df[['r2_lr', 'r2_rf', 'r2_pfn']].mean()
-
-    # Append these statistics to the DataFrame
-    summary_stats = {
-        'process_id': 'summary',
-        'timestamp': datetime.now().isoformat(),
-        'checkpoint_path': 'N/A',
-        'task_id': 'N/A',
-        'dataset_shape': 'N/A',
-        'num_features': 'N/A',
-        'n_train': 'N/A',
-        'n_test': 'N/A',
-        'mse_lr': median_mse['mse_lr'],
-        'mse_rf': median_mse['mse_rf'],
-        'mse_pfn': median_mse['mse_pfn'],
-        'r2_lr': median_r2['r2_lr'],
-        'r2_rf': median_r2['r2_rf'],
-        'r2_pfn': median_r2['r2_pfn'],
-    }
-    df = pd.concat([df, pd.DataFrame([summary_stats])], ignore_index=True)
-
-    # Print the statistics
-    print("\nMedian MSE:")
-    print(median_mse)
-    print("\nMean MSE:")
-    print(mean_mse)
-    print("\nMedian R²:")
-    print(median_r2)
-    print("\nMean R²:")
-    print(mean_r2)
-
-    # Generate output filename with process ID
-    process_id = os.getpid()
-    out_file_path = Path(args.output)
-    
-    # Insert process ID into filename before extension
-    if out_file_path.suffix:
-        # e.g., "benchmark_results.csv" -> "benchmark_results_pid12345.csv"
-        stem = out_file_path.stem
-        suffix = out_file_path.suffix
-        parent = out_file_path.parent
-        out_file = parent / f"{stem}_pid{process_id}{suffix}"
+    # Print summary metrics robustly (ignore summary row if present, handle missing columns)
+    df_metrics = df[df["process_id"] != "summary"] if "process_id" in df.columns else df
+    mse_cols = [c for c in ["mse_lr", "mse_rf", "mse_pfn"] if c in df_metrics.columns]
+    r2_cols = [c for c in ["r2_lr", "r2_rf", "r2_pfn"] if c in df_metrics.columns]
+    if not df_metrics.empty and mse_cols and r2_cols:
+        median_mse = df_metrics[mse_cols].median(numeric_only=True)
+        mean_mse = df_metrics[mse_cols].mean(numeric_only=True)
+        median_r2 = df_metrics[r2_cols].median(numeric_only=True)
+        mean_r2 = df_metrics[r2_cols].mean(numeric_only=True)
+        print("\nMedian MSE:\n", median_mse)
+        print("\nMean MSE:\n", mean_mse)
+        print("\nMedian R\u00b2:\n", median_r2)
+        print("\nMean R\u00b2:\n", mean_r2)
     else:
-        # No extension, just append process ID
-        out_file = Path(f"{args.output}_pid{process_id}")
-    
-    df.to_csv(out_file, index=False)
-    print(f"\nSaved results to {out_file} (PID: {process_id})")
+        print("\nNo per-task metric rows available to summarize (0 successful tasks or missing metric columns).")
+
+    # Print detailed per-model summaries with confidence intervals and average ranks
+    if "process_id" in df.columns and (df["process_id"] == "summary_model").any():
+        df_sm = df[df["process_id"] == "summary_model"]
+        print("\nDetailed per-model summaries (95% CIs, IQR, std, avg ranks):")
+        # Order by model then metric for stable output
+        for _, row in df_sm.sort_values(["model", "metric"]).iterrows():
+            model = row.get("model", "?")
+            metric = row.get("metric", "?")
+            mean = row.get("mean", np.nan)
+            median = row.get("median", np.nan)
+            std = row.get("std", np.nan)
+            iqr = row.get("iqr", np.nan)
+            ci_mean_low = row.get("ci95_mean_low", np.nan)
+            ci_mean_high = row.get("ci95_mean_high", np.nan)
+            ci_med_low = row.get("ci95_median_low", np.nan)
+            ci_med_high = row.get("ci95_median_high", np.nan)
+            avg_rank_mse = row.get("avg_rank_mse", np.nan)
+            avg_rank_r2 = row.get("avg_rank_r2", np.nan)
+            print(
+                f"  - {model} [{metric}] | mean={mean:.4f} (95% CI [{ci_mean_low:.4f}, {ci_mean_high:.4f}]), "
+                f"median={median:.4f} (95% CI [{ci_med_low:.4f}, {ci_med_high:.4f}]), std={std:.4f}, iqr={iqr:.4f}, "
+                f"avg_rank_mse={avg_rank_mse:.2f}, avg_rank_r2={avg_rank_r2:.2f}"
+            )
+    else:
+        print("\nNo detailed model summaries available (no 'summary_model' rows).")
 
 
 if __name__ == "__main__":
@@ -381,6 +146,9 @@ if __name__ == "__main__":
     MAX_N_TEST = 250
     PREFER_NUMERIC = False
     ONLY_NUMERIC = False
+    REPEATS = 10
+    BASELINE_SET = "extended"  # or "extended"
+    BOOTSTRAP_SAMPLES = 1000
 
     args = SimpleNamespace(
         tasks=TASKS,
@@ -401,6 +169,9 @@ if __name__ == "__main__":
         only_numeric=ONLY_NUMERIC,
         max_n_train=int(MAX_N_TRAIN) if MAX_N_TRAIN else 0,
         max_n_test=int(MAX_N_TEST) if MAX_N_TEST else 0,
+        repeats=int(REPEATS) if REPEATS else 1,
+        baseline_set=BASELINE_SET,
+        bootstrap_samples=int(BOOTSTRAP_SAMPLES) if BOOTSTRAP_SAMPLES else 1000,
     )
 
     main(args)
