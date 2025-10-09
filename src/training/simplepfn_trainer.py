@@ -70,8 +70,22 @@ class SimplePFNTrainer:
         self.run_save_dir = None
         if self.save_dir:
             self.run_save_dir = os.path.join(self.save_dir, self.run_name)
-            os.makedirs(self.run_save_dir, exist_ok=True)
-            print(f"Model checkpoints will be saved to: {os.path.abspath(self.run_save_dir)}")
+            try:
+                os.makedirs(self.run_save_dir, exist_ok=True)
+                print(f"Model checkpoints will be saved to: {os.path.abspath(self.run_save_dir)}")
+            except (OSError, PermissionError) as e:
+                print(f"Warning: Could not create checkpoint directory {self.run_save_dir}: {e}")
+                print(f"         Attempting to use temporary directory instead...")
+                import tempfile
+                self.run_save_dir = os.path.join(tempfile.gettempdir(), f"simplepfn_checkpoints_{self.run_name}")
+                try:
+                    os.makedirs(self.run_save_dir, exist_ok=True)
+                    print(f"Model checkpoints will be saved to temporary directory: {self.run_save_dir}")
+                except Exception as e2:
+                    print(f"Error: Could not create temporary checkpoint directory: {e2}")
+                    print(f"       Model checkpoints will be DISABLED for this run.")
+                    self.run_save_dir = None
+                    self.save_dir = None
         
         # Move model to device
         self.model = self.model.to(device)
