@@ -5,8 +5,14 @@ import torch
 from torch import Tensor
 import math
 
-from Losses.PosteriorPredictive import PosteriorPredictive
-
+# Robust import: try relative to package, then absolute, then with src prefix
+try:
+    from .PosteriorPredictive import PosteriorPredictive
+except Exception:
+    try:
+        from Losses.PosteriorPredictive import PosteriorPredictive
+    except Exception:
+        from src.Losses.PosteriorPredictive import PosteriorPredictive
 
 
 class BarDistribution(PosteriorPredictive):
@@ -30,7 +36,7 @@ class BarDistribution(PosteriorPredictive):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
         max_fit_items: Optional[int] = None,
-        log_prob_clip_min: float = -50.0,  # Minimum log probability to prevent -inf
+        log_prob_clip_min: float = -50.0,  # Minimum log probability to prevent -inf in training loops
         log_prob_clip_max: float = 50.0,   # Maximum log probability to prevent overflow
     ):
         if num_bars < 1:
@@ -52,45 +58,37 @@ class BarDistribution(PosteriorPredictive):
         self.base_s_left: Optional[Tensor] = None
         self.base_s_right: Optional[Tensor] = None
 
-        # constants
-        self._log_floor = torch.tensor(1e-300, device=self.device, dtype=self.dtype)
-        self._norm_const = torch.tensor(1.0 / math.sqrt(2.0 * math.pi), device=self.device, dtype=self.dtype)
+        # constants (stored with correct dtype/device)
+        self._LOG_TWO = torch.tensor(math.log(2.0), device=self.device, dtype=self.dtype)
+        self._LOG_SQRT_2PI = torch.tensor(0.5 * math.log(2.0 * math.pi), device=self.device, dtype=self.dtype)
+        # pragmatic ceiling to avoid ridiculous scales; doesn’t change API
+        self._SCALE_CEIL = torch.tensor(1e6, device=self.device, dtype=self.dtype)
+        # guard tiny widths
+        self._MIN_WIDTH = torch.tensor(self.min_width, device=self.device, dtype=self.dtype)
 
     # ------------------------- Fit bar locations -------------------------
 
     @torch.no_grad()
-    def fit(self, dataloader: Iterable[Tuple[Tensor, Tensor, Tensor, Tensor]], 
+    def fit(self, dataloader: Iterable[Tuple[Tensor, Tensor, Tensor, Tensor]],
             max_batches: Optional[int] = None) -> "BarDistribution":
-        """
-        Fit the BarDistribution to data from a dataloader.
-        
-        Args:
-            dataloader: DataLoader yielding (X_train, y_train, X_test, y_test) tuples
-            max_batches: Maximum number of batches to use for fitting. If None, uses all batches.
-        
-        Returns:
-            self for method chaining
-        """
         ys = []
         total = 0
         batch_count = 0
-        
+
         for batch in dataloader:
             if max_batches is not None and batch_count >= max_batches:
                 break
-
-        
-                
             if len(batch) != 4:
                 raise ValueError("Each dataloader item must be (X_train, y_train, X_test, y_test).")
             _, y_tr, _, y_te = batch
             y_tr = y_tr.squeeze(-1)
             y_te = y_te.squeeze(-1)
-            
+
             if y_tr.ndim != 2 or y_te.ndim != 2:
                 raise ValueError("y_train and y_test must be (B, N/M).")
-            y_tr_flat = y_tr.reshape(-1)
-            y_te_flat = y_te.reshape(-1)
+
+            y_tr_flat = y_tr.reshape(-1).detach()
+            y_te_flat = y_te.reshape(-1).detach()
 
             if self.max_fit_items is not None:
                 remaining = max(0, self.max_fit_items - total)
@@ -100,25 +98,27 @@ class BarDistribution(PosteriorPredictive):
                 need_te = min(remaining - need_tr, y_te_flat.numel())
                 if need_tr > 0:
                     idx = torch.randint(0, y_tr_flat.numel(), (need_tr,), device=y_tr_flat.device)
-                    ys.append(y_tr_flat[idx].cpu())
+                    ys.append(y_tr_flat.index_select(0, idx).cpu())
                     total += need_tr
                 if need_te > 0:
                     idx = torch.randint(0, y_te_flat.numel(), (need_te,), device=y_te_flat.device)
-                    ys.append(y_te_flat[idx].cpu())
+                    ys.append(y_te_flat.index_select(0, idx).cpu())
                     total += need_te
             else:
                 ys.append(y_tr_flat.cpu())
                 ys.append(y_te_flat.cpu())
-            
+
             batch_count += 1
 
         if not ys:
             raise ValueError("No y data collected for fit().")
 
         y_all = torch.cat(ys, dim=0).to(torch.float64)
+        y_all = y_all[torch.isfinite(y_all)]
+        if y_all.numel() == 0:
+            raise ValueError("All y values were non-finite in fit().")
+
         y_min, y_max = torch.min(y_all), torch.max(y_all)
-        if not (torch.isfinite(y_min) and torch.isfinite(y_max)):
-            raise ValueError("Non-finite y encountered during fit().")
 
         K = self.num_bars
         probs = torch.linspace(0.0, 1.0, steps=K + 1, dtype=torch.float64)
@@ -129,7 +129,7 @@ class BarDistribution(PosteriorPredictive):
             centers = torch.quantile(y_all, mids, interpolation="linear")
 
         # Enforce strict increasing centers (tiny jitter if needed)
-        scale = torch.maximum(y_max - y_min, torch.tensor(1.0, dtype=torch.float64))
+        scale = torch.clamp(y_max - y_min, min=torch.tensor(1.0, dtype=torch.float64))
         eps = (1e-9 * float(K)) * scale
         for i in range(K - 1):
             if centers[i + 1] - centers[i] <= 0:
@@ -143,14 +143,15 @@ class BarDistribution(PosteriorPredictive):
             edges[1] = centers[0] + 0.5 * width
         else:
             edges[1:-1] = 0.5 * (centers[:-1] + centers[1:])
-            edges[0] = centers[0] - 0.5 * float(centers[1] - centers[0])
-            edges[-1] = centers[-1] + 0.5 * float(centers[-1] - centers[-2])
+            edges[0] = centers[0] - 0.5 * float(max(centers[1] - centers[0], 1e-6))
+            edges[-1] = centers[-1] + 0.5 * float(max(centers[-1] - centers[-2], 1e-6))
 
-        widths = torch.diff(edges).clamp(min=self.min_width)
+        widths = torch.diff(edges)
+        widths = torch.clamp(widths, min=self.min_width)
 
-        # Tail base scales from near-edge widths
-        base_s_left = float(widths[0])
-        base_s_right = float(widths[-1])
+        # Tail base scales from near-edge widths (clamped)
+        base_s_left = float(max(widths[0].item(), self.min_width))
+        base_s_right = float(max(widths[-1].item(), self.min_width))
 
         self.centers = centers.to(self.device, self.dtype)
         self.edges = edges.to(self.device, self.dtype)
@@ -172,8 +173,8 @@ class BarDistribution(PosteriorPredictive):
         K = self.num_bars
         self._validate_pred(pred, (B, M, K + 4))
 
-        pdf = self._pdf_from_pred(pred, y)  # (B,M)
-        logpdf = torch.log(pdf)  # pdf is already clipped in _pdf_from_pred
+        logpdf = self._logpdf_from_pred(pred, y)  # (B,M)
+        # Bound extreme tails to keep training stable
         logpdf = torch.clamp(logpdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
         return logpdf.mean(dim=1)
 
@@ -187,24 +188,22 @@ class BarDistribution(PosteriorPredictive):
         self._validate_pred(pred, (B, M, K + 4))
 
         w_logits, sL_raw, sR_raw = self._unpack(pred)
-        probs = torch.softmax(w_logits, dim=-1)  # (B,M,K+2)
-        pL = probs[..., 0]
-        pBars = probs[..., 1:-1]                 # (B,M,K)
-        pR = probs[..., -1]
+        log_probs = torch.log_softmax(w_logits, dim=-1)  # (B,M,K+2)
 
-        sL = self.base_s_left * (torch.nn.functional.softplus(sL_raw) + self.scale_floor)
-        sR = self.base_s_right * (torch.nn.functional.softplus(sR_raw) + self.scale_floor)
+        # Scales (safe)
+        sL = self._safe_scale(self.base_s_left, sL_raw)
+        sR = self._safe_scale(self.base_s_right, sR_raw)
 
-        # Tail densities at edges (Gaussian peak at mean=edge):
-        # 2 * pTail * N(edge; edge, s) = 2*pTail * (1/(sqrt(2π)*s))
-        dens_left_edge = (2.0 * pL) * (self._norm_const / sL)
-        dens_right_edge = (2.0 * pR) * (self._norm_const / sR)
+        # log density at edges for tails: log(2 pTail) + logN(edge; edge, s) = log 2 + log pTail - log s - 0.5 log(2π)
+        log_dens_left_edge = self._LOG_TWO + log_probs[..., 0] - torch.log(sL) - self._LOG_SQRT_2PI
+        log_dens_right_edge = self._LOG_TWO + log_probs[..., -1] - torch.log(sR) - self._LOG_SQRT_2PI
 
-        # Max bar density
-        bar_densities = pBars / self.widths.view(1, 1, K)
-        max_bar_dens, max_idx = torch.max(bar_densities, dim=-1)
+        # Bar density (uniform): log p_k - log width_k
+        log_bar_densities = log_probs[..., 1:-1] - torch.log(self.widths.view(1, 1, K))
+        max_log_bar_dens, max_idx = torch.max(log_bar_densities, dim=-1)
 
-        candidates = torch.stack([dens_left_edge, max_bar_dens, dens_right_edge], dim=-1)
+        # Compare three candidates in log-space
+        candidates = torch.stack([log_dens_left_edge, max_log_bar_dens, log_dens_right_edge], dim=-1)
         arg = candidates.argmax(dim=-1)
 
         mode_vals = torch.empty(B, M, device=self.device, dtype=self.dtype)
@@ -232,13 +231,17 @@ class BarDistribution(PosteriorPredictive):
         self._validate_pred(pred, (B, M, K + 4))
 
         w_logits, sL_raw, sR_raw = self._unpack(pred)
-        probs = torch.softmax(w_logits, dim=-1)
+        # Convert to probs carefully; clamp small to prevent all-zero after extreme logits
+        log_probs = torch.log_softmax(w_logits, dim=-1)
+        probs = torch.exp(torch.clamp(log_probs, min=self.log_prob_clip_min))  # (B,M,K+2)
+        probs = probs / probs.sum(dim=-1, keepdim=True)
+
         pL = probs[..., 0]
         pBars = probs[..., 1:-1]  # (B,M,K)
         pR = probs[..., -1]
 
-        sL = self.base_s_left * (torch.nn.functional.softplus(sL_raw) + self.scale_floor)
-        sR = self.base_s_right * (torch.nn.functional.softplus(sR_raw) + self.scale_floor)
+        sL = self._safe_scale(self.base_s_left, sL_raw)
+        sR = self._safe_scale(self.base_s_right, sR_raw)
 
         mids = 0.5 * (self.edges[:-1] + self.edges[1:])       # (K,)
         bar_mean = (pBars * mids.view(1, 1, K)).sum(dim=-1)   # (B,M)
@@ -263,60 +266,62 @@ class BarDistribution(PosteriorPredictive):
         self._validate_pred(pred, (B, M, K + 4))
 
         w_logits, sL_raw, sR_raw = self._unpack(pred)
+        # Use softmax here (sampling needs probs); stay stable by subtracting max
         probs = torch.softmax(w_logits, dim=-1)  # (B,M,K+2)
 
-        sL = self.base_s_left * (torch.nn.functional.softplus(sL_raw) + self.scale_floor)
-        sR = self.base_s_right * (torch.nn.functional.softplus(sR_raw) + self.scale_floor)
+        sL = self._safe_scale(self.base_s_left, sL_raw)
+        sR = self._safe_scale(self.base_s_right, sR_raw)
 
-        # Sample mixture component via inverse CDF on cumulative probs
+        # Cumulative probabilities
         cum = torch.cumsum(probs, dim=-1)  # (B,M,K+2)
-        u = torch.rand(B, num_samples, M, device=self.device, dtype=self.dtype)
-        
-        # Vectorized sampling: flatten and use bucketize for each (B,M) combination
-        cum_flat = cum.view(-1, cum.shape[-1])  # (B*M, K+2)
-        u_flat = u.view(-1)  # (B*S*M,)
-        
-        # For each u value, find which cumulative bin it falls into
-        comp_flat = torch.zeros_like(u_flat, dtype=torch.long)
-        for i in range(cum_flat.shape[0]):
-            # Find indices in u_flat that correspond to this (B,M) position
-            start_idx = i * num_samples
-            end_idx = (i + 1) * num_samples
-            if start_idx < u_flat.shape[0]:
-                end_idx = min(end_idx, u_flat.shape[0])
-                u_subset = u_flat[start_idx:end_idx]
-                comp_flat[start_idx:end_idx] = torch.bucketize(u_subset, cum_flat[i], right=False)
-        
-        comp = comp_flat.view(B, num_samples, M)  # (B,S,M)
+        # ensure last exactly 1 to avoid out-of-range indices
+        cum[..., -1] = 1.0
+
+        # Vectorized sampling with searchsorted
+        u = torch.rand(B, num_samples, M, device=self.device, dtype=self.dtype)  # (B,S,M)
+        cum_flat = cum.reshape(B * M, K + 2)
+        u_flat = u.permute(0, 2, 1).reshape(B * M, num_samples)                  # (B*M,S)
+        comp_flat = torch.searchsorted(cum_flat, u_flat, right=False)            # (B*M,S), long
+        comp = comp_flat.reshape(B, M, num_samples).permute(0, 2, 1).contiguous()  # (B,S,M)
 
         out = torch.empty(B, num_samples, M, device=self.device, dtype=self.dtype)
 
-        # Gaussian helpers
-        def half_normal(scale: Tensor, size_mask):
-            # |N(0, scale^2)|
-            z = torch.randn(size_mask.sum().item(), device=self.device, dtype=self.dtype)
-            return torch.abs(z) * scale[size_mask]
+        # Gaussian helpers: |N(0, s^2)|
+        def half_normal(x_scale: Tensor, mask: Tensor) -> Tensor:
+            # x_scale shape: (B,S,M)
+            n = int(mask.sum().item())
+            if n == 0:
+                return torch.empty(0, device=self.device, dtype=self.dtype)
+            z = torch.randn(n, device=self.device, dtype=self.dtype)
+            scales = x_scale[mask]
+            return torch.abs(z) * scales
+
+        # Broadcast scales to (B,S,M)
+        sL_b = sL.unsqueeze(1).expand(B, num_samples, M)
+        sR_b = sR.unsqueeze(1).expand(B, num_samples, M)
 
         # Left tail: y = edge_left - |N(0, sL^2)|
         maskL = comp == 0
         if maskL.any():
-            out[maskL] = self.edges[0] - half_normal(sL.unsqueeze(1).expand(B, num_samples, M), maskL)
+            out[maskL] = self.edges[0] - half_normal(sL_b, maskL)
 
         # Bars: uniform on [edge_k, edge_{k+1}]
-        edges = self.edges
         if K > 0:
-            for k in range(K):
-                maskK = comp == (k + 1)
-                if maskK.any():
-                    a = edges[k]
-                    b = edges[k + 1]
-                    uK = torch.rand(maskK.sum().item(), device=self.device, dtype=self.dtype)
-                    out[maskK] = a + (b - a) * uK
+            edges = self.edges  # (K+1,)
+            # For bar components, comp in [1..K]
+            bar_mask_any = (comp >= 1) & (comp <= K)
+            if bar_mask_any.any():
+                # compute k index for bars
+                k_idx = torch.clamp(comp - 1, min=0, max=K - 1)
+                a = edges[k_idx]               # (B,S,M)
+                b = edges[torch.clamp(k_idx + 1, max=K)]  # safe next edge
+                uK = torch.rand_like(out)
+                out[bar_mask_any] = (a + (b - a) * uK)[bar_mask_any]
 
         # Right tail: y = edge_right + |N(0, sR^2)|
         maskR = comp == (K + 1)
         if maskR.any():
-            out[maskR] = self.edges[-1] + half_normal(sR.unsqueeze(1).expand(B, num_samples, M), maskR)
+            out[maskR] = self.edges[-1] + half_normal(sR_b, maskR)
 
         return out
 
@@ -342,49 +347,68 @@ class BarDistribution(PosteriorPredictive):
         sR_raw = pred[..., K + 3]       # (B,M)
         return w_logits, sL_raw, sR_raw
 
-    def _pdf_from_pred(self, pred: Tensor, y: Tensor) -> Tensor:
+    def _safe_scale(self, base: Tensor, raw: Tensor) -> Tensor:
         """
-        Vectorized pdf(y) with mixture params from pred.
-        y: (B,M)  -> returns (B,M)
+        Map raw -> positive scale with floors/ceilings to avoid 0, inf, NaN.
+        """
+        s = torch.nn.functional.softplus(raw) + self.scale_floor
+        s = base * s
+        # clamp to reasonable numeric bounds
+        s = torch.clamp(s, min=torch.finfo(self.dtype).tiny, max=self._SCALE_CEIL)
+        return s
+
+    def _logpdf_from_pred(self, pred: Tensor, y: Tensor) -> Tensor:
+        """
+        Vectorized log pdf(y) with mixture params from pred.
+        y: (B,M)  -> returns (B,M) in log-space
         """
         B, M = y.shape
+        K = self.num_bars
         w_logits, sL_raw, sR_raw = self._unpack(pred)
 
-        probs = torch.softmax(w_logits, dim=-1)  # (B,M,K+2)
-        pL = probs[..., 0]
-        pBars = probs[..., 1:-1]                 # (B,M,K)
-        pR = probs[..., -1]
+        # Mixture weights in log-space
+        log_w = torch.log_softmax(w_logits, dim=-1)  # (B,M,K+2)
 
-        sL = self.base_s_left * (torch.nn.functional.softplus(sL_raw) + self.scale_floor)
-        sR = self.base_s_right * (torch.nn.functional.softplus(sR_raw) + self.scale_floor)
+        # Scales (safe)
+        sL = self._safe_scale(self.base_s_left, sL_raw)   # (B,M)
+        sR = self._safe_scale(self.base_s_right, sR_raw)  # (B,M)
 
-        pdf = torch.empty_like(y, dtype=self.dtype, device=self.device)
+        # Masks for support pieces
         left_mask = y < self.edges[0]
         right_mask = y >= self.edges[-1]
         mid_mask = ~(left_mask | right_mask)
 
-        # Left half-Gaussian
-        if left_mask.any():
-            z = (y[left_mask] - self.edges[0]) / sL[left_mask]  # negative values
-            gauss = self._norm_const * torch.exp(-0.5 * z * z) / sL[left_mask]
-            pdf[left_mask] = (2.0 * pL[left_mask]) * gauss
+        # Output container
+        logpdf = torch.full((B, M), -float("inf"), device=self.device, dtype=self.dtype)
 
-        # Right half-Gaussian
+        # ---- Left tail log-density (half-normal centered at edge_left) ----
+        if left_mask.any():
+            z = (y[left_mask] - self.edges[0]) / sL[left_mask]  # negative values allowed
+            # log N(y; edge, s) = -0.5 z^2 - log s - 0.5 log(2π)
+            log_gauss = -0.5 * (z * z) - torch.log(sL[left_mask]) - self._LOG_SQRT_2PI
+            # include factor 2 and mixture weight
+            logpdf[left_mask] = self._LOG_TWO + log_w[..., 0][left_mask] + log_gauss
+
+        # ---- Right tail log-density (half-normal centered at edge_right) ----
         if right_mask.any():
             z = (y[right_mask] - self.edges[-1]) / sR[right_mask]  # nonnegative
-            gauss = self._norm_const * torch.exp(-0.5 * z * z) / sR[right_mask]
-            pdf[right_mask] = (2.0 * pR[right_mask]) * gauss
+            log_gauss = -0.5 * (z * z) - torch.log(sR[right_mask]) - self._LOG_SQRT_2PI
+            logpdf[right_mask] = self._LOG_TWO + log_w[..., -1][right_mask] + log_gauss
 
-        # Bars
+        # ---- Bars (uniform) between edges ----
         if mid_mask.any():
+            # Identify the bar index for each mid point
             internal = self.edges[1:-1]  # (K-1,)
-            k = torch.bucketize(y[mid_mask], internal, right=False)  # (num_mid,)
-            widths_k = self.widths[k]
-            pBars_all = pBars[mid_mask]                               # (num_mid, K)
-            dens = pBars_all.gather(dim=-1, index=k.view(-1, 1)).squeeze(-1) / widths_k
-            pdf[mid_mask] = dens
+            k = torch.bucketize(y[mid_mask], internal, right=False)  # in [0..K-1]
+            # log density = log p_k - log width_k
+            log_pbars = log_w[..., 1:-1][mid_mask]  # (Nmid, K)
+            # select the active bar weight per point
+            log_p_k = log_pbars.gather(dim=-1, index=k.view(-1, 1)).squeeze(-1)  # (Nmid,)
+            log_width_k = torch.log(self.widths[k])  # (Nmid,)
+            logpdf[mid_mask] = log_p_k - log_width_k
 
-        return torch.clamp(pdf, min=torch.exp(torch.tensor(self.log_prob_clip_min, device=self.device, dtype=self.dtype)))
+        # final numeric clipping
+        return torch.clamp(logpdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
 
     # ------------------------- Convenience -------------------------
 
