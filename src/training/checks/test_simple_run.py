@@ -37,64 +37,70 @@ def load_and_modify_existing_config(config_path):
     
     # Reduce training iterations for quick test
 
-    config['training_config']['max_steps'] = {'value': 3}  # Very few steps
-    config['training_config']['batch_size'] = {'value': 2}  # Small batch
+    config['training_config']['max_steps'] = {'value': 30}  # Very few steps
+    config['training_config']['batch_size'] = {'value': 16}  # Small batch
     config['training_config']['device'] = {'value': 'cpu'}  # Force CPU usage
-    config['training_config']['num_workers'] = {'value': 0}  # Avoid multiprocessing issues
+    config['training_config']['num_workers'] = {'value': 4}  # Avoid multiprocessing issues
     
     # Reduce dataset size for speed
     #if 'dataset_config' in config:
-    config['dataset_config']['dataset_size'] = {'value': 20}  # Much smaller
+    #config['dataset_config']['dataset_size'] = {'value': 10000000}  # Much smaller
     
     return config
 
 
 def run_simple_run_test(config_path):
-    """Run the simple_run.py script with the test config."""
+    """Run the simple_run.py script with the test config, streaming output live."""
     script_path = Path(__file__).parent.parent / 'simple_run.py'  # Go up one level to training directory
-    
+
     if not script_path.exists():
         print(f"[ERROR] simple_run.py not found at: {script_path}")
         return False
-    
-    # Build command
+
+    # Build command with unbuffered Python (-u) for immediate flushing
     cmd = [
         sys.executable,
+        '-u',
         str(script_path),
         '--config', str(config_path)
     ]
-    
+
     print(f"[INFO] Running command: {' '.join(cmd)}")
     print("-" * 50)
-    
+
+    # Ensure child process is unbuffered as well (belt-and-suspenders)
+    env = os.environ.copy()
+    env['PYTHONUNBUFFERED'] = '1'
+
     try:
-        # Run the script and capture output
-        result = subprocess.run(
+        # Start process and stream stdout/stderr in real time
+        with subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
             text=True,
-            timeout=300  # 5 minute timeout
-        )
-        
-        print("STDOUT:")
-        print(result.stdout)
-        
-        if result.stderr:
-            print("\nSTDERR:")
-            print(result.stderr)
-        
-        print(f"\nReturn code: {result.returncode}")
-        
-        if result.returncode == 0:
+            env=env
+        ) as proc:
+            try:
+                # Read and forward output line by line
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    print(line, end='')
+                # Wait with timeout to avoid hanging forever
+                returncode = proc.wait(timeout=300)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                print("\n[ERROR] Test timed out after 5 minutes")
+                return False
+
+        print(f"\nReturn code: {returncode}")
+        if returncode == 0:
             print("[OK] simple_run.py executed successfully!")
             return True
         else:
             print("[ERROR] simple_run.py failed!")
             return False
-            
-    except subprocess.TimeoutExpired:
-        print("[ERROR] Test timed out after 5 minutes")
-        return False
     except Exception as e:
         print(f"[ERROR] Failed to run test: {e}")
         return False

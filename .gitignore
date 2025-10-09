@@ -18,3 +18,4 @@ src/training/checks/ResultsDataloaderSamples
 src/training/checks/ResultsBaselines
 /experiments/FirstTests/benchmark_results
 /data_cache/*
+wandb

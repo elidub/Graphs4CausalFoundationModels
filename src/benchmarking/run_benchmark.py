@@ -23,7 +23,8 @@ import numpy as np
 
 # ensure repo root is on sys.path so local imports work whether run as module or script
 repo_root = Path(__file__).resolve().parents[2]
-sys.path.append(str(repo_root))
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 
 from src.benchmarking.Benchmark import Benchmark  # noqa: E402
 from src.benchmarking.load_openml_benchmark import DEFAULT_TABULAR_NUM_REG_TASKS  # noqa: E402
@@ -55,8 +56,19 @@ def main(args):
     bench = Benchmark(data_dir=args.data_dir, device=args.device, verbose=not args.quiet)
 
     tasks = [int(t) for t in args.tasks.split(",")] if args.tasks else DEFAULT_TABULAR_NUM_REG_TASKS[: args.max_tasks]
+    # Resolve config and checkpoint with safe defaults
     cfg_path = args.config or str(repo_root / "experiments/FirstTests/configs/early_test2.yaml")
-    ckpt = args.checkpoint or str(repo_root / "experiments/FirstTests/checkpoints/early_test1_32bs/step_100000.pt")
+    ckpt = args.checkpoint
+    if not ckpt:
+        # Try to auto-detect a checkpoint in experiments/FirstTests/checkpoints
+        ckpt_dir = repo_root / "experiments/FirstTests/checkpoints"
+        if ckpt_dir.exists():
+            pts = sorted(ckpt_dir.rglob("*.pt"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if pts:
+                ckpt = str(pts[0])
+    if ckpt and not Path(ckpt).exists():
+        print(f"Warning: checkpoint path not found: {ckpt}. PFN will be skipped.")
+        ckpt = None
 
     df = bench.run(
         tasks=tasks,
@@ -127,11 +139,11 @@ if __name__ == "__main__":
     TASKS = ""  # comma-separated task ids, e.g. "361072,361073" or empty to use defaults
     MAX_TASKS = 20
     DATA_DIR = "data_cache"
-    CONFIG = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/configs/early_test.yaml"
-    CHECKPOINT = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16433178/final_model_with_bardist.pt"
-    DEVICE = "cuda"
+    CONFIG = str(repo_root / "experiments/FirstTests/configs/early_test2.yaml")
+    CHECKPOINT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16423776.0/final_model_with_bardist.pt"  # Leave empty to auto-detect or skip PFN
+    DEVICE = "cpu"
     OUTPUT = "benchmark_results.csv"  # Process ID will be automatically added: benchmark_results_pid12345.csv
-    NO_TARGET_ENCODING = False
+    NO_TARGET_ENCODING = True
     QUIET = False
 
     # Build a simple args object similar to argparse.Namespace
@@ -139,15 +151,15 @@ if __name__ == "__main__":
 
     # Subsampling env vars (optional) - read from ALL_CAPS environment variables so submit files can set them
     N_FEATURES = 10
-    MAX_N_FEATURES = 50
-    N_TRAIN = 250
-    MAX_N_TRAIN = 250
-    N_TEST = 250
-    MAX_N_TEST = 250
+    MAX_N_FEATURES = 19
+    N_TRAIN = 100
+    MAX_N_TRAIN = 125
+    N_TEST = 500
+    MAX_N_TEST = 500
     PREFER_NUMERIC = False
     ONLY_NUMERIC = False
     REPEATS = 10
-    BASELINE_SET = "extended"  # or "extended"
+    BASELINE_SET = "extended"  
     BOOTSTRAP_SAMPLES = 1000
 
     args = SimpleNamespace(

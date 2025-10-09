@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import os
+import sys
 from datetime import datetime
 
 import numpy as np
@@ -23,8 +24,25 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.metrics import mean_squared_error, r2_score
 
-from .load_openml_benchmark import SimpleOpenMLLoader, DEFAULT_TABULAR_NUM_REG_TASKS
-from priordata_processing.Preprocessor import Preprocessor
+src_dir = Path(__file__).parent.parent.parent
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
+
+
+
+# Robust imports so this file runs whether called as a script or a module
+try:
+    # When run via `python -m src.benchmarking.run_benchmark` or sys.path already has repo root
+    from load_openml_benchmark import SimpleOpenMLLoader, DEFAULT_TABULAR_NUM_REG_TASKS
+except Exception:
+    # Fallback: import with package prefix
+    from src.benchmarking.load_openml_benchmark import SimpleOpenMLLoader, DEFAULT_TABULAR_NUM_REG_TASKS
+
+try:
+    from priordata_processing.Preprocessor import Preprocessor
+except Exception:
+    # Fallback: import with package prefix
+    from src.priordata_processing.Preprocessor import Preprocessor
 
 
 class Benchmark:
@@ -137,13 +155,18 @@ class Benchmark:
         y_train = y_train_t[0].numpy()
         y_test = y_test_t[0].numpy()
 
-        feature_names_padded = feature_names + [f"padded_feature_{i}" for i in range(len(feature_names), X_train.shape[1])]
+        # Align column names to match processed feature count exactly
+        out_F = X_train.shape[1]
+        if len(feature_names) >= out_F:
+            feature_names_aligned = feature_names[:out_F]
+        else:
+            feature_names_aligned = feature_names + [f"padded_feature_{i}" for i in range(len(feature_names), out_F)]
         return {
-            "X_train": pd.DataFrame(X_train, columns=feature_names_padded),
-            "X_test": pd.DataFrame(X_test, columns=feature_names_padded),
+            "X_train": pd.DataFrame(X_train, columns=feature_names_aligned),
+            "X_test": pd.DataFrame(X_test, columns=feature_names_aligned),
             "y_train": pd.Series(y_train, name=target),
             "y_test": pd.Series(y_test, name=target),
-            "feature_names": feature_names_padded,
+            "feature_names": feature_names_aligned,
             "target_column": target,
             "data_shape": df.shape,
             "original_feature_count": len(feature_names),
@@ -214,6 +237,8 @@ class Benchmark:
         low = float(np.nanpercentile(stats, 100 * (alpha / 2)))
         high = float(np.nanpercentile(stats, 100 * (1 - alpha / 2)))
         return low, high
+
+
 
     def run(
         self,
@@ -330,8 +355,14 @@ class Benchmark:
 
                             if use_bar_distribution and pfn.bar_distribution is None:
                                 raise ValueError("BarDistribution expected from config but not found in loaded model.")
-
+                            
                             y_pred_pfn = pfn.predict(X_train, y_train, X_test)
+
+                            if np.isnan(y_pred_pfn).any():
+                                print(f"y_pred_pfn contains NaN values for task {tid} repeat {rep}. Skipping PFN evaluation.")
+                                print(f"y_pred_pfn: {y_pred_pfn}")
+                                raise ValueError("NaN values found in PFN predictions.")
+
                             mse_pfn = float(mean_squared_error(y_test, y_pred_pfn))
                             r2_pfn = float(r2_score(y_test, y_pred_pfn))
                         except Exception as e:
@@ -481,3 +512,94 @@ class Benchmark:
             print(f"Saved results to {out_file} (PID: {process_id})")
 
         return df_out
+
+    def run_simplified(
+        self,
+        fidelity: str = "low",
+        tasks: Optional[List[int]] = None,
+        # subsampling
+        n_features: int = 0,
+        max_n_features: int = 0,
+        n_train: int = 0,
+        max_n_train: int = 0,
+        n_test: int = 0,
+        max_n_test: int = 0,
+        prefer_numeric: bool = True,
+        only_numeric: bool = False,
+        # model
+        config_path: Optional[str] = None,
+        checkpoint_path: Optional[str] = None,
+        output_csv: str = "benchmark_results.csv",
+        device: Optional[str] = None,
+        quiet: bool = False,
+        bootstrap_samples: int = 1000,
+    ) -> pd.DataFrame:
+        """
+        Simplified benchmark entrypoint.
+
+        Choose a fidelity level instead of manually setting repeats, baseline set, or max_tasks:
+        - "minimal": 1 task, basic baselines, 1 repeat
+        - "low":     10 tasks, basic baselines, 1 repeat
+        - "high":    all tasks, extended baselines, 5 repeats
+        - "very high" (or very_high): all tasks, extended baselines, 25 repeats
+
+        Other arguments mirror `run` to control subsampling and PFN usage.
+        """
+        # Normalize fidelity key
+        key = fidelity.strip().lower().replace("-", "_").replace(" ", "_")
+        allowed = {"minimal", "low", "high", "very_high"}
+        if key not in allowed:
+            raise ValueError(f"Invalid fidelity '{fidelity}'. Choose one of: minimal, low, high, very high")
+
+        # Map fidelity to settings
+        if key == "minimal":
+            repeats = 1
+            baseline_set = "basic"
+            task_cap = 1
+        elif key == "low":
+            repeats = 1
+            baseline_set = "basic"
+            task_cap = 10
+        elif key == "high":
+            repeats = 5
+            baseline_set = "extended"
+            task_cap = None  # all
+        else:  # very_high
+            repeats = 25
+            baseline_set = "extended"
+            task_cap = None  # all
+
+        # Resolve tasks list with cap if provided/available
+        if tasks is None or len(tasks) == 0:
+            base_tasks = DEFAULT_TABULAR_NUM_REG_TASKS
+        else:
+            base_tasks = tasks
+
+        if task_cap is not None:
+            tasks_use = base_tasks[: task_cap]
+        else:
+            tasks_use = base_tasks
+
+        # Delegate to the main runner with mapped settings
+        return self.run(
+            tasks=tasks_use,
+            # subsampling
+            n_features=n_features,
+            max_n_features=max_n_features,
+            n_train=n_train,
+            max_n_train=max_n_train,
+            n_test=n_test,
+            max_n_test=max_n_test,
+            prefer_numeric=prefer_numeric,
+            only_numeric=only_numeric,
+            # model
+            config_path=config_path,
+            checkpoint_path=checkpoint_path,
+            output_csv=output_csv,
+            device=device,
+            quiet=quiet,
+            # mapped
+            repeats=repeats,
+            baseline_set=baseline_set,
+            bootstrap_samples=bootstrap_samples,
+        )

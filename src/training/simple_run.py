@@ -350,7 +350,11 @@ def main():
             # Model selection parameters
             enable_model_selection=training_config.get("model_selection_enabled", False),
             model_selection_metric=training_config.get("model_selection_metric", "eval/mse_median"),
-            model_selection_mode=training_config.get("model_selection_mode", "min")
+            model_selection_mode=training_config.get("model_selection_mode", "min"),
+            # Benchmark integration
+            config_path=args.config,
+            benchmark_eval_fidelity=training_config.get("benchmark_eval_fidelity"),
+            benchmark_final_fidelity=training_config.get("benchmark_final_fidelity"),
         )
         
         print(f"   Learning rate: {training_config.get('learning_rate', 1e-3)}")

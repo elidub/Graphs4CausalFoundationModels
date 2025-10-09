@@ -39,6 +39,10 @@ class SimplePFNTrainer:
         enable_model_selection: bool = False,  # Whether to enable automatic best model selection
         model_selection_metric: str = "eval/mse_median",  # Metric to use for model selection
         model_selection_mode: str = "min",  # "min" or "max" - whether lower or higher is better
+        # Benchmark integration
+        config_path: Optional[str] = None,  # Path to YAML config for PFN wrapper
+        benchmark_eval_fidelity: Optional[str] = None,  # Run benchmark at each eval with this fidelity (e.g., "minimal", "low", "high", "very high")
+        benchmark_final_fidelity: Optional[str] = None,  # Run benchmark at end with this fidelity
     ):
         self.model = model
         self.dataloader = dataloader
@@ -65,6 +69,15 @@ class SimplePFNTrainer:
         self.best_model_state = None
         self.best_model_step = 0
         self.best_model_metadata = None
+        
+        # Benchmark integration config
+        self.config_path = config_path
+        self.benchmark_eval_fidelity = benchmark_eval_fidelity
+        self.benchmark_final_fidelity = benchmark_final_fidelity
+        # Cached training shapes for aligning benchmark subsampling
+        self._train_n_features = None
+        self._train_n_train = None
+        self._train_n_test = None
         
         # Create a run-specific subfolder for checkpoints
         self.run_save_dir = None
@@ -689,6 +702,10 @@ class SimplePFNTrainer:
             n_test = sample_batch[2].shape[1]
             features = sample_batch[0].shape[2]
             print(f"Batch structure: {batch_size} samples, {n_train} train points, {n_test} test points, {features} features")
+            # Cache shapes for benchmark alignment
+            self._train_n_features = int(features)
+            self._train_n_train = int(n_train)
+            self._train_n_test = int(n_test)
         
         for step, batch in enumerate(self.dataloader):
             if step >= self.max_steps or self.terminate:
@@ -785,6 +802,16 @@ class SimplePFNTrainer:
                 # Log evaluation metrics to wandb
                 if self.wandb_run and eval_metrics:
                     self.wandb_run.log(eval_metrics, step=self.global_step)
+
+                # Optionally run external OpenML benchmark at evaluation checkpoints
+                if self.benchmark_eval_fidelity:
+                    try:
+                        self._run_benchmark_with_current_model(
+                            fidelity=self.benchmark_eval_fidelity,
+                            tag=f"eval_step{self.global_step}"
+                        )
+                    except Exception as e:
+                        print(f"[Trainer] Benchmark at eval step {self.global_step} failed: {e}")
             else:
                 # If evaluation is disabled but model selection is enabled,
                 # update best model based on training loss
@@ -832,6 +859,18 @@ class SimplePFNTrainer:
             self.save_model(filename="final.pt", 
                            metadata={'final': True})
             print(f"   Final model saved to {self.run_save_dir}")
+            # Run final benchmark if requested
+            if self.benchmark_final_fidelity:
+                # Use the just-saved final checkpoint
+                final_ckpt = os.path.join(self.run_save_dir, "final.pt")
+                try:
+                    self._run_benchmark_with_checkpoint(
+                        fidelity=self.benchmark_final_fidelity,
+                        tag="final",
+                        checkpoint_path=final_ckpt,
+                    )
+                except Exception as e:
+                    print(f"[Trainer] Final benchmark failed: {e}")
             
             # Save best model if model selection was enabled
             if self.enable_model_selection and self.best_model_state is not None:
@@ -847,3 +886,133 @@ class SimplePFNTrainer:
                 print(f"   Warning: Model selection was enabled but no best model was tracked.")
         
         return self.model
+
+    def _run_benchmark_with_current_model(self, fidelity: str, tag: str) -> None:
+        """Save a temporary checkpoint of the current model and run the OpenML benchmark with the given fidelity.
+
+        Args:
+            fidelity: One of {"minimal", "low", "high", "very high"}
+            tag: Short label used in output filenames (e.g., "eval_step1000")
+        """
+        # Ensure we have a place to save
+        if not self.run_save_dir:
+            import tempfile
+            self.run_save_dir = os.path.join(tempfile.gettempdir(), f"simplepfn_checkpoints_{self.run_name}")
+            os.makedirs(self.run_save_dir, exist_ok=True)
+
+        # Save a checkpoint for the benchmark to load
+        ckpt_name = f"benchmark_{tag}.pt"
+        ckpt_path = self.save_model(filename=ckpt_name, metadata={"stage": tag, "benchmark": True})
+        if not ckpt_path:
+            raise RuntimeError("Failed to save checkpoint for benchmark.")
+
+        self._run_benchmark_with_checkpoint(fidelity=fidelity, tag=tag, checkpoint_path=ckpt_path)
+
+    def _run_benchmark_with_checkpoint(self, fidelity: str, tag: str, checkpoint_path: str) -> None:
+        """Run the OpenML benchmark with a specified checkpoint."""
+        # Ensure import paths are robust regardless of invocation context
+        try:
+            import sys as _sys
+            from pathlib import Path as _Path
+            _repo_root = _Path(__file__).resolve().parents[2]
+            _src_dir = _repo_root / "src"
+            if str(_repo_root) not in _sys.path:
+                _sys.path.insert(0, str(_repo_root))
+            if str(_src_dir) not in _sys.path:
+                _sys.path.insert(0, str(_src_dir))
+        except Exception:
+            pass
+
+        # Robust import for Benchmark
+        try:
+            from src.benchmarking.Benchmark import Benchmark as _Benchmark
+        except Exception:
+            from benchmarking.Benchmark import Benchmark as _Benchmark
+
+        bench = _Benchmark(data_dir="data_cache", device=self.device, verbose=True)
+
+        # Determine subsampling to mirror training dimensions if available
+        n_feat = self._train_n_features or 0
+        n_tr = self._train_n_train or 0
+        n_te = self._train_n_test or 0
+
+        # Output file inside the run directory
+        out_csv = os.path.join(self.run_save_dir or ".", f"benchmark_{tag}.csv")
+
+        # Use the training config path if known for model construction
+        cfg_path = self.config_path
+
+        print(f"[Trainer] Running benchmark ({fidelity}) -> {out_csv}")
+        df = bench.run_simplified(
+            fidelity=fidelity,
+            # subsampling to align with training
+            n_features=int(n_feat),
+            max_n_features=int(n_feat) if n_feat else 0,
+            n_train=int(n_tr),
+            max_n_train=int(n_tr) if n_tr else 0,
+            n_test=int(n_te),
+            max_n_test=int(n_te) if n_te else 0,
+            config_path=cfg_path,
+            checkpoint_path=checkpoint_path,
+            output_csv=out_csv,
+            device=self.device,
+            quiet=False,
+        )
+        # Print summary metrics similar to run_benchmark.py
+        try:
+            df_metrics = df[df["process_id"] != "summary"] if "process_id" in df.columns else df
+            mse_cols = [c for c in ["mse_lr", "mse_rf", "mse_pfn"] if c in df_metrics.columns]
+            r2_cols = [c for c in ["r2_lr", "r2_rf", "r2_pfn"] if c in df_metrics.columns]
+            if not df_metrics.empty and mse_cols and r2_cols:
+                median_mse = df_metrics[mse_cols].median(numeric_only=True)
+                mean_mse = df_metrics[mse_cols].mean(numeric_only=True)
+                median_r2 = df_metrics[r2_cols].median(numeric_only=True)
+                mean_r2 = df_metrics[r2_cols].mean(numeric_only=True)
+                print("\nMedian MSE:\n", median_mse)
+                print("\nMean MSE:\n", mean_mse)
+                print("\nMedian R\u00b2:\n", median_r2)
+                print("\nMean R\u00b2:\n", mean_r2)
+            else:
+                print("\nNo per-task metric rows available to summarize (0 successful tasks or missing metric columns).")
+
+            if "process_id" in df.columns and (df["process_id"] == "summary_model").any():
+                df_sm = df[df["process_id"] == "summary_model"]
+                print("\nDetailed per-model summaries (95% CIs, IQR, std, avg ranks):")
+                for _, row in df_sm.sort_values(["model", "metric"]).iterrows():
+                    model = row.get("model", "?")
+                    metric = row.get("metric", "?")
+                    mean = row.get("mean", np.nan)
+                    median = row.get("median", np.nan)
+                    std = row.get("std", np.nan)
+                    iqr = row.get("iqr", np.nan)
+                    ci_mean_low = row.get("ci95_mean_low", np.nan)
+                    ci_mean_high = row.get("ci95_mean_high", np.nan)
+                    ci_med_low = row.get("ci95_median_low", np.nan)
+                    ci_med_high = row.get("ci95_median_high", np.nan)
+                    avg_rank_mse = row.get("avg_rank_mse", np.nan)
+                    avg_rank_r2 = row.get("avg_rank_r2", np.nan)
+                    print(
+                        f"  - {model} [{metric}] | mean={mean:.4f} (95% CI [{ci_mean_low:.4f}, {ci_mean_high:.4f}]), "
+                        f"median={median:.4f} (95% CI [{ci_med_low:.4f}, {ci_med_high:.4f}]), std={std:.4f}, iqr={iqr:.4f}, "
+                        f"avg_rank_mse={avg_rank_mse:.2f}, avg_rank_r2={avg_rank_r2:.2f}"
+                    )
+            else:
+                print("\nNo detailed model summaries available (no 'summary_model' rows).")
+        except Exception as _e:
+            print(f"[Trainer] Failed to print benchmark summary: {_e}")
+        # Optionally log a quick summary
+        if hasattr(self, 'wandb_run') and self.wandb_run is not None:
+            try:
+                # Log median metrics if present
+                df_metrics = df[df["process_id"] != "summary"] if "process_id" in df.columns else df
+                log = {}
+                for k in ["mse_lr", "mse_rf", "mse_pfn"]:
+                    if k in df_metrics.columns:
+                        log[f"benchmark/{tag}/{k}_median"] = float(df_metrics[k].median(skipna=True))
+                for k in ["r2_lr", "r2_rf", "r2_pfn"]:
+                    if k in df_metrics.columns:
+                        log[f"benchmark/{tag}/{k}_median"] = float(df_metrics[k].median(skipna=True))
+                if log:
+                    self.wandb_run.log(log, step=self.global_step)
+            except Exception:
+                pass
