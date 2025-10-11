@@ -33,6 +33,20 @@ echo "Setting up virtual environment paths explicitly..."
 export PATH="${PWD}/venv/bin:${PATH}"
 export VIRTUAL_ENV="${PWD}/venv"
 
+echo "Unzipping data_cache.zip if present..."
+if [ -f "data_cache.zip" ]; then
+	unzip -o -q data_cache.zip
+	echo "data_cache unzipped. Contents:"
+	ls -la data_cache | head -n 50 || true
+    # Ensure Benchmark picks the correct path regardless of cwd
+    export DATA_CACHE_DIR="${PWD}/data_cache"
+	export JOB_ROOT_DIR="${PWD}"
+    echo "Exported DATA_CACHE_DIR=${DATA_CACHE_DIR}"
+	echo "Exported JOB_ROOT_DIR=${JOB_ROOT_DIR}"
+else
+	echo "No data_cache.zip found; proceeding without cached datasets"
+fi
+
 #echo "Checking Python and torch after activation..."
 #which python3
 #echo "VIRTUAL_ENV: $VIRTUAL_ENV"
@@ -56,4 +70,4 @@ export VIRTUAL_ENV="${PWD}/venv"
 
 # Run SimplePFN training with config
 cd src/training
-python3 simple_run.py --config "../../early_test_50F_500S_2.yaml"
+python3 simple_run.py --config "../../early_test2.yaml"
