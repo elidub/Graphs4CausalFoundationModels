@@ -141,15 +141,25 @@ class SimpleOpenMLLoader:
 
 
 if __name__ == "__main__":
-    print("=== SimpleOpenMLLoader download-only demo ===")
+    print("=== SimpleOpenMLLoader: load default OpenML regression tasks ===")
     loader = SimpleOpenMLLoader(
         data_dir="data_cache",
         random_state=42,
         verbose=True,
     )
-    try:
-        ds = loader.download_dataset(531)
-        print(f"Raw df shape: {ds['df'].shape}, target: {ds['target_column']}")
-    except Exception as e:
-        print(f"Error loading dataset: {e}")
+
+    task_ids = DEFAULT_TABULAR_NUM_REG_TASKS
+    print(f"Attempting to load {len(task_ids)} tasks: {task_ids}")
+
+    results = loader.load_tasks_raw(task_ids)
+
+    print("\nSummary:")
+    print(f"Loaded {len(results)}/{len(task_ids)} tasks successfully")
+    for tid in sorted(results.keys()):
+        info = results[tid]
+        df = info["df"]
+        print(
+            f"- Task {tid}: dataset_id={info['dataset_id']}, "
+            f"target='{info['target_column']}', shape={df.shape}"
+        )
 

@@ -16,6 +16,10 @@ import traceback
 from pathlib import Path
 from torch.utils.data import DataLoader
 
+# Capture the initial working directory BEFORE any path manipulation
+# This is where HTCondor unzips files (including data_cache)
+INITIAL_WORKING_DIR = os.getcwd()
+
 # Add src directory to path for imports
 src_dir = Path(__file__).parent.parent
 if str(src_dir) not in sys.path:
@@ -355,6 +359,7 @@ def main():
             config_path=args.config,
             benchmark_eval_fidelity=training_config.get("benchmark_eval_fidelity"),
             benchmark_final_fidelity=training_config.get("benchmark_final_fidelity"),
+            benchmark_data_dir=training_config.get("benchmark_data_dir", os.path.join(INITIAL_WORKING_DIR, "data_cache")),
         )
         
         print(f"   Learning rate: {training_config.get('learning_rate', 1e-3)}")
@@ -368,6 +373,17 @@ def main():
         print(f"   Model selection: {'enabled' if training_config.get('model_selection_enabled', False) else 'disabled'}")
         if training_config.get('model_selection_enabled', False):
             print(f"   Selection metric: {training_config.get('model_selection_metric', 'eval/mse_median')} ({training_config.get('model_selection_mode', 'min')})")
+        
+        # Print benchmark configuration
+        if training_config.get("benchmark_eval_fidelity") or training_config.get("benchmark_final_fidelity"):
+            benchmark_data_dir = training_config.get("benchmark_data_dir", os.path.join(INITIAL_WORKING_DIR, "data_cache"))
+            print(f"   Benchmarking: enabled")
+            print(f"   Benchmark data_cache path: {benchmark_data_dir}")
+            print(f"   Benchmark data_cache exists: {os.path.exists(benchmark_data_dir)}")
+            if training_config.get("benchmark_eval_fidelity"):
+                print(f"   Benchmark eval fidelity: {training_config.get('benchmark_eval_fidelity')}")
+            if training_config.get("benchmark_final_fidelity"):
+                print(f"   Benchmark final fidelity: {training_config.get('benchmark_final_fidelity')}")
         if save_dir:
             print(f"   Save directory: {save_dir}")
             print(f"   Save frequency: {'never' if save_every <= 0 else f'every {save_every} steps'}")

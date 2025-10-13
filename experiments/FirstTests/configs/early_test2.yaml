@@ -22,7 +22,7 @@ scm_config:
     distribution_parameters: {low: 3, high: 20}
   graph_edge_prob:  #probability that any two nodes are connected via an edge. Sparse graphs can be achieved by sampling the edge probability from a right-skewed beta distribution
     distribution: "beta"
-    distribution_parameters: {alpha: 2, beta: 8}
+    distribution_parameters: {alpha: 2, beta: 5}
   graph_seed:   #seed to sample the graph. You usually don't want to fix this!
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -30,7 +30,9 @@ scm_config:
   # Mechanism Type Selection: Some mechanisms along the edges are implemented as XGboost algorithms fitted on Gaussain noise, and some as MLPs. Xgboost allows to have discrete effects. 
   xgboost_prob:  # global probability that a mechanisms is XGboost. This defines how likely it is that within a single SCM an XGboost mechanism is sampled. 
     distribution: "beta"
-    distribution_parameters: {alpha: 0.1, beta: 2}
+    distribution_parameters: {alpha: 2, beta: 8}  # this is a right-skewed distribution that leads to few XGboost mechanisms
+    #distribution: "uniform"
+    #distribution_parameters: {low: 0.0, high: 0.1}
   mechanism_seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -108,14 +110,15 @@ dataset_config:   #Size of the meta-dataset (dataset of individual tabular datas
   dataset_size:
     value: 100000000
   max_number_train_samples:  #maximum number of training samples in one training dataset
-    value: 125
+    value: 1000
   number_train_samples_per_dataset:  #distribution over number of training samples in one dataset. The rest is zero-padded. The maximum number sampled here must be lower than max_number_train_samples
     distribution: "uniform"
-    distribution_parameters: {low: 100, high: 125}
+    distribution_parameters: {low: 300, high: 1000}
   max_number_test_samples:  # maximum number of test samples
-    value: 125
+    value: 250
   number_test_samples_per_dataset: #number of test samples per dataset. Can be fixed because architecture is agnostic to the number of test samples.
-    value: 125
+    distribution: "uniform"
+    distribution_parameters: {low: 100, high: 250}
   max_number_features:  # maximum number of features. It makes sense to set it to (num_nodes-1). The actual number of features is determined by num_nodes and dropout_prob (which drop out features)
     value: 19
   seed:
@@ -129,7 +132,7 @@ dataset_config:   #Size of the meta-dataset (dataset of individual tabular datas
 preprocessing_config:   
   dropout_prob:  #probability to hide a feature after sampling a dataset
     distribution: "uniform"
-    distribution_parameters: {low: 0.1, high: 0.4}
+    distribution_parameters: {low: 0.0, high: 0.8}  # keep it low to not drop too many features
   shuffle_data: # to make sure the data are shuffeled
     value: true
   target_feature:  # you can, in principle, fix the target.
@@ -157,15 +160,15 @@ model_config:
   d_model:  # model dimension
     value: 256
   depth: # number of layers
-    value: 6
+    value: 8
   heads_feat:  # number of attention heads for feature-wise attention
-    value: 8
+    value: 4
   heads_samp: # number of attention heads for sample-wise attention
-    value: 8
+    value: 4
   dropout:  # dropout probability
-    value: 0.1
+    value: 0.0
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
-    value: 2
+    value: 1
   num_features:
     value: 19  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
 
@@ -175,9 +178,9 @@ model_config:
   num_bars:  # number of bars (K). Higher values allow for more complex, fine-grained posteriors, but make training more difficult.
     value: 1000
   min_width:  # minimum width of each bar to avoid numerical issues
-    value: 1e-6
+    value: 1e-10
   scale_floor:  # for the tails, this ensures that the scale is never too small
-    value: 1e-3
+    value: 1e-8
   max_fit_items:  # maximum number of datasets to fit the BarDistribution initially.
     value: 100000
   max_fit_batches:  # maximum number of batches to use when fitting the BarDistribution initially. This is usually not critical.
@@ -197,13 +200,13 @@ training_config:
   weight_decay: # weight decay for optimizer, might not be needed
     value: 0.000001
   max_steps:  #critial for determing training duration!
-    value: 10000
+    value: 1000
   max_epochs: # should always be 1
     value: 1
 
   # Data Loading Parameters
   batch_size: # batch size
-    value: 16
+    value: 8
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
     value: 128
 
@@ -241,17 +244,17 @@ training_config:
 
   # Model Checkpointing
   checkpoint_every_n_steps: # how often to save a model checkpoint
-    value: 500
+    value: 600
 
   # Evaluation Configuration
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
     #value: 300
-    value: 10
+    value: 300
   eval_batches: # number of batches to use for evaluation
     #value: 200
-    value: 10
+    value: 200
   eval_dataset_size: # size of the evaluation dataset
     value: 1000000
 
@@ -260,9 +263,9 @@ training_config:
   # Options: "minimal" (1 task, basic, 1 repeat), "low" (10 tasks, basic, 1 repeat),
   #          "high" (all tasks, extended, 5 repeats), "very high" (all tasks, extended, 25 repeats)
   benchmark_eval_fidelity:
-    value: "minimal"  # e.g., "minimal" to run at each evaluation step
+    value: "low"  # e.g., "minimal" to run at each evaluation step
   benchmark_final_fidelity:
-    value: "minimal"  # e.g., "high" to run at the end of training
+    value: "high"  # e.g., "high" to run at the end of training
 
   # Model Selection Configuration
   model_selection_enabled: # whether to enable model selection for the best model

@@ -52,6 +52,34 @@ class Benchmark:
         device: str = "cpu",
         verbose: bool = True,
     ):
+        # Allow override via environment variable
+        env_data_dir = os.environ.get("DATA_CACHE_DIR")
+        if env_data_dir:
+            data_dir = env_data_dir
+            if verbose:
+                print(f"[Benchmark] DATA_CACHE_DIR env detected -> {data_dir}")
+        if verbose:
+            try:
+                print(f"[Benchmark] CWD: {os.getcwd()}")
+            except Exception:
+                pass
+        # Robust search for data_cache directory
+        data_dir_path = Path(data_dir)
+        if not data_dir_path.exists():
+            # Try parent directory (in case of job working dir)
+            parent_data_dir = Path("../") / data_dir
+            if parent_data_dir.exists():
+                data_dir_path = parent_data_dir
+                data_dir = str(data_dir_path)
+        if not Path(data_dir).exists():
+            print(f"[Benchmark] ERROR: data_cache directory not found at '{data_dir}'.")
+            print("  Searched in current directory and parent.\n"
+                  "  Please ensure data_cache.zip is unzipped in the working directory, "
+                  "or set DATA_CACHE_DIR environment variable.")
+            raise FileNotFoundError(f"data_cache directory not found at '{data_dir}'")
+        else:
+            if verbose:
+                print(f"[Benchmark] Using data_cache directory at: {data_dir}")
         self.loader = SimpleOpenMLLoader(data_dir=data_dir, verbose=verbose)
         self.device = device
         self.verbose = verbose
