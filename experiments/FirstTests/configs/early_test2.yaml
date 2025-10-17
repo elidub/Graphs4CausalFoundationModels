@@ -172,6 +172,10 @@ model_config:
   num_features:
     value: 19  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
 
+  # Attention backend
+  use_flash_attention:  # enable PyTorch's FlashAttention kernels when available (CUDA)
+    value: true
+
   # BarDistribution Configuration (used to model the output distribution)
   use_bar_distribution:
     value: true

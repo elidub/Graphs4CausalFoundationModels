@@ -34,6 +34,7 @@ to let the model distinguish it from feature columns.
 
 from __future__ import annotations
 from typing import Optional, Dict
+from contextlib import nullcontext
 
 import torch
 import torch.nn as nn
@@ -108,7 +109,7 @@ class TwoWayBlock(nn.Module):
           per feature-column and head.
         - True (or nonzero) entries mean **masked** (not allowed to attend).
     """
-    def __init__(self, dim: int, heads_feat: int, heads_samp: int, dropout: float = 0.0, hidden_mult: int = 4):
+    def __init__(self, dim: int, heads_feat: int, heads_samp: int, dropout: float = 0.0, hidden_mult: int = 4, use_flash_attention: bool = False):
         super().__init__()
         # Self-attention across features of the same sample: (B*S, L, D)
         self.feat_attn = nn.MultiheadAttention(embed_dim=dim, num_heads=heads_feat, batch_first=True)
@@ -123,6 +124,23 @@ class TwoWayBlock(nn.Module):
         self.mlp = MLP(dim, hidden_mult=hidden_mult, dropout=dropout)
         self.ln_mlp = nn.LayerNorm(dim)
         self.drop = nn.Dropout(dropout)
+
+        # Attention backend toggle
+        self.use_flash_attention = use_flash_attention
+
+    def _sdp_context(self, device: torch.device):
+        """
+        Prefer flash attention on CUDA when enabled; fall back to other SDPA kernels otherwise.
+        We keep math and mem_efficient enabled as fallbacks to avoid runtime errors when flash
+        is not applicable (e.g., due to mask shape or device).
+        """
+        if self.use_flash_attention and device.type == 'cuda':
+            try:
+                from torch.backends.cuda import sdp_kernel
+                return sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=True)
+            except Exception:
+                return nullcontext()
+        return nullcontext()
 
     def forward(self, x: torch.Tensor, sample_attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
@@ -139,7 +157,8 @@ class TwoWayBlock(nn.Module):
 
         # 1) Feature-attention (within row): allow features to interact per sample
         x_row = x.reshape(B * S, L, D)                       # (B*S, L, D)
-        x2, _ = self.feat_attn(x_row, x_row, x_row, need_weights=False)
+        with self._sdp_context(x.device):
+            x2, _ = self.feat_attn(x_row, x_row, x_row, need_weights=False)
         x_row = x_row + self.drop(x2)
         x_row = self.ln_feat(x_row)
         x = x_row.reshape(B, S, L, D)
@@ -148,12 +167,13 @@ class TwoWayBlock(nn.Module):
         x_col = x.permute(0, 2, 1, 3).contiguous().reshape(B * L, S, D)  # (B*L, S, D)
 
         # Expand (S, S) → (heads_samp * B * L, S, S) for MHA if provided
-        if sample_attn_mask is not None:
-            # Same mask shared across features and heads
-            expanded_mask = sample_attn_mask.unsqueeze(0).expand(B * L * self.heads_samp, -1, -1)
-            x2, _ = self.samp_attn(x_col, x_col, x_col, attn_mask=expanded_mask, need_weights=False)
-        else:
-            x2, _ = self.samp_attn(x_col, x_col, x_col, need_weights=False)
+        with self._sdp_context(x.device):
+            if sample_attn_mask is not None:
+                # Same mask shared across features and heads
+                expanded_mask = sample_attn_mask.unsqueeze(0).expand(B * L * self.heads_samp, -1, -1)
+                x2, _ = self.samp_attn(x_col, x_col, x_col, attn_mask=expanded_mask, need_weights=False)
+            else:
+                x2, _ = self.samp_attn(x_col, x_col, x_col, need_weights=False)
 
         x_col = x_col + self.drop(x2)
         x_col = self.ln_samp(x_col)
@@ -217,11 +237,13 @@ class SimplePFNRegressor(nn.Module):
         dropout: float = 0.0,
         output_dim: int = 1,  # New parameter for high-dimensional output
         hidden_mult: int = 4,  # MLP hidden layer multiplier
+        use_flash_attention: bool = False,
     ):
         super().__init__()
         self.num_features = num_features
         self.d_model = d_model
         self.output_dim = output_dim
+        self.use_flash_attention = use_flash_attention
 
         # Per-cell encoders (shared across all feature columns / label column)
         self.value_encoder = nn.Linear(1, d_model)        # for X values
@@ -237,7 +259,7 @@ class SimplePFNRegressor(nn.Module):
 
         # Stacked two-way attention blocks
         self.blocks = nn.ModuleList([
-            TwoWayBlock(d_model, heads_feat, heads_samp, dropout=dropout, hidden_mult=hidden_mult)
+            TwoWayBlock(d_model, heads_feat, heads_samp, dropout=dropout, hidden_mult=hidden_mult, use_flash_attention=use_flash_attention)
             for _ in range(depth)
         ])
 

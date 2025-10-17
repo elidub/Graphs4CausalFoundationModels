@@ -276,7 +276,8 @@ def main():
             heads_samp=model_config.get("heads_samp", 2),
             dropout=model_config.get("dropout", 0.1),
             hidden_mult=model_config.get("hidden_mult", 4),
-            output_dim=output_dim  # Use calculated output dimension
+            output_dim=output_dim,  # Use calculated output dimension
+            use_flash_attention=model_config.get("use_flash_attention", False)
         )
         # Count parameters
         total_params = sum(p.numel() for p in model.parameters())
