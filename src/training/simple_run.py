@@ -391,6 +391,12 @@ def main():
             print(f"   Run name: {run_name}")
         print(f"   Trainer initialized")
         
+        # Echo full config right before training starts
+        print("\nCONFIG BEFORE TRAINING (full):")
+        print("-" * 40)
+        print(json.dumps(config, indent=2, default=str))
+        print("-" * 40)
+
         # Start training
         print(f"\nSTARTING TRAINING:")
         print("=" * 60)

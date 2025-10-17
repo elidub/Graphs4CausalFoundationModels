@@ -370,6 +370,23 @@ class SimplePFNRegressor(nn.Module):
         M = X_test.shape[1]
         device = X_train.device
 
+        # One-time report: whether flash attention is requested and likely available
+        if not hasattr(self, "_flash_status_reported"):
+            self._flash_status_reported = False
+        if not self._flash_status_reported:
+            if not self.use_flash_attention:
+                print("[SimplePFN] Flash attention: disabled by config (use_flash_attention=False)")
+            elif device.type != 'cuda':
+                print(f"[SimplePFN] Flash attention: not available on device '{device.type}' (requires CUDA)")
+            else:
+                # CUDA device and enabled in config; attempt to detect SDPA kernel manager
+                try:
+                    from torch.backends.cuda import sdp_kernel  # noqa: F401
+                    print("[SimplePFN] Flash attention: enabled (CUDA) — will attempt SDPA flash kernels when applicable")
+                except Exception:
+                    print("[SimplePFN] Flash attention: CUDA detected but SDPA flash backend not importable; falling back to standard attention")
+            self._flash_status_reported = True
+
         # Encode features and label column, then fuse as feature dimension L+1
         feat_enc = self._encode_features(X_train, X_test)     # (B, S, L, D)
         lab_enc = self._encode_labels(y_train, M)             # (B, S, D)
