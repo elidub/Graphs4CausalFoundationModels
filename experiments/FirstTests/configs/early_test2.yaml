@@ -251,10 +251,10 @@ training_config:
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
     #value: 300
-    value: 300
+    value: 100
   eval_batches: # number of batches to use for evaluation
     #value: 200
-    value: 200
+    value: 10
   eval_dataset_size: # size of the evaluation dataset
     value: 1000000
 

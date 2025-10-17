@@ -50,7 +50,7 @@ class Benchmark:
         self,
         data_dir: str = "data_cache",
         device: str = "cpu",
-        verbose: bool = True,
+        verbose: bool = False,
     ):
         # Allow override via environment variable
         env_data_dir = os.environ.get("DATA_CACHE_DIR")
@@ -80,7 +80,10 @@ class Benchmark:
         else:
             if verbose:
                 print(f"[Benchmark] Using data_cache directory at: {data_dir}")
-        self.loader = SimpleOpenMLLoader(data_dir=data_dir, verbose=verbose)
+        offline = os.environ.get("OPENML_OFFLINE") == "1" or os.environ.get("DATA_CACHE_ONLY") == "1"
+        if verbose and offline:
+            print("[Benchmark] OPENML_OFFLINE/DATA_CACHE_ONLY detected -> Loader offline mode enabled")
+        self.loader = SimpleOpenMLLoader(data_dir=data_dir, verbose=verbose, offline=offline)
         self.device = device
         self.verbose = verbose
 

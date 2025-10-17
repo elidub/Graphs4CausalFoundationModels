@@ -15,6 +15,7 @@ import math
 from typing import Optional, Dict, Any, Union, Callable
 from sklearn.metrics import r2_score, mean_squared_error
 import pandas as pd
+import math
 
 
 class SimplePFNTrainer:
@@ -121,8 +122,8 @@ class SimplePFNTrainer:
         
         # Setup scheduler if enabled
         self.scheduler = self._create_scheduler(self.scheduler_config)
-            
-        # Flag for graceful termination
+        
+        # Flag for graceful termination (controlled by signal handlers)
         self.terminate = False
     
     def _create_scheduler(self, scheduler_config):
@@ -669,79 +670,51 @@ class SimplePFNTrainer:
         
         return metrics
 
-    # ---- Evaluation helpers (synthetic vs real-world) ----
+    # ---- Evaluation logging (simplified) ----
     def _log_synthetic_eval(self, eval_metrics: Dict[str, float], step: Optional[int] = None) -> None:
-        """Log synthetic evaluation metrics (eval/syn_*) to W&B in a minimal, consistent way."""
+        """Minimal synthetic eval logging under eval/syn_* at the given step."""
         if not self.wandb_run or not eval_metrics:
             return
         s = step if step is not None else self.global_step
-        syn_log: Dict[str, float] = {}
-        # Minimal synthetic metrics
+        payload: Dict[str, float] = {}
         if 'eval/mse_mean' in eval_metrics:
-            syn_log['eval/syn_mse_mean'] = eval_metrics['eval/mse_mean']
+            payload['eval/syn_mse_mean'] = eval_metrics['eval/mse_mean']
         if 'eval/mse_median' in eval_metrics:
-            syn_log['eval/syn_mse_median'] = eval_metrics['eval/mse_median']
+            payload['eval/syn_mse_median'] = eval_metrics['eval/mse_median']
         if 'eval/r2_mean' in eval_metrics:
-            syn_log['eval/syn_r2_mean'] = eval_metrics['eval/r2_mean']
+            payload['eval/syn_r2_mean'] = eval_metrics['eval/r2_mean']
         if 'eval/r2_median' in eval_metrics:
-            syn_log['eval/syn_r2_median'] = eval_metrics['eval/r2_median']
-        # Optional loss
+            payload['eval/syn_r2_median'] = eval_metrics['eval/r2_median']
         if 'eval/loss_mean' in eval_metrics:
-            syn_log['eval/syn_loss_mean'] = eval_metrics['eval/loss_mean']
+            payload['eval/syn_loss_mean'] = eval_metrics['eval/loss_mean']
         if 'eval/loss_median' in eval_metrics:
-            syn_log['eval/syn_loss_median'] = eval_metrics['eval/loss_median']
-        if syn_log:
-            self.wandb_run.log(syn_log, step=s)
+            payload['eval/syn_loss_median'] = eval_metrics['eval/loss_median']
+        if payload:
+            self.wandb_run.log(payload, step=s)
 
-    def _extract_and_log_real_world(self, df: Optional[pd.DataFrame], step: Optional[int] = None) -> Dict[str, float]:
-        """Extract PFN metrics from benchmark DataFrame and log eval/rw_* to W&B (mean/median only)."""
-        rw_log: Dict[str, float] = {}
-        if df is None or self.wandb_run is None:
-            return rw_log
-        try:
-            df_metrics = df[df["process_id"] != "summary"] if "process_id" in df.columns else df
-            if "process_id" in df.columns:
-                df_metrics = df_metrics[df_metrics["process_id"] != "summary_model"]
-            # PFN metrics across tasks
-            if "mse_pfn" in df_metrics.columns:
-                rw_log['eval/rw_mse_mean'] = float(df_metrics["mse_pfn"].mean(skipna=True))
-                rw_log['eval/rw_mse_median'] = float(df_metrics["mse_pfn"].median(skipna=True))
-            if "r2_pfn" in df_metrics.columns:
-                rw_log['eval/rw_r2_mean'] = float(df_metrics["r2_pfn"].mean(skipna=True))
-                rw_log['eval/rw_r2_median'] = float(df_metrics["r2_pfn"].median(skipna=True))
-            if rw_log:
-                s = step if step is not None else self.global_step
-                self.wandb_run.log(rw_log, step=s)
-                print(f"logged real-world metrics: {rw_log}")
-        except Exception as e:
-            print(f"[Trainer] Failed to extract/log real-world metrics: {e}")
-        return rw_log
+    def _log_real_world_from_df(self, df: Optional[pd.DataFrame], step: Optional[int] = None) -> None:
+        """Minimal real-world eval logging under eval/rw_* at the given step."""
+        if df is None or not self.wandb_run:
+            return
+        df_metrics = df
+        if "process_id" in df.columns:
+            df_metrics = df[~df["process_id"].isin(["summary", "summary_model"])]
+        payload: Dict[str, float] = {}
+        if "mse_pfn" in df_metrics.columns:
+            s_mse = df_metrics["mse_pfn"].dropna()
+            if len(s_mse) > 0:
+                payload["eval/rw_mse_mean"] = float(s_mse.mean())
+                payload["eval/rw_mse_median"] = float(s_mse.median())
+        if "r2_pfn" in df_metrics.columns:
+            s_r2 = df_metrics["r2_pfn"].dropna()
+            if len(s_r2) > 0:
+                payload["eval/rw_r2_mean"] = float(s_r2.mean())
+                payload["eval/rw_r2_median"] = float(s_r2.median())
+        if payload:
+            s = step if step is not None else self.global_step
+            self.wandb_run.log(payload, step=s)
 
-    def _run_real_world_benchmark_and_log(
-        self,
-        tag: str,
-        fidelity: Optional[str] = None,
-        checkpoint_path: Optional[str] = None,
-    ) -> Optional[pd.DataFrame]:
-        """Run the real-world benchmark (current model or given checkpoint), then log eval/rw_* metrics."""
-        try:
-            if checkpoint_path is not None:
-                df_bench = self._run_benchmark_with_checkpoint(
-                    fidelity=fidelity or self.benchmark_eval_fidelity or "low",
-                    tag=tag,
-                    checkpoint_path=checkpoint_path,
-                )
-            else:
-                df_bench = self._run_benchmark_with_current_model(
-                    fidelity=fidelity or self.benchmark_eval_fidelity or "low",
-                    tag=tag,
-                )
-            # Log eval/rw_* from DF
-            self._extract_and_log_real_world(df_bench, step=self.global_step)
-            return df_bench
-        except Exception as e:
-            print(f"[Trainer] Real-world benchmark '{tag}' failed: {e}")
-            return None
+    # Removed complex combined logger and debug benchmark wrappers for simplicity
 
     def fit(self):
         """Train the SimplePFN model."""
@@ -876,17 +849,16 @@ class SimplePFNTrainer:
             if (self.eval_dataloader is not None and 
                 self.eval_every > 0 and 
                 self.global_step % self.eval_every == 0):
-                
                 # 1) Synthetic evaluation + logging
                 eval_metrics = self.evaluate()
                 self._log_synthetic_eval(eval_metrics, step=self.global_step)
-
-                # 2) Real-world benchmark + logging (if enabled)
+                # 2) Real-world benchmark + logging (optional)
                 if self.benchmark_eval_fidelity:
-                    self._run_real_world_benchmark_and_log(
-                        tag=f"eval_step{self.global_step}",
+                    df_bench = self._run_benchmark_with_current_model(
                         fidelity=self.benchmark_eval_fidelity,
+                        tag=f"eval_step{self.global_step}",
                     )
+                    self._log_real_world_from_df(df_bench, step=self.global_step)
             else:
                 # If evaluation is disabled but model selection is enabled,
                 # update best model based on training loss
@@ -937,11 +909,12 @@ class SimplePFNTrainer:
             # Run final real-world benchmark and logging if requested
             if self.benchmark_final_fidelity:
                 final_ckpt = os.path.join(self.run_save_dir, "final.pt")
-                self._run_real_world_benchmark_and_log(
-                    tag="final",
+                df_final = self._run_benchmark_with_checkpoint(
                     fidelity=self.benchmark_final_fidelity,
+                    tag="final",
                     checkpoint_path=final_ckpt,
                 )
+                self._log_real_world_from_df(df_final, step=self.global_step)
             
             # Save best model if model selection was enabled
             if self.enable_model_selection and self.best_model_state is not None:
@@ -1068,3 +1041,5 @@ class SimplePFNTrainer:
             print(f"[Trainer] Failed to print benchmark summary: {_e}")
         
         return df  # Return DataFrame for metrics extraction
+
+    # Removed W&B seeding and define_metric helpers for simpler logging
