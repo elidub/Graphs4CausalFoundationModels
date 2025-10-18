@@ -113,12 +113,12 @@ dataset_config:   #Size of the meta-dataset (dataset of individual tabular datas
     value: 1000
   number_train_samples_per_dataset:  #distribution over number of training samples in one dataset. The rest is zero-padded. The maximum number sampled here must be lower than max_number_train_samples
     distribution: "uniform"
-    distribution_parameters: {low: 300, high: 1000}
+    distribution_parameters: {low: 100, high: 1000}
   max_number_test_samples:  # maximum number of test samples
-    value: 250
+    value: 1000
   number_test_samples_per_dataset: #number of test samples per dataset. Can be fixed because architecture is agnostic to the number of test samples.
     distribution: "uniform"
-    distribution_parameters: {low: 100, high: 250}
+    distribution_parameters: {low: 900, high: 1000}
   max_number_features:  # maximum number of features. It makes sense to set it to (num_nodes-1). The actual number of features is determined by num_nodes and dropout_prob (which drop out features)
     value: 19
   seed:
@@ -158,15 +158,15 @@ preprocessing_config:
 model_config:
   # Core Architecture Parameters
   d_model:  # model dimension
-    value: 256
+    value: 384
   depth: # number of layers
-    value: 8
+    value: 6
   heads_feat:  # number of attention heads for feature-wise attention
-    value: 4
+    value: 6
   heads_samp: # number of attention heads for sample-wise attention
-    value: 4
+    value: 6
   dropout:  # dropout probability
-    value: 0.0
+    value: 0.1
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
     value: 1
   num_features:
@@ -175,6 +175,12 @@ model_config:
   # Attention backend
   use_flash_attention:  # enable PyTorch's FlashAttention kernels when available (CUDA)
     value: true
+
+  # Feature positional encodings (per-feature, low-rank)
+  use_feature_positional:
+    value: true
+  feature_pos_rank:
+    value: 32
 
   # BarDistribution Configuration (used to model the output distribution)
   use_bar_distribution:
@@ -200,11 +206,11 @@ model_config:
 training_config:
   # Core Training Parameters
   learning_rate:  # usually 1e-5 - 1e-4 work well
-    value: 0.0001
+    value: 0.00001
   weight_decay: # weight decay for optimizer, might not be needed
-    value: 0.000001
+    value: 0.0001
   max_steps:  #critial for determing training duration!
-    value: 1000
+    value: 100000
   max_epochs: # should always be 1
     value: 1
 
@@ -236,7 +242,7 @@ training_config:
   device:
     value: "cuda"
   precision: # precision for training. 16 has not been tested yet.
-    value: "32"
+    value: "bf16"
 
   # Experiment Organization
   experiment_name: # name of the experiment, used for logging 
@@ -254,11 +260,9 @@ training_config:
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    #value: 300
-    value: 100
+    value: 500
   eval_batches: # number of batches to use for evaluation
-    #value: 200
-    value: 10
+    value: 200
   eval_dataset_size: # size of the evaluation dataset
     value: 1000000
 

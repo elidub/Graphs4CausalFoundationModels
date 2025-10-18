@@ -37,6 +37,8 @@ class SimplePFNTrainer:
         eval_dataloader: Optional[DataLoader] = None,  # Evaluation dataloader (can be same as training)
         eval_every: int = 0,  # Evaluate every N steps (0 to disable)
         eval_batches: int = 10,  # Number of batches to use for evaluation
+        # Precision / AMP
+        precision: Optional[str] = "32",  # "32" | "16" | "fp16" | "bf16"
         # Model selection parameters
         enable_model_selection: bool = False,  # Whether to enable automatic best model selection
         model_selection_metric: str = "eval/mse_median",  # Metric to use for model selection
@@ -125,6 +127,34 @@ class SimplePFNTrainer:
         
         # Flag for graceful termination (controlled by signal handlers)
         self.terminate = False
+
+        # AMP / precision setup
+        self.precision = (precision or "32").lower() if isinstance(precision, str) else str(precision)
+        self.use_autocast = False
+        self.autocast_dtype = None
+        self.scaler = None
+        device_is_cuda = str(self.device).startswith("cuda")
+        if device_is_cuda:
+            if self.precision in ["16", "fp16", "float16"]:
+                self.use_autocast = True
+                try:
+                    from torch.cuda.amp import GradScaler
+                    self.autocast_dtype = torch.float16
+                    self.scaler = GradScaler()
+                    print("Using AMP: float16 (GradScaler enabled)")
+                except Exception as _e:
+                    print(f"Warning: Could not enable GradScaler for fp16: {_e}")
+                    self.use_autocast = False
+            elif self.precision in ["bf16", "bfloat16"]:
+                self.use_autocast = True
+                self.autocast_dtype = torch.bfloat16
+                self.scaler = None  # typically not used for bf16
+                print("Using AMP: bfloat16")
+            else:
+                print("Using precision: float32 (no AMP)")
+        else:
+            if self.precision not in [None, "32", "float32"]:
+                print(f"Note: Requested precision '{self.precision}' but device is '{self.device}'. Running in float32.")
     
     def _create_scheduler(self, scheduler_config):
         sched_type = scheduler_config.get("type")
@@ -523,7 +553,12 @@ class SimplePFNTrainer:
                 X_train, y_train, X_test, y_test = self._process_batch(batch)
                 
                 # Forward pass
-                output = self.model(X_train, y_train, X_test)
+                if self.use_autocast and self.autocast_dtype is not None:
+                    from torch.autocast_mode import autocast
+                    with autocast(device_type='cuda', dtype=self.autocast_dtype):
+                        output = self.model(X_train, y_train, X_test)
+                else:
+                    output = self.model(X_train, y_train, X_test)
                 
                 # Extract predictions
                 if isinstance(output, dict) and 'predictions' in output:
@@ -759,6 +794,23 @@ class SimplePFNTrainer:
             self._train_n_features = int(features)
             self._train_n_train = int(n_train)
             self._train_n_test = int(n_test)
+
+        # Run one synthetic evaluation (and optional real-world benchmark) before training
+        try:
+            if self.eval_dataloader is not None:
+                print("\nPre-training evaluation:")
+                pre_metrics = self.evaluate()
+                # Log synthetic metrics at step 0
+                self._log_synthetic_eval(pre_metrics, step=0)
+            if self.benchmark_eval_fidelity:
+                print("\nPre-training real-world benchmark:")
+                df_pre = self._run_benchmark_with_current_model(
+                    fidelity=self.benchmark_eval_fidelity,
+                    tag="pretrain",
+                )
+                self._log_real_world_from_df(df_pre, step=0)
+        except Exception as _e:
+            print(f"Warning: Pre-training eval/benchmark failed: {_e}")
         
         for step, batch in enumerate(self.dataloader):
             if step >= self.max_steps or self.terminate:
@@ -772,7 +824,12 @@ class SimplePFNTrainer:
             self.optimizer.zero_grad()
             
             # SimplePFN forward pass expects (X_train, y_train, X_test)
-            output = self.model(X_train, y_train, X_test)
+            if self.use_autocast and self.autocast_dtype is not None and str(self.device).startswith('cuda'):
+                from torch.autocast_mode import autocast
+                with autocast(device_type='cuda', dtype=self.autocast_dtype):
+                    output = self.model(X_train, y_train, X_test)
+            else:
+                output = self.model(X_train, y_train, X_test)
             
             # Extract predictions from SimplePFN output
             if isinstance(output, dict) and 'predictions' in output:
@@ -808,8 +865,14 @@ class SimplePFNTrainer:
             losses.append(loss.item())
             
             # Backward pass
-            loss.backward()
-            self.optimizer.step()
+            if self.scaler is not None:
+                # fp16 with scaler
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss.backward()
+                self.optimizer.step()
             
             # Update learning rate if scheduler is enabled
             if self.scheduler is not None:

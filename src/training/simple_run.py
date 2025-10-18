@@ -12,6 +12,7 @@ import os
 import yaml
 import json
 import argparse
+import warnings
 import traceback
 from pathlib import Path
 from torch.utils.data import DataLoader
@@ -36,6 +37,42 @@ from training_utils import load_yaml_config, extract_config_values, get_device, 
 # Import BarDistribution for probabilistic output
 from Losses.BarDistribution import BarDistribution
 
+
+# Suppress duplicate warnings globally after first occurrence
+def _suppress_warnings_after_first():
+    seen_keys = set()
+    _orig_showwarning = warnings.showwarning
+
+    def _custom_showwarning(message, category, filename, lineno, file=None, line=None):
+        key = (str(message), category.__name__)
+        if key in seen_keys:
+            return
+        seen_keys.add(key)
+        _orig_showwarning(message, category, filename, lineno, file, line)
+
+    warnings.showwarning = _custom_showwarning
+    # Ensure warnings aren't globally ignored by environment
+    warnings.filterwarnings("default")
+
+
+def _dl_worker_init_fn(worker_id: int):
+    """Initialize DataLoader workers to also suppress duplicate warnings."""
+    try:
+        seen_keys = set()
+        _orig_showwarning = warnings.showwarning
+
+        def _custom_showwarning(message, category, filename, lineno, file=None, line=None):
+            key = (str(message), category.__name__)
+            if key in seen_keys:
+                return
+            seen_keys.add(key)
+            _orig_showwarning(message, category, filename, lineno, file, line)
+
+        warnings.showwarning = _custom_showwarning
+        warnings.filterwarnings("default")
+    except Exception:
+        warnings.simplefilter("once")
+
 # Weights & Biases for experiment tracking
 try:
     import wandb
@@ -52,6 +89,8 @@ def main():
     args = parser.parse_args()
 
     try:
+        # Install global duplicate-warning suppression
+        _suppress_warnings_after_first()
         print("=" * 60)
         print("           SimplePFN Training Session Started")
         print("=" * 60)
@@ -134,7 +173,8 @@ def main():
                         'scm_config': scm_config,
                         'dataset_config': dataset_config,
                         'preprocessing_config': preprocessing_config
-                    }
+                    },
+                    group="DDP"
                 )
                 print(f"   Wandb initialized successfully!")
                 print(f"   Run URL: {wandb_run.get_url()}")
@@ -185,7 +225,8 @@ def main():
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers,
-            persistent_workers=num_workers > 0  # Only use persistent workers when num_workers > 0
+            persistent_workers=num_workers > 0,  # Only use persistent workers when num_workers > 0
+            worker_init_fn=_dl_worker_init_fn if num_workers and num_workers > 0 else None,
         )
         print(f"   DataLoader created successfully")
 
@@ -277,7 +318,9 @@ def main():
             dropout=model_config.get("dropout", 0.1),
             hidden_mult=model_config.get("hidden_mult", 4),
             output_dim=output_dim,  # Use calculated output dimension
-            use_flash_attention=model_config.get("use_flash_attention", False)
+            use_flash_attention=model_config.get("use_flash_attention", False),
+            use_feature_positional=model_config.get("use_feature_positional", True),
+            feature_pos_rank=model_config.get("feature_pos_rank", 16),
         )
         # Count parameters
         total_params = sum(p.numel() for p in model.parameters())

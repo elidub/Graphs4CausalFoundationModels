@@ -131,15 +131,23 @@ class TwoWayBlock(nn.Module):
     def _sdp_context(self, device: torch.device):
         """
         Prefer flash attention on CUDA when enabled; fall back to other SDPA kernels otherwise.
+        Uses the modern torch.nn.attention.sdpa_kernel() context manager when available to avoid
+        deprecation warnings, and falls back to torch.backends.cuda.sdp_kernel() on older PyTorch.
         We keep math and mem_efficient enabled as fallbacks to avoid runtime errors when flash
         is not applicable (e.g., due to mask shape or device).
         """
         if self.use_flash_attention and device.type == 'cuda':
+            # Prefer new API (PyTorch >= 2.3)
             try:
-                from torch.backends.cuda import sdp_kernel
-                return sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=True)
+                from torch.nn.attention import sdpa_kernel  # type: ignore
+                return sdpa_kernel(enable_flash=True, enable_mem_efficient=True, enable_math=True)
             except Exception:
-                return nullcontext()
+                # Fallback to legacy API
+                try:
+                    from torch.backends.cuda import sdp_kernel  # type: ignore
+                    return sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=True)
+                except Exception:
+                    return nullcontext()
         return nullcontext()
 
     def forward(self, x: torch.Tensor, sample_attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -169,9 +177,9 @@ class TwoWayBlock(nn.Module):
         # Expand (S, S) → (heads_samp * B * L, S, S) for MHA if provided
         with self._sdp_context(x.device):
             if sample_attn_mask is not None:
-                # Same mask shared across features and heads
-                expanded_mask = sample_attn_mask.unsqueeze(0).expand(B * L * self.heads_samp, -1, -1)
-                x2, _ = self.samp_attn(x_col, x_col, x_col, attn_mask=expanded_mask, need_weights=False)
+                # Pass 2D (S, S) mask directly; MultiheadAttention will broadcast across batch and heads.
+                # This reduces memory compared to explicitly expanding to (B*L*heads, S, S).
+                x2, _ = self.samp_attn(x_col, x_col, x_col, attn_mask=sample_attn_mask, need_weights=False)
             else:
                 x2, _ = self.samp_attn(x_col, x_col, x_col, need_weights=False)
 
@@ -238,12 +246,17 @@ class SimplePFNRegressor(nn.Module):
         output_dim: int = 1,  # New parameter for high-dimensional output
         hidden_mult: int = 4,  # MLP hidden layer multiplier
         use_flash_attention: bool = False,
+        # Feature positional encodings (columns, not samples)
+        use_feature_positional: bool = True,
+        feature_pos_rank: int = 16,
     ):
         super().__init__()
         self.num_features = num_features
         self.d_model = d_model
         self.output_dim = output_dim
         self.use_flash_attention = use_flash_attention
+        self.use_feature_positional = use_feature_positional
+        self.feature_pos_rank = int(feature_pos_rank) if feature_pos_rank is not None else 0
 
         # Per-cell encoders (shared across all feature columns / label column)
         self.value_encoder = nn.Linear(1, d_model)        # for X values
@@ -265,6 +278,18 @@ class SimplePFNRegressor(nn.Module):
 
         # Output projection from D to desired output_dim per test token
         self.regression_head = nn.Linear(d_model, output_dim)
+
+        # Low-rank learnable positional encodings per feature (L columns)
+        if self.use_feature_positional and self.feature_pos_rank > 0:
+            r = self.feature_pos_rank
+            self.feature_pos_A = nn.Parameter(torch.empty(self.num_features, r))   # (L, r)
+            self.feature_pos_B = nn.Parameter(torch.empty(r, self.d_model))        # (r, D)
+            nn.init.normal_(self.feature_pos_A, std=0.02)
+            nn.init.normal_(self.feature_pos_B, std=0.02)
+        else:
+            self.feature_pos_A = None
+            self.feature_pos_B = None
+        self._feature_pos_reported = False
 
     @staticmethod
     def _build_sample_attn_mask(N: int, M: int, device: torch.device) -> torch.Tensor:
@@ -310,6 +335,13 @@ class SimplePFNRegressor(nn.Module):
         Xt = torch.cat([X_train, X_test], dim=1)       # (B, S, L)
         feat_in = Xt.unsqueeze(-1)                      # (B, S, L, 1)
         feat_enc = self.value_encoder(feat_in)          # (B, S, L, D)
+
+        # Add low-rank positional encodings per feature (columns), not samples
+        if self.feature_pos_A is not None and self.feature_pos_B is not None:
+            # (L, D) table via low-rank factorization
+            pos_table = self.feature_pos_A @ self.feature_pos_B  # (L, D)
+            # Apply ONLY to train samples (first N along S axis)
+            feat_enc[:, :N, :, :] = feat_enc[:, :N, :, :] + pos_table.unsqueeze(0).unsqueeze(0)
         return feat_enc
 
     def _encode_labels(self, y_train: torch.Tensor, M: int) -> torch.Tensor:
@@ -386,6 +418,14 @@ class SimplePFNRegressor(nn.Module):
                 except Exception:
                     print("[SimplePFN] Flash attention: CUDA detected but SDPA flash backend not importable; falling back to standard attention")
             self._flash_status_reported = True
+
+        # One-time report: feature positional encodings status
+        if not self._feature_pos_reported:
+            if self.feature_pos_A is not None and self.feature_pos_B is not None:
+                print(f"[SimplePFN] Feature positional encodings: low-rank enabled (rank={self.feature_pos_rank}), applied to TRAIN samples only")
+            else:
+                print("[SimplePFN] Feature positional encodings: disabled")
+            self._feature_pos_reported = True
 
         # Encode features and label column, then fuse as feature dimension L+1
         feat_enc = self._encode_features(X_train, X_test)     # (B, S, L, D)
