@@ -298,6 +298,17 @@ class Benchmark:
         if tasks is None or len(tasks) == 0:
             tasks = DEFAULT_TABULAR_NUM_REG_TASKS[: max_tasks]
         raw_map = self.loader.load_tasks_raw(tasks)
+        # Offline fallback: if nothing could be resolved via tasks (e.g., no mapping and offline),
+        # try scanning cached datasets directly and evaluate on those.
+        if len(raw_map) == 0 and getattr(self.loader, "offline", False):
+            if not quiet:
+                print("[Benchmark] No tasks resolved in offline mode; scanning cached datasets ...")
+            cached = self.loader.list_cached_dataset_ids()
+            if max_tasks and max_tasks > 0:
+                cached = cached[: int(max_tasks)]
+            raw_map = self.loader.load_datasets_raw_by_cache(cached)
+            # Construct pseudo-task list equal to dataset ids for iteration
+            tasks = list(sorted(raw_map.keys()))
         results: List[Dict[str, Any]] = []
         # choose baselines
         models = self._get_baseline_models(baseline_set)
