@@ -29,8 +29,10 @@ scm_config:
 
   # Mechanism Type Selection: Some mechanisms along the edges are implemented as XGboost algorithms fitted on Gaussain noise, and some as MLPs. Xgboost allows to have discrete effects. 
   xgboost_prob:  # global probability that a mechanisms is XGboost. This defines how likely it is that within a single SCM an XGboost mechanism is sampled. 
-    distribution: "uniform"
-    distribution_parameters: {low: 0.0, high: 0.2}
+    distribution: "beta"
+    distribution_parameters: {alpha: 1.5, beta: 20}  # this is a right-skewed distribution that leads to few XGboost mechanisms
+    #distribution: "uniform"
+    #distribution_parameters: {low: 0.0, high: 0.1}
   mechanism_seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -43,10 +45,10 @@ scm_config:
     distribution_parameters: {choices: [0, 1, 2], probabilities: [0.7, 0.15, 0.15]}
   mlp_hidden_dim:  # number of hidden variables in the MLP
     distribution: "categorical"
-    distribution_parameters: {choices: [4, 8, 16, 32], probabilities: [0.5, 0.25, 0.125, 0.125]}
+    distribution_parameters: {choices: [4, 8, 16, 32], probabilities: [0.25, 0.5, 0.125, 0.125]}
   mlp_activation_mode:  # if the nonlinearity is applied before or after adding the noise
     distribution: "categorical"
-    distribution_parameters: {choices: ["pre", "post"], probabilities: [0.9, 0.1]}
+    distribution_parameters: {choices: ["pre", "post"], probabilities: [0.8, 0.2]}
   mlp_node_shape:
     value: [1]
 
@@ -78,6 +80,7 @@ scm_config:
     distribution: "categorical"
     distribution_parameters: {choices: ["gamma", "pareto"], probabilities: [1.0, 0.0]}
 
+
   # Random Standard Deviation Parameters
   exo_std_mean:  # distribution over the mean of the distribution over the STD of the exogenous noise
     distribution: "lognormal"
@@ -90,7 +93,7 @@ scm_config:
     distribution_parameters: {mean: -3.0, std: 0.6}
   endo_std_std:  # distribution over the mean of the distribution over the STD
     distribution: "uniform"
-    distribution_parameters: {low: 0.01, high: 0.5}
+    distribution_parameters: {low: 0.01, high: 0.2}
 
   # SCM Implementation Settings
   scm_fast:  # faster sampling disables some checks and disabling it can be useful for debugging
@@ -272,6 +275,9 @@ training_config:
     value: "low"  # e.g., "minimal" to run at each evaluation step
   benchmark_final_fidelity:
     value: "high"  # e.g., "high" to run at the end of training
+  # Use only cached OpenML data and never download during benchmarking
+  benchmark_offline:
+    value: true
 
   # Model Selection Configuration
   model_selection_enabled: # whether to enable model selection for the best model

@@ -404,6 +404,7 @@ def main():
             benchmark_eval_fidelity=training_config.get("benchmark_eval_fidelity"),
             benchmark_final_fidelity=training_config.get("benchmark_final_fidelity"),
             benchmark_data_dir=training_config.get("benchmark_data_dir", os.path.join(INITIAL_WORKING_DIR, "data_cache")),
+            benchmark_offline=training_config.get("benchmark_offline", True),
         )
         
         print(f"   Learning rate: {training_config.get('learning_rate', 1e-3)}")
