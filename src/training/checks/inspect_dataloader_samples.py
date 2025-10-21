@@ -733,7 +733,7 @@ class DataloaderDatasetVisualizer:
             
             # Random Forest
             try:
-                rf_model = RandomForestRegressor(n_estimators=50, random_state=42, max_depth=5)
+                rf_model = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=10)
                 rf_model.fit(X, y)
                 # Use sklearn r2_score instead of model.score()
                 y_pred = rf_model.predict(X)
@@ -743,7 +743,7 @@ class DataloaderDatasetVisualizer:
                 if n_samples >= 20:
                     cv_folds = min(5, n_samples // 4)
                     rf_cv_scores = cross_val_score(
-                        RandomForestRegressor(n_estimators=50, random_state=42, max_depth=5), 
+                        RandomForestRegressor(n_estimators=100, random_state=42, max_depth=10), 
                         X, y, cv=cv_folds, scoring='r2'
                     )
                     rf_cv_mean = rf_cv_scores.mean()

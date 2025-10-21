@@ -53,6 +53,12 @@ def to_numpy_arrays(d: dict):
 
 
 def main(args):
+    # Ensure offline/cache-only behavior unless explicitly overridden
+    import os as _os
+    _os.environ.setdefault("OPENML_OFFLINE", "1")
+    _os.environ.setdefault("DATA_CACHE_ONLY", "1")
+    if args.data_dir:
+        _os.environ.setdefault("DATA_CACHE_DIR", str(args.data_dir))
     bench = Benchmark(data_dir=args.data_dir, device=args.device, verbose=not args.quiet)
 
     tasks = [int(t) for t in args.tasks.split(",")] if args.tasks else DEFAULT_TABULAR_NUM_REG_TASKS[: args.max_tasks]

@@ -44,6 +44,7 @@ class SimplePFNTrainer:
         benchmark_eval_fidelity: Optional[str] = None,  # Run benchmark at each eval with this fidelity (e.g., "minimal", "low", "high", "very high")
         benchmark_final_fidelity: Optional[str] = None,  # Run benchmark at end with this fidelity
         benchmark_data_dir: Optional[str] = None,  # Path to data_cache directory for benchmarking
+        benchmark_offline: bool = True,  # If True, never download; use cache only
     ):
         self.model = model
         self.dataloader = dataloader
@@ -75,7 +76,8 @@ class SimplePFNTrainer:
         self.config_path = config_path
         self.benchmark_eval_fidelity = benchmark_eval_fidelity
         self.benchmark_final_fidelity = benchmark_final_fidelity
-        self.benchmark_data_dir = benchmark_data_dir or "data_cache"
+        self.benchmark_data_dir = benchmark_data_dir or "data_cache"  # Default to "data_cache"
+        self.benchmark_offline = bool(benchmark_offline)
         # Cached training shapes for aligning benchmark subsampling
         self._train_n_features = None
         self._train_n_train = None
@@ -930,8 +932,31 @@ class SimplePFNTrainer:
             from src.benchmarking.Benchmark import Benchmark as _Benchmark
         except Exception:
             from benchmarking.Benchmark import Benchmark as _Benchmark
+        # Ensure DATA_CACHE_DIR is set so Benchmark always finds the cache regardless of cwd
+        try:
+            # Prefer externally provided env var (from run script), else use configured path
+            env_data_cache = os.environ.get("DATA_CACHE_DIR")
+            if not env_data_cache:
+                # Try JOB_ROOT_DIR from shell, then fallback to provided benchmark_data_dir
+                job_root = os.environ.get("JOB_ROOT_DIR")
+                if job_root and os.path.isdir(job_root):
+                    env_data_cache = os.path.join(job_root, "data_cache")
+                else:
+                    env_data_cache = str(self.benchmark_data_dir)
+                os.environ["DATA_CACHE_DIR"] = env_data_cache
+            # Control download behavior purely via config flag
+            if self.benchmark_offline:
+                os.environ["OPENML_OFFLINE"] = "1"
+                os.environ["DATA_CACHE_ONLY"] = "1"
+            else:
+                # Explicitly allow downloads (clear flags if present)
+                os.environ.pop("OPENML_OFFLINE", None)
+                os.environ.pop("DATA_CACHE_ONLY", None)
+            print(f"[Trainer] Set DATA_CACHE_DIR={env_data_cache}")
+            print(f"[Trainer] DATA_CACHE_DIR exists: {os.path.exists(env_data_cache)}")
+        except Exception as _e:
+            print(f"[Trainer] Failed to set DATA_CACHE_DIR: {_e}")
 
-        # Use configured benchmark data_dir (falls back to 'data_cache')
         bench = _Benchmark(data_dir=self.benchmark_data_dir, device=self.device, verbose=True)
 
         # Determine subsampling to mirror training dimensions if available

@@ -271,6 +271,9 @@ training_config:
     value: "low"  # e.g., "minimal" to run at each evaluation step
   benchmark_final_fidelity:
     value: "high"  # e.g., "high" to run at the end of training
+  # Use only cached OpenML data and never download during benchmarking
+  benchmark_offline:
+    value: true
 
   # Model Selection Configuration
   model_selection_enabled: # whether to enable model selection for the best model
