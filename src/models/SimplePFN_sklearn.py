@@ -163,6 +163,21 @@ class SimplePFNSklearn:
 
             # Try loading; if size mismatch occurs, attempt to infer d_model/depth from checkpoint and rebuild
             try:
+                # If checkpoint contains feature_pos_* with different rank than current config, adapt before loading
+                try:
+                    if any(k.startswith("feature_pos_A") for k in state.keys()) and hasattr(self.model, "feature_pos_A") and self.model.feature_pos_A is not None:
+                        ck_A = state.get("feature_pos_A")
+                        ck_B = state.get("feature_pos_B")
+                        if ck_A is not None and ck_B is not None:
+                            rank_ck = int(ck_A.shape[1])
+                            if getattr(self.model, "feature_pos_rank", None) and int(self.model.feature_pos_rank) != rank_ck:
+                                if self.verbose:
+                                    print(f"[SimplePFNSklearn] Adapting feature_pos_rank from {self.model.feature_pos_rank} to {rank_ck} to match checkpoint")
+                                # Rebuild model with adapted rank
+                                self.model_kwargs["feature_pos_rank"] = rank_ck
+                                self.model = SimplePFNRegressor(**self.model_kwargs).to(self.device)
+                except Exception:
+                    pass
                 self.model.load_state_dict(state, strict=False)
                 if self.verbose:
                     print("[SimplePFNSklearn] Loaded checkpoint into model (partial loads allowed).")
@@ -202,6 +217,20 @@ class SimplePFNSklearn:
                         # rebuild model with inferred d_model/depth
                         self.model = SimplePFNRegressor(**self.model_kwargs).to(self.device)
                         try:
+                            # adapt rank again for rebuilt model if necessary
+                            try:
+                                if any(k.startswith("feature_pos_A") for k in state.keys()) and hasattr(self.model, "feature_pos_A") and self.model.feature_pos_A is not None:
+                                    ck_A = state.get("feature_pos_A")
+                                    ck_B = state.get("feature_pos_B")
+                                    if ck_A is not None and ck_B is not None:
+                                        rank_ck = int(ck_A.shape[1])
+                                        if getattr(self.model, "feature_pos_rank", None) and int(self.model.feature_pos_rank) != rank_ck:
+                                            if self.verbose:
+                                                print(f"[SimplePFNSklearn] Adapting feature_pos_rank from {self.model.feature_pos_rank} to {rank_ck} to match checkpoint (rebuild)")
+                                            self.model_kwargs["feature_pos_rank"] = rank_ck
+                                            self.model = SimplePFNRegressor(**self.model_kwargs).to(self.device)
+                            except Exception:
+                                pass
                             self.model.load_state_dict(state, strict=False)
                             if self.verbose:
                                 print("[SimplePFNSklearn] Successfully rebuilt model with inferred shape and loaded checkpoint.")

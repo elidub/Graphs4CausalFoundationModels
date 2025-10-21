@@ -14,8 +14,6 @@ from torch.optim.lr_scheduler import LambdaLR
 import math
 from typing import Optional, Dict, Any, Union, Callable
 from sklearn.metrics import r2_score, mean_squared_error
-import pandas as pd
-import math
 
 
 class SimplePFNTrainer:
@@ -37,8 +35,6 @@ class SimplePFNTrainer:
         eval_dataloader: Optional[DataLoader] = None,  # Evaluation dataloader (can be same as training)
         eval_every: int = 0,  # Evaluate every N steps (0 to disable)
         eval_batches: int = 10,  # Number of batches to use for evaluation
-        # Precision / AMP
-        precision: Optional[str] = "32",  # "32" | "16" | "fp16" | "bf16"
         # Model selection parameters
         enable_model_selection: bool = False,  # Whether to enable automatic best model selection
         model_selection_metric: str = "eval/mse_median",  # Metric to use for model selection
@@ -79,7 +75,7 @@ class SimplePFNTrainer:
         self.config_path = config_path
         self.benchmark_eval_fidelity = benchmark_eval_fidelity
         self.benchmark_final_fidelity = benchmark_final_fidelity
-        self.benchmark_data_dir = benchmark_data_dir or "data_cache"  # Default to "data_cache"
+        self.benchmark_data_dir = benchmark_data_dir or "data_cache"
         # Cached training shapes for aligning benchmark subsampling
         self._train_n_features = None
         self._train_n_train = None
@@ -124,37 +120,9 @@ class SimplePFNTrainer:
         
         # Setup scheduler if enabled
         self.scheduler = self._create_scheduler(self.scheduler_config)
-        
-        # Flag for graceful termination (controlled by signal handlers)
+            
+        # Flag for graceful termination
         self.terminate = False
-
-        # AMP / precision setup
-        self.precision = (precision or "32").lower() if isinstance(precision, str) else str(precision)
-        self.use_autocast = False
-        self.autocast_dtype = None
-        self.scaler = None
-        device_is_cuda = str(self.device).startswith("cuda")
-        if device_is_cuda:
-            if self.precision in ["16", "fp16", "float16"]:
-                self.use_autocast = True
-                try:
-                    from torch.cuda.amp import GradScaler
-                    self.autocast_dtype = torch.float16
-                    self.scaler = GradScaler()
-                    print("Using AMP: float16 (GradScaler enabled)")
-                except Exception as _e:
-                    print(f"Warning: Could not enable GradScaler for fp16: {_e}")
-                    self.use_autocast = False
-            elif self.precision in ["bf16", "bfloat16"]:
-                self.use_autocast = True
-                self.autocast_dtype = torch.bfloat16
-                self.scaler = None  # typically not used for bf16
-                print("Using AMP: bfloat16")
-            else:
-                print("Using precision: float32 (no AMP)")
-        else:
-            if self.precision not in [None, "32", "float32"]:
-                print(f"Note: Requested precision '{self.precision}' but device is '{self.device}'. Running in float32.")
     
     def _create_scheduler(self, scheduler_config):
         sched_type = scheduler_config.get("type")
@@ -553,12 +521,7 @@ class SimplePFNTrainer:
                 X_train, y_train, X_test, y_test = self._process_batch(batch)
                 
                 # Forward pass
-                if self.use_autocast and self.autocast_dtype is not None:
-                    from torch.autocast_mode import autocast
-                    with autocast(device_type='cuda', dtype=self.autocast_dtype):
-                        output = self.model(X_train, y_train, X_test)
-                else:
-                    output = self.model(X_train, y_train, X_test)
+                output = self.model(X_train, y_train, X_test)
                 
                 # Extract predictions
                 if isinstance(output, dict) and 'predictions' in output:
@@ -696,60 +659,11 @@ class SimplePFNTrainer:
             print(f"   MSE: {metrics['eval/mse_mean']:.6f} ± {metrics['eval/mse_std']:.6f} (median: {metrics['eval/mse_median']:.6f})")
             print(f"   R²: {metrics['eval/r2_mean']:.6f} ± {metrics['eval/r2_std']:.6f} (median: {metrics['eval/r2_median']:.6f})")
         
-        # Note: We keep eval/* keys for internal use (e.g., model selection),
-        # but we will only log eval/syn_* aliases to Weights & Biases to avoid duplication.
-
         # Update best model if model selection is enabled
         if self.enable_model_selection:
             self._update_best_model(metrics)
         
         return metrics
-
-    # ---- Evaluation logging (simplified) ----
-    def _log_synthetic_eval(self, eval_metrics: Dict[str, float], step: Optional[int] = None) -> None:
-        """Minimal synthetic eval logging under eval/syn_* at the given step."""
-        if not self.wandb_run or not eval_metrics:
-            return
-        s = step if step is not None else self.global_step
-        payload: Dict[str, float] = {}
-        if 'eval/mse_mean' in eval_metrics:
-            payload['eval/syn_mse_mean'] = eval_metrics['eval/mse_mean']
-        if 'eval/mse_median' in eval_metrics:
-            payload['eval/syn_mse_median'] = eval_metrics['eval/mse_median']
-        if 'eval/r2_mean' in eval_metrics:
-            payload['eval/syn_r2_mean'] = eval_metrics['eval/r2_mean']
-        if 'eval/r2_median' in eval_metrics:
-            payload['eval/syn_r2_median'] = eval_metrics['eval/r2_median']
-        if 'eval/loss_mean' in eval_metrics:
-            payload['eval/syn_loss_mean'] = eval_metrics['eval/loss_mean']
-        if 'eval/loss_median' in eval_metrics:
-            payload['eval/syn_loss_median'] = eval_metrics['eval/loss_median']
-        if payload:
-            self.wandb_run.log(payload, step=s)
-
-    def _log_real_world_from_df(self, df: Optional[pd.DataFrame], step: Optional[int] = None) -> None:
-        """Minimal real-world eval logging under eval/rw_* at the given step."""
-        if df is None or not self.wandb_run:
-            return
-        df_metrics = df
-        if "process_id" in df.columns:
-            df_metrics = df[~df["process_id"].isin(["summary", "summary_model"])]
-        payload: Dict[str, float] = {}
-        if "mse_pfn" in df_metrics.columns:
-            s_mse = df_metrics["mse_pfn"].dropna()
-            if len(s_mse) > 0:
-                payload["eval/rw_mse_mean"] = float(s_mse.mean())
-                payload["eval/rw_mse_median"] = float(s_mse.median())
-        if "r2_pfn" in df_metrics.columns:
-            s_r2 = df_metrics["r2_pfn"].dropna()
-            if len(s_r2) > 0:
-                payload["eval/rw_r2_mean"] = float(s_r2.mean())
-                payload["eval/rw_r2_median"] = float(s_r2.median())
-        if payload:
-            s = step if step is not None else self.global_step
-            self.wandb_run.log(payload, step=s)
-
-    # Removed complex combined logger and debug benchmark wrappers for simplicity
 
     def fit(self):
         """Train the SimplePFN model."""
@@ -794,23 +708,6 @@ class SimplePFNTrainer:
             self._train_n_features = int(features)
             self._train_n_train = int(n_train)
             self._train_n_test = int(n_test)
-
-        # Run one synthetic evaluation (and optional real-world benchmark) before training
-        try:
-            if self.eval_dataloader is not None:
-                print("\nPre-training evaluation:")
-                pre_metrics = self.evaluate()
-                # Log synthetic metrics at step 0
-                self._log_synthetic_eval(pre_metrics, step=0)
-            if self.benchmark_eval_fidelity:
-                print("\nPre-training real-world benchmark:")
-                df_pre = self._run_benchmark_with_current_model(
-                    fidelity=self.benchmark_eval_fidelity,
-                    tag="pretrain",
-                )
-                self._log_real_world_from_df(df_pre, step=0)
-        except Exception as _e:
-            print(f"Warning: Pre-training eval/benchmark failed: {_e}")
         
         for step, batch in enumerate(self.dataloader):
             if step >= self.max_steps or self.terminate:
@@ -824,12 +721,7 @@ class SimplePFNTrainer:
             self.optimizer.zero_grad()
             
             # SimplePFN forward pass expects (X_train, y_train, X_test)
-            if self.use_autocast and self.autocast_dtype is not None and str(self.device).startswith('cuda'):
-                from torch.autocast_mode import autocast
-                with autocast(device_type='cuda', dtype=self.autocast_dtype):
-                    output = self.model(X_train, y_train, X_test)
-            else:
-                output = self.model(X_train, y_train, X_test)
+            output = self.model(X_train, y_train, X_test)
             
             # Extract predictions from SimplePFN output
             if isinstance(output, dict) and 'predictions' in output:
@@ -865,14 +757,8 @@ class SimplePFNTrainer:
             losses.append(loss.item())
             
             # Backward pass
-            if self.scaler is not None:
-                # fp16 with scaler
-                self.scaler.scale(loss).backward()
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                loss.backward()
-                self.optimizer.step()
+            loss.backward()
+            self.optimizer.step()
             
             # Update learning rate if scheduler is enabled
             if self.scheduler is not None:
@@ -912,16 +798,22 @@ class SimplePFNTrainer:
             if (self.eval_dataloader is not None and 
                 self.eval_every > 0 and 
                 self.global_step % self.eval_every == 0):
-                # 1) Synthetic evaluation + logging
+                
                 eval_metrics = self.evaluate()
-                self._log_synthetic_eval(eval_metrics, step=self.global_step)
-                # 2) Real-world benchmark + logging (optional)
+                
+                # Log evaluation metrics to wandb
+                if self.wandb_run and eval_metrics:
+                    self.wandb_run.log(eval_metrics, step=self.global_step)
+
+                # Optionally run external OpenML benchmark at evaluation checkpoints
                 if self.benchmark_eval_fidelity:
-                    df_bench = self._run_benchmark_with_current_model(
-                        fidelity=self.benchmark_eval_fidelity,
-                        tag=f"eval_step{self.global_step}",
-                    )
-                    self._log_real_world_from_df(df_bench, step=self.global_step)
+                    try:
+                        self._run_benchmark_with_current_model(
+                            fidelity=self.benchmark_eval_fidelity,
+                            tag=f"eval_step{self.global_step}"
+                        )
+                    except Exception as e:
+                        print(f"[Trainer] Benchmark at eval step {self.global_step} failed: {e}")
             else:
                 # If evaluation is disabled but model selection is enabled,
                 # update best model based on training loss
@@ -969,15 +861,18 @@ class SimplePFNTrainer:
             self.save_model(filename="final.pt", 
                            metadata={'final': True})
             print(f"   Final model saved to {self.run_save_dir}")
-            # Run final real-world benchmark and logging if requested
+            # Run final benchmark if requested
             if self.benchmark_final_fidelity:
+                # Use the just-saved final checkpoint
                 final_ckpt = os.path.join(self.run_save_dir, "final.pt")
-                df_final = self._run_benchmark_with_checkpoint(
-                    fidelity=self.benchmark_final_fidelity,
-                    tag="final",
-                    checkpoint_path=final_ckpt,
-                )
-                self._log_real_world_from_df(df_final, step=self.global_step)
+                try:
+                    self._run_benchmark_with_checkpoint(
+                        fidelity=self.benchmark_final_fidelity,
+                        tag="final",
+                        checkpoint_path=final_ckpt,
+                    )
+                except Exception as e:
+                    print(f"[Trainer] Final benchmark failed: {e}")
             
             # Save best model if model selection was enabled
             if self.enable_model_selection and self.best_model_state is not None:
@@ -994,15 +889,12 @@ class SimplePFNTrainer:
         
         return self.model
 
-    def _run_benchmark_with_current_model(self, fidelity: str, tag: str) -> Optional[pd.DataFrame]:
+    def _run_benchmark_with_current_model(self, fidelity: str, tag: str) -> None:
         """Save a temporary checkpoint of the current model and run the OpenML benchmark with the given fidelity.
 
         Args:
             fidelity: One of {"minimal", "low", "high", "very high"}
             tag: Short label used in output filenames (e.g., "eval_step1000")
-            
-        Returns:
-            DataFrame with benchmark results, or None if benchmark fails
         """
         # Ensure we have a place to save
         if not self.run_save_dir:
@@ -1016,10 +908,10 @@ class SimplePFNTrainer:
         if not ckpt_path:
             raise RuntimeError("Failed to save checkpoint for benchmark.")
 
-        return self._run_benchmark_with_checkpoint(fidelity=fidelity, tag=tag, checkpoint_path=ckpt_path)
+        self._run_benchmark_with_checkpoint(fidelity=fidelity, tag=tag, checkpoint_path=ckpt_path)
 
-    def _run_benchmark_with_checkpoint(self, fidelity: str, tag: str, checkpoint_path: str) -> Optional[pd.DataFrame]:
-        """Run the OpenML benchmark with a specified checkpoint and return the results DataFrame."""
+    def _run_benchmark_with_checkpoint(self, fidelity: str, tag: str, checkpoint_path: str) -> None:
+        """Run the OpenML benchmark with a specified checkpoint."""
         # Ensure import paths are robust regardless of invocation context
         try:
             import sys as _sys
@@ -1038,23 +930,8 @@ class SimplePFNTrainer:
             from src.benchmarking.Benchmark import Benchmark as _Benchmark
         except Exception:
             from benchmarking.Benchmark import Benchmark as _Benchmark
-        # Ensure DATA_CACHE_DIR is set so Benchmark always finds the cache regardless of cwd
-        try:
-            # Prefer externally provided env var (from run script), else use configured path
-            env_data_cache = os.environ.get("DATA_CACHE_DIR")
-            if not env_data_cache:
-                # Try JOB_ROOT_DIR from shell, then fallback to provided benchmark_data_dir
-                job_root = os.environ.get("JOB_ROOT_DIR")
-                if job_root and os.path.isdir(job_root):
-                    env_data_cache = os.path.join(job_root, "data_cache")
-                else:
-                    env_data_cache = str(self.benchmark_data_dir)
-                os.environ["DATA_CACHE_DIR"] = env_data_cache
-            print(f"[Trainer] Set DATA_CACHE_DIR={env_data_cache}")
-            print(f"[Trainer] DATA_CACHE_DIR exists: {os.path.exists(env_data_cache)}")
-        except Exception as _e:
-            print(f"[Trainer] Failed to set DATA_CACHE_DIR: {_e}")
 
+        # Use configured benchmark data_dir (falls back to 'data_cache')
         bench = _Benchmark(data_dir=self.benchmark_data_dir, device=self.device, verbose=True)
 
         # Determine subsampling to mirror training dimensions if available
@@ -1100,9 +977,45 @@ class SimplePFNTrainer:
                 print("\nMean R\u00b2:\n", mean_r2)
             else:
                 print("\nNo per-task metric rows available to summarize (0 successful tasks or missing metric columns).")
+
+            if "process_id" in df.columns and (df["process_id"] == "summary_model").any():
+                df_sm = df[df["process_id"] == "summary_model"]
+                print("\nDetailed per-model summaries (95% CIs, IQR, std, avg ranks):")
+                for _, row in df_sm.sort_values(["model", "metric"]).iterrows():
+                    model = row.get("model", "?")
+                    metric = row.get("metric", "?")
+                    mean = row.get("mean", np.nan)
+                    median = row.get("median", np.nan)
+                    std = row.get("std", np.nan)
+                    iqr = row.get("iqr", np.nan)
+                    ci_mean_low = row.get("ci95_mean_low", np.nan)
+                    ci_mean_high = row.get("ci95_mean_high", np.nan)
+                    ci_med_low = row.get("ci95_median_low", np.nan)
+                    ci_med_high = row.get("ci95_median_high", np.nan)
+                    avg_rank_mse = row.get("avg_rank_mse", np.nan)
+                    avg_rank_r2 = row.get("avg_rank_r2", np.nan)
+                    print(
+                        f"  - {model} [{metric}] | mean={mean:.4f} (95% CI [{ci_mean_low:.4f}, {ci_mean_high:.4f}]), "
+                        f"median={median:.4f} (95% CI [{ci_med_low:.4f}, {ci_med_high:.4f}]), std={std:.4f}, iqr={iqr:.4f}, "
+                        f"avg_rank_mse={avg_rank_mse:.2f}, avg_rank_r2={avg_rank_r2:.2f}"
+                    )
+            else:
+                print("\nNo detailed model summaries available (no 'summary_model' rows).")
         except Exception as _e:
             print(f"[Trainer] Failed to print benchmark summary: {_e}")
-        
-        return df  # Return DataFrame for metrics extraction
-
-    # Removed W&B seeding and define_metric helpers for simpler logging
+        # Optionally log a quick summary
+        if hasattr(self, 'wandb_run') and self.wandb_run is not None:
+            try:
+                # Log median metrics if present
+                df_metrics = df[df["process_id"] != "summary"] if "process_id" in df.columns else df
+                log = {}
+                for k in ["mse_lr", "mse_rf", "mse_pfn"]:
+                    if k in df_metrics.columns:
+                        log[f"benchmark/{tag}/{k}_median"] = float(df_metrics[k].median(skipna=True))
+                for k in ["r2_lr", "r2_rf", "r2_pfn"]:
+                    if k in df_metrics.columns:
+                        log[f"benchmark/{tag}/{k}_median"] = float(df_metrics[k].median(skipna=True))
+                if log:
+                    self.wandb_run.log(log, step=self.global_step)
+            except Exception:
+                pass

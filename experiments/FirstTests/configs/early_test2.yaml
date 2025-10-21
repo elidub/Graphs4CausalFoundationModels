@@ -19,7 +19,7 @@ scm_config:
   # Graph Structure Parameters
   num_nodes:  # number of nodes in the SCM, there is one less maximum number of features than that because the target is also a node
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 3, high: 20}
+    distribution_parameters: {low: 3, high: 17}
   graph_edge_prob:  #probability that any two nodes are connected via an edge. Sparse graphs can be achieved by sampling the edge probability from a right-skewed beta distribution
     distribution: "beta"
     distribution_parameters: {alpha: 2, beta: 5}
@@ -29,10 +29,8 @@ scm_config:
 
   # Mechanism Type Selection: Some mechanisms along the edges are implemented as XGboost algorithms fitted on Gaussain noise, and some as MLPs. Xgboost allows to have discrete effects. 
   xgboost_prob:  # global probability that a mechanisms is XGboost. This defines how likely it is that within a single SCM an XGboost mechanism is sampled. 
-    distribution: "beta"
-    distribution_parameters: {alpha: 2, beta: 8}  # this is a right-skewed distribution that leads to few XGboost mechanisms
-    #distribution: "uniform"
-    #distribution_parameters: {low: 0.0, high: 0.1}
+    distribution: "uniform"
+    distribution_parameters: {low: 0.0, high: 0.2}
   mechanism_seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -86,7 +84,7 @@ scm_config:
     distribution_parameters: {mean: 1.0, std: 1.0}
   exo_std_std:   # distribution over the std of the std of the exogenous noise
     distribution: "uniform"
-    distribution_parameters: {low: 0.01, high: 2.0}
+    distribution_parameters: {low: 0.01, high: 1.0}
   endo_std_mean:  # distribution over the mean of the distribution over the STD
     distribution: "lognormal"
     distribution_parameters: {mean: -3.0, std: 0.6}
@@ -110,17 +108,17 @@ dataset_config:   #Size of the meta-dataset (dataset of individual tabular datas
   dataset_size:
     value: 100000000
   max_number_train_samples:  #maximum number of training samples in one training dataset
-    value: 1000
+    value: 100
   number_train_samples_per_dataset:  #distribution over number of training samples in one dataset. The rest is zero-padded. The maximum number sampled here must be lower than max_number_train_samples
     distribution: "uniform"
-    distribution_parameters: {low: 100, high: 1000}
+    distribution_parameters: {low: 10, high: 100}
   max_number_test_samples:  # maximum number of test samples
-    value: 1000
+    value: 100
   number_test_samples_per_dataset: #number of test samples per dataset. Can be fixed because architecture is agnostic to the number of test samples.
     distribution: "uniform"
-    distribution_parameters: {low: 900, high: 1000}
+    distribution_parameters: {low: 80, high: 100}
   max_number_features:  # maximum number of features. It makes sense to set it to (num_nodes-1). The actual number of features is determined by num_nodes and dropout_prob (which drop out features)
-    value: 19
+    value: 16
   seed:
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -132,7 +130,7 @@ dataset_config:   #Size of the meta-dataset (dataset of individual tabular datas
 preprocessing_config:   
   dropout_prob:  #probability to hide a feature after sampling a dataset
     distribution: "uniform"
-    distribution_parameters: {low: 0.0, high: 0.8}  # keep it low to not drop too many features
+    distribution_parameters: {low: 0.0, high: 0.2}  # keep it low to not drop too many features
   shuffle_data: # to make sure the data are shuffeled
     value: true
   target_feature:  # you can, in principle, fix the target.
@@ -158,27 +156,27 @@ preprocessing_config:
 model_config:
   # Core Architecture Parameters
   d_model:  # model dimension
-    value: 384
+    value: 256
   depth: # number of layers
     value: 6
   heads_feat:  # number of attention heads for feature-wise attention
-    value: 6
+    value: 4
   heads_samp: # number of attention heads for sample-wise attention
-    value: 6
+    value: 4
   dropout:  # dropout probability
     value: 0.1
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
-    value: 1
+    value: 2
   num_features:
-    value: 19  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
+    value: 16  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
 
   # Attention backend
   use_flash_attention:  # enable PyTorch's FlashAttention kernels when available (CUDA)
-    value: true
+    value: false
 
   # Feature positional encodings (per-feature, low-rank)
   use_feature_positional:
-    value: true
+    value: false #true
   feature_pos_rank:
     value: 32
 
@@ -186,7 +184,7 @@ model_config:
   use_bar_distribution:
     value: true
   num_bars:  # number of bars (K). Higher values allow for more complex, fine-grained posteriors, but make training more difficult.
-    value: 1000
+    value: 100
   min_width:  # minimum width of each bar to avoid numerical issues
     value: 1e-10
   scale_floor:  # for the tails, this ensures that the scale is never too small
@@ -206,19 +204,19 @@ model_config:
 training_config:
   # Core Training Parameters
   learning_rate:  # usually 1e-5 - 1e-4 work well
-    value: 0.00001
-  weight_decay: # weight decay for optimizer, might not be needed
     value: 0.0001
+  weight_decay: # weight decay for optimizer, might not be needed
+    value: 0.00000001
   max_steps:  #critial for determing training duration!
-    value: 100000
+    value: 10000
   max_epochs: # should always be 1
     value: 1
 
   # Data Loading Parameters
   batch_size: # batch size
-    value: 8
+    value: 64
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
-    value: 128
+    value: 64
 
   # Training Control
   early_stopping_patience: # patience for early stopping
@@ -242,7 +240,7 @@ training_config:
   device:
     value: "cuda"
   precision: # precision for training. 16 has not been tested yet.
-    value: "bf16"
+    value: "32"
 
   # Experiment Organization
   experiment_name: # name of the experiment, used for logging 

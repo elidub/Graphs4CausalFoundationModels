@@ -384,8 +384,21 @@ class Benchmark:
 
                             pfn.load(override_kwargs=mkwargs)
 
-                            if use_bar_distribution and pfn.bar_distribution is None:
-                                raise ValueError("BarDistribution expected from config but not found in loaded model.")
+                            if use_bar_distribution:
+                                if pfn.bar_distribution is None:
+                                    raise ValueError("BarDistribution expected from config but not found in loaded model.")
+                                # Ensure BarDistribution is fitted before prediction (fit on the current split)
+                                try:
+                                    # Fit using this split only to avoid heavy loops; BarDistribution.fit expects iterable over batches
+                                    pfn.fit_bar_distribution(
+                                        X_train_data=X_train,
+                                        y_train_data=y_train,
+                                        X_test_data=X_test,
+                                        y_test_data=y_test,
+                                        max_batches=1,
+                                    )
+                                except Exception as _e:
+                                    raise RuntimeError(f"BarDistribution fit failed before PFN inference: {_e}")
                             
                             y_pred_pfn = pfn.predict(X_train, y_train, X_test)
 
