@@ -20,9 +20,10 @@ scm_config:
   num_nodes:  # number of nodes in the SCM, there is one less maximum number of features than that because the target is also a node
     distribution: "discrete_uniform"
     distribution_parameters: {low: 3, high: 20}
+    distribution_parameters: {low: 3, high: 20}
   graph_edge_prob:  #probability that any two nodes are connected via an edge. Sparse graphs can be achieved by sampling the edge probability from a right-skewed beta distribution
     distribution: "beta"
-    distribution_parameters: {alpha: 2, beta: 5}
+    distribution_parameters: {alpha: 2, beta: 8}
   graph_seed:   #seed to sample the graph. You usually don't want to fix this!
     distribution: "discrete_uniform"
     distribution_parameters: {low: 0, high: 100000}
@@ -30,7 +31,7 @@ scm_config:
   # Mechanism Type Selection: Some mechanisms along the edges are implemented as XGboost algorithms fitted on Gaussain noise, and some as MLPs. Xgboost allows to have discrete effects. 
   xgboost_prob:  # global probability that a mechanisms is XGboost. This defines how likely it is that within a single SCM an XGboost mechanism is sampled. 
     distribution: "beta"
-    distribution_parameters: {alpha: 1.5, beta: 20}  # this is a right-skewed distribution that leads to few XGboost mechanisms
+    distribution_parameters: {alpha: 1.5, beta: 10}  # this is a right-skewed distribution that leads to few XGboost mechanisms
     #distribution: "uniform"
     #distribution_parameters: {low: 0.0, high: 0.1}
   mechanism_seed:
@@ -42,7 +43,7 @@ scm_config:
     value: "tabicl"
   mlp_num_hidden_layers:  # number of hidden layers in the MLP
     distribution: "categorical"
-    distribution_parameters: {choices: [0, 1, 2], probabilities: [0.7, 0.15, 0.15]}
+    distribution_parameters: {choices: [0, 1, 2], probabilities: [0.5, 0.25, 0.25]}
   mlp_hidden_dim:  # number of hidden variables in the MLP
     distribution: "categorical"
     distribution_parameters: {choices: [4, 8, 16, 32], probabilities: [0.25, 0.5, 0.125, 0.125]}
@@ -65,10 +66,10 @@ scm_config:
     value: [1]
   xgb_n_training_samples:  # number of training samples to tit the random XGboost. 
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 100, high: 500}
+    distribution_parameters: {low: 500, high: 1000}
   xgb_add_noise:   # add noise to the output of XGboost to get somewhat discrete outputs. 
     distribution: "categorical"
-    distribution_parameters: {choices: [true, false], probabilities: [0.2, 0.8]}
+    distribution_parameters: {choices: [true, false], probabilities: [0.3, 0.7]}
 
   # Noise Distribution Parameters
   random_additive_std:   #whether to sample the standard deviation of the noise from a Gamma distribution P where the distribution over P's standard deviation and mean are defined below
@@ -90,10 +91,10 @@ scm_config:
     distribution_parameters: {low: 0.01, high: 1.0}
   endo_std_mean:  # distribution over the mean of the distribution over the STD
     distribution: "lognormal"
-    distribution_parameters: {mean: -3.0, std: 0.6}
+    distribution_parameters: {mean: -5.0, std: 1.0}
   endo_std_std:  # distribution over the mean of the distribution over the STD
     distribution: "uniform"
-    distribution_parameters: {low: 0.01, high: 0.2}
+    distribution_parameters: {low: 0.01, high: 0.3}
 
   # SCM Implementation Settings
   scm_fast:  # faster sampling disables some checks and disabling it can be useful for debugging
@@ -132,8 +133,8 @@ dataset_config:   #Size of the meta-dataset (dataset of individual tabular datas
 # ===============================================================================
 preprocessing_config:   
   dropout_prob:  #probability to hide a feature after sampling a dataset
-    distribution: "uniform"
-    distribution_parameters: {low: 0.0, high: 0.2}  # keep it low to not drop too many features
+    distribution: "beta"
+    distribution_parameters: {alpha: 2.0, beta: 8.0}
   shuffle_data: # to make sure the data are shuffeled
     value: true
   target_feature:  # you can, in principle, fix the target.
@@ -213,7 +214,7 @@ training_config:
   batch_size: # batch size
     value: 8
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
-    value: 128
+    value: 60
 
   # Training Control
   early_stopping_patience: # patience for early stopping
