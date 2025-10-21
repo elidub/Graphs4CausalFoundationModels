@@ -212,6 +212,59 @@ class SimpleOpenMLLoader:
 
     # No preprocess logic here anymore.
 
+    # ---------- offline/cache helpers ----------
+
+    def list_cached_dataset_ids(self) -> List[int]:
+        """Scan data_dir for openml_*/raw.csv datasets and return dataset IDs found."""
+        ids: List[int] = []
+        try:
+            for child in self.data_dir.iterdir():
+                if child.is_dir() and child.name.startswith("openml_"):
+                    try:
+                        ds_id = int(child.name.split("_", 1)[1])
+                    except Exception:
+                        continue
+                    raw_csv = child / "raw.csv"
+                    if raw_csv.exists():
+                        ids.append(ds_id)
+        except FileNotFoundError:
+            pass
+        return sorted(ids)
+
+    def load_datasets_raw_by_cache(
+        self,
+        dataset_ids: Optional[List[int]] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[int, Dict[str, Any]]:
+        """
+        Offline loader: directly read cached raw.csv files for given dataset_ids.
+        If dataset_ids is None, loads from all cached datasets found.
+        Returns mapping: dataset_id -> { df, target_column, dataset_id }
+        """
+        if dataset_ids is None:
+            dataset_ids = self.list_cached_dataset_ids()
+        if limit is not None and limit > 0:
+            dataset_ids = dataset_ids[: int(limit)]
+        out: Dict[int, Dict[str, Any]] = {}
+        for ds_id in dataset_ids:
+            ds_dir = self.data_dir / f"openml_{int(ds_id)}"
+            raw_csv = ds_dir / "raw.csv"
+            if not raw_csv.exists():
+                continue
+            try:
+                if self.verbose:
+                    print(f"[SimpleOpenMLLoader] Offline-read raw CSV: {raw_csv}")
+                df = pd.read_csv(raw_csv)
+                target_column = df.columns[-1]
+                out[int(ds_id)] = {
+                    "df": df,
+                    "target_column": target_column,
+                    "dataset_id": int(ds_id),
+                }
+            except Exception as e:
+                print(f"[SimpleOpenMLLoader] Failed to read cached dataset {ds_id}: {e}")
+        return out
+
     # Kept for backward compatibility if needed in the future: not used here
     @staticmethod
     def _to_numpy(x):
