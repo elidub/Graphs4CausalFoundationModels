@@ -125,6 +125,8 @@ class SimplePFNTrainer:
             
         # Flag for graceful termination
         self.terminate = False
+    # Rollback checkpoint path (for eval NaN rollback)
+    self._rollback_ckpt_path = None
     
     def _create_scheduler(self, scheduler_config):
         sched_type = scheduler_config.get("type")
@@ -711,6 +713,8 @@ class SimplePFNTrainer:
             self._train_n_train = int(n_train)
             self._train_n_test = int(n_test)
         
+        # Track whether the last batch loss was finite (used to decide pre-eval checkpointing)
+        last_loss_was_finite = True
         for step, batch in enumerate(self.dataloader):
             if step >= self.max_steps or self.terminate:
                 break   
@@ -756,18 +760,25 @@ class SimplePFNTrainer:
                 # Compute MSE loss for the full batch
                 loss = self.criterion(predictions, y_test)
                 
-            losses.append(loss.item())
-            
-            # Backward pass
-            loss.backward()
-            self.optimizer.step()
-            
-            # Update learning rate if scheduler is enabled
-            if self.scheduler is not None:
-                self.scheduler.step()
-                current_lr = self.scheduler.get_last_lr()[0]
+            # Decide on update depending on loss finiteness
+            loss_value = float(loss.item())
+            if np.isfinite(loss_value):
+                losses.append(loss_value)
+                last_loss_was_finite = True
+                # Backward pass
+                loss.backward()
+                self.optimizer.step()
+                # Update learning rate if scheduler is enabled
+                if self.scheduler is not None:
+                    self.scheduler.step()
+                    current_lr = self.scheduler.get_last_lr()[0]
+                else:
+                    current_lr = self.learning_rate
             else:
-                current_lr = self.learning_rate
+                # Skip optimizer update on non-finite loss
+                last_loss_was_finite = False
+                current_lr = self.scheduler.get_last_lr()[0] if self.scheduler is not None else self.learning_rate
+                print(f"   Warning: Skipping optimizer update due to non-finite loss (loss={loss_value})")
             
             self.global_step += 1
             
@@ -778,13 +789,17 @@ class SimplePFNTrainer:
             
             # Log to Weights & Biases
             if self.wandb_run:
-                self.wandb_run.log({
-                    'train/loss': loss.item(),
+                payload = {
                     'train/step_time': batch_time,
                     'train/batch_size': X_train.shape[0],
                     'train/global_step': self.global_step,
                     'train/learning_rate': current_lr
-                }, step=self.global_step)
+                }
+                if np.isfinite(loss_value):
+                    payload['train/loss'] = loss_value
+                else:
+                    payload['train/loss_nan'] = 1
+                self.wandb_run.log(payload, step=self.global_step)
             
             # Print progress - more frequent at start, less frequent later
             if step <= 10 or step % max(1, self.max_steps // 10) == 0:
@@ -800,9 +815,51 @@ class SimplePFNTrainer:
             if (self.eval_dataloader is not None and 
                 self.eval_every > 0 and 
                 self.global_step % self.eval_every == 0):
-                
+
+                # Save a rollback checkpoint BEFORE evaluation if last loss was finite
+                if self.run_save_dir and last_loss_was_finite:
+                    try:
+                        self._rollback_ckpt_path = self.save_model(
+                            filename="last_good_before_eval.pt",
+                            metadata={"stage": "pre_eval", "pre_eval_step": self.global_step}
+                        )
+                    except Exception as _e:
+                        print(f"Warning: Could not save pre-eval checkpoint for rollback: {_e}")
+
                 eval_metrics = self.evaluate()
-                
+
+                # Determine if eval loss is non-finite (or metrics missing)
+                def _eval_nonfinite(m: Dict[str, float]) -> bool:
+                    if not m:
+                        return True
+                    for k in ("eval/loss_mean", "eval/loss_median"):
+                        if k in m and not np.isfinite(float(m[k])):
+                            return True
+                    return False
+
+                if _eval_nonfinite(eval_metrics):
+                    print("[Trainer] Non-finite evaluation loss detected; rolling back to pre-eval checkpoint and continuing training.")
+                    if self._rollback_ckpt_path and os.path.exists(self._rollback_ckpt_path):
+                        meta = self.load_model(self._rollback_ckpt_path, map_location=self.device)
+                        # Restore global_step if present in metadata
+                        try:
+                            if isinstance(meta, dict):
+                                if 'step' in meta:
+                                    self.global_step = int(meta['step'])
+                                elif 'global_step' in meta:
+                                    self.global_step = int(meta['global_step'])
+                                print(f"[Trainer] Restored global_step to {self.global_step} from rollback checkpoint")
+                        except Exception:
+                            pass
+                        # Zero any stale gradients
+                        self.optimizer.zero_grad(set_to_none=True)
+                        if self.wandb_run:
+                            self.wandb_run.log({'events/rollback_due_to_eval_nan': 1, 'events/rollback_step': self.global_step}, step=self.global_step)
+                    else:
+                        print("[Trainer] Rollback checkpoint missing; cannot restore state. Continuing without rollback.")
+                    # Skip logging metrics and benchmarking for this eval cycle
+                    continue
+
                 # Log evaluation metrics to wandb
                 if self.wandb_run and eval_metrics:
                     self.wandb_run.log(eval_metrics, step=self.global_step)
