@@ -92,6 +92,32 @@ class DataloaderDatasetVisualizer:
     and correlation heatmaps.
     """
     
+    @staticmethod
+    def trim_for_plotting(data, lower_percentile=2.5, upper_percentile=97.5):
+        """
+        Trim data to remove extreme values for better visualization.
+        Removes lower_percentile and (100 - upper_percentile) from both tails.
+        
+        Args:
+            data: numpy array or list of values
+            lower_percentile: Lower percentile to trim (default 2.5)
+            upper_percentile: Upper percentile to trim (default 97.5)
+            
+        Returns:
+            Tuple of (trimmed_data, lower_bound, upper_bound)
+        """
+        data_array = np.asarray(data)
+        if len(data_array) == 0:
+            return data_array, None, None
+        
+        lower_bound = np.percentile(data_array, lower_percentile)
+        upper_bound = np.percentile(data_array, upper_percentile)
+        
+        mask = (data_array >= lower_bound) & (data_array <= upper_bound)
+        trimmed = data_array[mask]
+        
+        return trimmed, lower_bound, upper_bound
+    
     def __init__(self, config_path: str, seed: int = 42):
         """
         Initialize the visualizer with a config file.
@@ -597,17 +623,37 @@ class DataloaderDatasetVisualizer:
         plot_data = np.column_stack([X_selected, y_train_filtered])
         plot_labels = selected_feature_names + ['target']
         
+        # Trim data for plotting (remove 2.5% extremes from each end)
+        plot_data_trimmed = np.copy(plot_data)
+        for col_idx in range(plot_data.shape[1]):
+            trimmed_col, _, _ = self.trim_for_plotting(plot_data[:, col_idx])
+            if len(trimmed_col) > 0:
+                # Find indices that remain after trimming
+                lower = np.percentile(plot_data[:, col_idx], 2.5)
+                upper = np.percentile(plot_data[:, col_idx], 97.5)
+                mask = (plot_data[:, col_idx] >= lower) & (plot_data[:, col_idx] <= upper)
+                # Keep only rows that fall within bounds for ALL columns
+                if col_idx == 0:
+                    combined_mask = mask
+                else:
+                    combined_mask = combined_mask & mask
+        
+        # Apply combined mask to all columns
+        plot_data_trimmed = plot_data[combined_mask]
+        
+        self.log(f"[INFO] Trimmed data for visualization: {len(plot_data)} -> {len(plot_data_trimmed)} samples (removed {len(plot_data) - len(plot_data_trimmed)} extreme values)")
+        
         for i in range(n_plots):
             for j in range(n_plots):
                 ax = axes[i][j]
                 
                 if i == j:
-                    # Diagonal: histograms
-                    ax.hist(plot_data[:, i], alpha=0.7, bins=20, color='skyblue')
+                    # Diagonal: histograms with trimmed data
+                    ax.hist(plot_data_trimmed[:, i], alpha=0.7, bins=20, color='skyblue')
                     ax.set_title(f'{plot_labels[i]}', fontsize=10)
                 else:
-                    # Off-diagonal: scatter plots
-                    ax.scatter(plot_data[:, j], plot_data[:, i], alpha=0.6, s=15)
+                    # Off-diagonal: scatter plots with trimmed data
+                    ax.scatter(plot_data_trimmed[:, j], plot_data_trimmed[:, i], alpha=0.6, s=15)
                     if i == n_plots - 1:  # Bottom row
                         ax.set_xlabel(plot_labels[j], fontsize=9)
                     if j == 0:  # Left column
@@ -1148,11 +1194,12 @@ class DataloaderDatasetVisualizer:
             self.log(f"[INFO] Train samples: {avg_train:.1f} ± {std_train:.1f} (min={min_train}, max={max_train})")
             self.log(f"[INFO] Test samples: {avg_test:.1f} ± {std_test:.1f} (min={min_test}, max={max_test})")
             
-            # Create histogram of feature counts
+            # Create histogram of feature counts with trimmed data
+            feature_counts_trimmed, _, _ = self.trim_for_plotting(self.all_stats['feature_counts'])
             plt.figure(figsize=(10, 6))
-            plt.hist(self.all_stats['feature_counts'], bins=min(10, max_features - min_features + 1), 
+            plt.hist(feature_counts_trimmed, bins=min(10, int(np.max(feature_counts_trimmed) - np.min(feature_counts_trimmed) + 1)), 
                     alpha=0.7, color='steelblue', edgecolor='black')
-            plt.title('Feature Count Distribution Across Datasets', fontsize=14)
+            plt.title('Feature Count Distribution Across Datasets (2.5%-97.5% range)', fontsize=14)
             plt.xlabel('Number of Features', fontsize=12)
             plt.ylabel('Number of Datasets', fontsize=12)
             plt.grid(alpha=0.3)
@@ -1256,21 +1303,24 @@ class DataloaderDatasetVisualizer:
                 self.log(f"[INFO]   Std:    {rf_test_mse_std:.4f}")
                 self.log(f"[INFO]   Range:  [{rf_test_mse_min:.4f}, {rf_test_mse_max:.4f}]")
             
-            # Create histogram of R² values
+            # Create histogram of R² values with trimmed data
+            linear_r2_trimmed, _, _ = self.trim_for_plotting(self.all_stats['linear_test_r2'])
+            rf_r2_trimmed, _, _ = self.trim_for_plotting(self.all_stats['rf_test_r2'])
+            
             plt.figure(figsize=(12, 6))
             
             plt.subplot(1, 2, 1)
-            plt.hist(self.all_stats['linear_test_r2'], bins=10, alpha=0.7, 
+            plt.hist(linear_r2_trimmed, bins=10, alpha=0.7, 
                      color='cornflowerblue', edgecolor='black')
-            plt.title('Linear Model Test R² Distribution', fontsize=12)
+            plt.title('Linear Model Test R² Distribution\n(2.5%-97.5% range)', fontsize=12)
             plt.xlabel('Test R²', fontsize=10)
             plt.ylabel('Number of Datasets', fontsize=10)
             plt.grid(alpha=0.3)
             
             plt.subplot(1, 2, 2)
-            plt.hist(self.all_stats['rf_test_r2'], bins=10, alpha=0.7,
+            plt.hist(rf_r2_trimmed, bins=10, alpha=0.7,
                      color='forestgreen', edgecolor='black')
-            plt.title('Random Forest Test R² Distribution', fontsize=12)
+            plt.title('Random Forest Test R² Distribution\n(2.5%-97.5% range)', fontsize=12)
             plt.xlabel('Test R²', fontsize=10)
             plt.ylabel('Number of Datasets', fontsize=10)
             plt.grid(alpha=0.3)
@@ -1282,24 +1332,27 @@ class DataloaderDatasetVisualizer:
             
             self.log(f"[INFO] R² distribution histogram saved to: {r2_hist_path}")
             
-            # Create histogram of MSE values (if available)
+            # Create histogram of MSE values (if available) with trimmed data
             if ('linear_test_mse' in self.all_stats and self.all_stats['linear_test_mse'] and 
                 'rf_test_mse' in self.all_stats and self.all_stats['rf_test_mse']):
+                
+                linear_mse_trimmed, _, _ = self.trim_for_plotting(self.all_stats['linear_test_mse'])
+                rf_mse_trimmed, _, _ = self.trim_for_plotting(self.all_stats['rf_test_mse'])
                 
                 plt.figure(figsize=(12, 6))
                 
                 plt.subplot(1, 2, 1)
-                plt.hist(self.all_stats['linear_test_mse'], bins=10, alpha=0.7, 
+                plt.hist(linear_mse_trimmed, bins=10, alpha=0.7, 
                          color='lightcoral', edgecolor='black')
-                plt.title('Linear Model Test MSE Distribution', fontsize=12)
+                plt.title('Linear Model Test MSE Distribution\n(2.5%-97.5% range)', fontsize=12)
                 plt.xlabel('Test MSE', fontsize=10)
                 plt.ylabel('Number of Datasets', fontsize=10)
                 plt.grid(alpha=0.3)
                 
                 plt.subplot(1, 2, 2)
-                plt.hist(self.all_stats['rf_test_mse'], bins=10, alpha=0.7,
+                plt.hist(rf_mse_trimmed, bins=10, alpha=0.7,
                          color='mediumseagreen', edgecolor='black')
-                plt.title('Random Forest Test MSE Distribution', fontsize=12)
+                plt.title('Random Forest Test MSE Distribution\n(2.5%-97.5% range)', fontsize=12)
                 plt.xlabel('Test MSE', fontsize=10)
                 plt.ylabel('Number of Datasets', fontsize=10)
                 plt.grid(alpha=0.3)
@@ -1311,16 +1364,33 @@ class DataloaderDatasetVisualizer:
                 
                 self.log(f"[INFO] MSE distribution histogram saved to: {mse_hist_path}")
             
-            # Create comparison plot: Linear vs RF R²
+            # Create comparison plot: Linear vs RF R² with trimmed data
+            # Trim both arrays and keep only pairs where both values are within range
+            linear_r2_array = np.array(self.all_stats['linear_test_r2'])
+            rf_r2_array = np.array(self.all_stats['rf_test_r2'])
+            
+            # Calculate percentile bounds for each
+            linear_lower = np.percentile(linear_r2_array, 2.5)
+            linear_upper = np.percentile(linear_r2_array, 97.5)
+            rf_lower = np.percentile(rf_r2_array, 2.5)
+            rf_upper = np.percentile(rf_r2_array, 97.5)
+            
+            # Keep only pairs where both are in range
+            mask = ((linear_r2_array >= linear_lower) & (linear_r2_array <= linear_upper) &
+                    (rf_r2_array >= rf_lower) & (rf_r2_array <= rf_upper))
+            
+            linear_r2_trimmed_pairs = linear_r2_array[mask]
+            rf_r2_trimmed_pairs = rf_r2_array[mask]
+            
             plt.figure(figsize=(8, 6))
-            plt.scatter(self.all_stats['linear_test_r2'], self.all_stats['rf_test_r2'],
+            plt.scatter(linear_r2_trimmed_pairs, rf_r2_trimmed_pairs,
                        alpha=0.7, s=50, edgecolors='black', c='teal')
             
             plt.axline([0, 0], [1, 1], color='gray', linestyle='--', alpha=0.7)
             
             plt.xlim(-0.1, 1.0)
             plt.ylim(-0.1, 1.0)
-            plt.title('Linear Model vs Random Forest Test R² Comparison', fontsize=14)
+            plt.title('Linear Model vs Random Forest Test R² Comparison\n(2.5%-97.5% range)', fontsize=14)
             plt.xlabel('Linear Model Test R²', fontsize=12)
             plt.ylabel('Random Forest Test R²', fontsize=12)
             plt.grid(alpha=0.3)
@@ -1331,22 +1401,25 @@ class DataloaderDatasetVisualizer:
             
             self.log(f"[INFO] Model comparison plot saved to: {r2_comparison_path}")
             
-            # Create learnability histograms if data is available
+            # Create learnability histograms if data is available with trimmed data
             if self.all_stats['linear_learnability'] and self.all_stats['rf_learnability']:
+                linear_learn_trimmed, _, _ = self.trim_for_plotting(self.all_stats['linear_learnability'])
+                rf_learn_trimmed, _, _ = self.trim_for_plotting(self.all_stats['rf_learnability'])
+                
                 plt.figure(figsize=(12, 6))
                 
                 plt.subplot(1, 2, 1)
-                plt.hist(self.all_stats['linear_learnability'], bins=10, alpha=0.7, 
+                plt.hist(linear_learn_trimmed, bins=10, alpha=0.7, 
                          color='cornflowerblue', edgecolor='black')
-                plt.title('Linear Model Learnability Distribution', fontsize=12)
+                plt.title('Linear Model Learnability Distribution\n(2.5%-97.5% range)', fontsize=12)
                 plt.xlabel('Learnability (Half/Full MSE ratio)', fontsize=10)
                 plt.ylabel('Number of Datasets', fontsize=10)
                 plt.grid(alpha=0.3)
                 
                 plt.subplot(1, 2, 2)
-                plt.hist(self.all_stats['rf_learnability'], bins=10, alpha=0.7,
+                plt.hist(rf_learn_trimmed, bins=10, alpha=0.7,
                          color='forestgreen', edgecolor='black')
-                plt.title('Random Forest Learnability Distribution', fontsize=12)
+                plt.title('Random Forest Learnability Distribution\n(2.5%-97.5% range)', fontsize=12)
                 plt.xlabel('Learnability (Half/Full MSE ratio)', fontsize=10)
                 plt.ylabel('Number of Datasets', fontsize=10)
                 plt.grid(alpha=0.3)
@@ -1358,15 +1431,31 @@ class DataloaderDatasetVisualizer:
                 
                 self.log(f"[INFO] Learnability distribution histogram saved to: {learnability_hist_path}")
                 
-                # Create learnability comparison plot
+                # Create learnability comparison plot with trimmed data
+                linear_learn_array = np.array(self.all_stats['linear_learnability'])
+                rf_learn_array = np.array(self.all_stats['rf_learnability'])
+                
+                # Calculate percentile bounds for each
+                linear_lower = np.percentile(linear_learn_array, 2.5)
+                linear_upper = np.percentile(linear_learn_array, 97.5)
+                rf_lower = np.percentile(rf_learn_array, 2.5)
+                rf_upper = np.percentile(rf_learn_array, 97.5)
+                
+                # Keep only pairs where both are in range
+                mask = ((linear_learn_array >= linear_lower) & (linear_learn_array <= linear_upper) &
+                        (rf_learn_array >= rf_lower) & (rf_learn_array <= rf_upper))
+                
+                linear_learn_trimmed_pairs = linear_learn_array[mask]
+                rf_learn_trimmed_pairs = rf_learn_array[mask]
+                
                 plt.figure(figsize=(8, 6))
-                plt.scatter(self.all_stats['linear_learnability'], self.all_stats['rf_learnability'],
+                plt.scatter(linear_learn_trimmed_pairs, rf_learn_trimmed_pairs,
                            alpha=0.7, s=50, edgecolors='black', c='purple')
                 
                 # Add a reference line at x=y
                 max_value = max(
-                    max(self.all_stats['linear_learnability']),
-                    max(self.all_stats['rf_learnability'])
+                    np.max(linear_learn_trimmed_pairs) if len(linear_learn_trimmed_pairs) > 0 else 1,
+                    np.max(rf_learn_trimmed_pairs) if len(rf_learn_trimmed_pairs) > 0 else 1
                 )
                 plt.axline([0, 0], [max_value, max_value], color='gray', linestyle='--', alpha=0.7)
                 
@@ -1374,7 +1463,7 @@ class DataloaderDatasetVisualizer:
                 plt.axhline(1.0, color='red', linestyle='--', alpha=0.5)
                 plt.axvline(1.0, color='red', linestyle='--', alpha=0.5)
                 
-                plt.title('Linear Model vs Random Forest Learnability Comparison', fontsize=14)
+                plt.title('Linear Model vs Random Forest Learnability Comparison\n(2.5%-97.5% range)', fontsize=14)
                 plt.xlabel('Linear Model Learnability', fontsize=12)
                 plt.ylabel('Random Forest Learnability', fontsize=12)
                 plt.grid(alpha=0.3)
@@ -1385,26 +1474,42 @@ class DataloaderDatasetVisualizer:
                 
                 self.log(f"[INFO] Learnability comparison plot saved to: {learnability_comparison_path}")
             
-            # Create comparison plot: Linear vs RF MSE
+            # Create comparison plot: Linear vs RF MSE with trimmed data
             if ('linear_test_mse' in self.all_stats and self.all_stats['linear_test_mse'] and 
                 'rf_test_mse' in self.all_stats and self.all_stats['rf_test_mse']):
+                
+                linear_mse_array = np.array(self.all_stats['linear_test_mse'])
+                rf_mse_array = np.array(self.all_stats['rf_test_mse'])
+                
+                # Calculate percentile bounds for each
+                linear_lower = np.percentile(linear_mse_array, 2.5)
+                linear_upper = np.percentile(linear_mse_array, 97.5)
+                rf_lower = np.percentile(rf_mse_array, 2.5)
+                rf_upper = np.percentile(rf_mse_array, 97.5)
+                
+                # Keep only pairs where both are in range
+                mask = ((linear_mse_array >= linear_lower) & (linear_mse_array <= linear_upper) &
+                        (rf_mse_array >= rf_lower) & (rf_mse_array <= rf_upper))
+                
+                linear_mse_trimmed_pairs = linear_mse_array[mask]
+                rf_mse_trimmed_pairs = rf_mse_array[mask]
                 
                 plt.figure(figsize=(8, 6))
                 
                 # Get max value to set equal plot limits
                 max_mse = max(
-                    max(self.all_stats['linear_test_mse']),
-                    max(self.all_stats['rf_test_mse'])
+                    np.max(linear_mse_trimmed_pairs) if len(linear_mse_trimmed_pairs) > 0 else 1,
+                    np.max(rf_mse_trimmed_pairs) if len(rf_mse_trimmed_pairs) > 0 else 1
                 )
                 
-                plt.scatter(self.all_stats['linear_test_mse'], self.all_stats['rf_test_mse'],
+                plt.scatter(linear_mse_trimmed_pairs, rf_mse_trimmed_pairs,
                            alpha=0.7, s=50, edgecolors='black', c='crimson')
                 
                 plt.axline([0, 0], [max_mse, max_mse], color='gray', linestyle='--', alpha=0.7)
                 
                 plt.xlim(-0.05 * max_mse, 1.05 * max_mse)
                 plt.ylim(-0.05 * max_mse, 1.05 * max_mse)
-                plt.title('Linear Model vs Random Forest Test MSE Comparison', fontsize=14)
+                plt.title('Linear Model vs Random Forest Test MSE Comparison\n(2.5%-97.5% range)', fontsize=14)
                 plt.xlabel('Linear Model Test MSE', fontsize=12)
                 plt.ylabel('Random Forest Test MSE', fontsize=12)
                 plt.grid(alpha=0.3)
@@ -1481,12 +1586,13 @@ class DataloaderDatasetVisualizer:
                 count = len(corrs)
                 self.log(f"[INFO]   {feat}: {avg_abs_corr:.4f} (used in {count} datasets)")
             
-            # Create correlation distribution histogram
+            # Create correlation distribution histogram with trimmed data
             all_corrs = [corr for feat, corr in self.all_stats['target_correlations']]
+            all_corrs_trimmed, _, _ = self.trim_for_plotting(all_corrs)
             
             plt.figure(figsize=(10, 6))
-            plt.hist(all_corrs, bins=20, alpha=0.7, color='tomato', edgecolor='black')
-            plt.title('Distribution of Feature-Target Correlations Across All Datasets', fontsize=14)
+            plt.hist(all_corrs_trimmed, bins=20, alpha=0.7, color='tomato', edgecolor='black')
+            plt.title('Distribution of Feature-Target Correlations Across All Datasets\n(2.5%-97.5% range)', fontsize=14)
             plt.xlabel('Correlation with Target', fontsize=12)
             plt.ylabel('Frequency', fontsize=12)
             plt.grid(alpha=0.3)
