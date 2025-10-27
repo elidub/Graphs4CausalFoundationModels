@@ -12,161 +12,208 @@
 experiment_name: "early_test2"
 description: "First pipeline test. debug scale with fixed seeds for reproducibility"
 
-# ===============================================================================
-# SCM Configuration (Structural Causal Model Generation)
-# ===============================================================================
 scm_config:
-  # Graph Structure Parameters
-  num_nodes:  # number of nodes in the SCM, there is one less maximum number of features than that because the target is also a node
+  num_nodes:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 3, high: 20}
-    distribution_parameters: {low: 3, high: 20}
-  graph_edge_prob:  #probability that any two nodes are connected via an edge. Sparse graphs can be achieved by sampling the edge probability from a right-skewed beta distribution
+    distribution_parameters:
+      low: 3
+      high: 20
+  graph_edge_prob:
     distribution: "beta"
-    distribution_parameters: {alpha: 2, beta: 8}
-  graph_seed:   #seed to sample the graph. You usually don't want to fix this!
+    distribution_parameters:
+      alpha: 2
+      beta: 8
+  graph_seed:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 0, high: 100000}
-
-  # Mechanism Type Selection: Some mechanisms along the edges are implemented as XGboost algorithms fitted on Gaussain noise, and some as MLPs. Xgboost allows to have discrete effects. 
-  xgboost_prob:  # global probability that a mechanisms is XGboost. This defines how likely it is that within a single SCM an XGboost mechanism is sampled. 
+    distribution_parameters:
+      low: 0
+      high: 100000
+  xgboost_prob:
     distribution: "beta"
-    distribution_parameters: {alpha: 1.5, beta: 10}  # this is a right-skewed distribution that leads to few XGboost mechanisms
-    #distribution: "uniform"
-    #distribution_parameters: {low: 0.0, high: 0.1}
+    distribution_parameters:
+      alpha: 1.5
+      beta: 10
   mechanism_seed:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 0, high: 100000}
-
-  # MLP Mechanism Hyperparameters
-  mlp_nonlins:  # this string defines the sampling of the nonlinearities. Default is "tabicl", which follows the TabICL paper 
+    distribution_parameters:
+      low: 0
+      high: 100000
+  mlp_nonlins:
     value: "tabicl"
-  mlp_num_hidden_layers:  # number of hidden layers in the MLP
+  mlp_num_hidden_layers:
     distribution: "categorical"
-    distribution_parameters: {choices: [0, 1, 2], probabilities: [0.5, 0.25, 0.25]}
-  mlp_hidden_dim:  # number of hidden variables in the MLP
+    distribution_parameters:
+      choices:
+        - 0
+        - 1
+        - 2
+      probabilities:
+        - 0.5
+        - 0.25
+        - 0.25
+  mlp_hidden_dim:
     distribution: "categorical"
-    distribution_parameters: {choices: [4, 8, 16, 32], probabilities: [0.25, 0.5, 0.125, 0.125]}
-  mlp_activation_mode:  # if the nonlinearity is applied before or after adding the noise
+    distribution_parameters:
+      choices:
+        - 4
+        - 8
+        - 16
+        - 32
+      probabilities:
+        - 0.25
+        - 0.5
+        - 0.125
+        - 0.125
+  mlp_activation_mode:
     distribution: "categorical"
-    distribution_parameters: {choices: ["pre", "post"], probabilities: [0.8, 0.2]}
+    distribution_parameters:
+      choices:
+        - "pre"
+        - "post"
+      probabilities:
+        - 0.8
+        - 0.2
   mlp_node_shape:
     value: [1]
-
-  # XGBoost Mechanism Hyperparameters
-  xgb_num_hidden_layers:  # XGboost can have several layers, but this is not tested. If this is zero, the xgb_hidden_dim, xgb_activation_mode parameters are not needed.
+  xgb_num_hidden_layers:
     value: 0
   xgb_hidden_dim:
     distribution: "categorical"
-    distribution_parameters: {choices: [0, 16, 32, 64]}
+    distribution_parameters:
+      choices:
+        - 0
+        - 16
+        - 32
+        - 64
   xgb_activation_mode:
     distribution: "categorical"
-    distribution_parameters: {choices: ["pre", "post"]}
+    distribution_parameters:
+      choices:
+        - "pre"
+        - "post"
   xgb_node_shape:
     value: [1]
-  xgb_n_training_samples:  # number of training samples to tit the random XGboost. 
+  xgb_n_training_samples:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 500, high: 1000}
-  xgb_add_noise:   # add noise to the output of XGboost to get somewhat discrete outputs. 
+    distribution_parameters:
+      low: 500
+      high: 1000
+  xgb_add_noise:
     distribution: "categorical"
-    distribution_parameters: {choices: [true, false], probabilities: [0.3, 0.7]}
-
-  # Noise Distribution Parameters
-  random_additive_std:   #whether to sample the standard deviation of the noise from a Gamma distribution P where the distribution over P's standard deviation and mean are defined below
+    distribution_parameters:
+      choices:
+        - true
+        - false
+      probabilities:
+        - 0.3
+        - 0.7
+  random_additive_std:
     value: true
-  exo_std_distribution:   #distribution type over the STD of the exogenous noise 
+  exo_std_distribution:
     distribution: "categorical"
-    distribution_parameters: {choices: ["gamma", "pareto"], probabilities: [1.0, 0.0]}   #Pareto can lead to errors
-  endo_std_distribution:   #distribution type over the STD of the endogenous noise (Pareto can be undefined for certain parameters)
+    distribution_parameters:
+      choices:
+        - "gamma"
+        - "pareto"
+      probabilities:
+        - 1.0
+        - 0.0
+  endo_std_distribution:
     distribution: "categorical"
-    distribution_parameters: {choices: ["gamma", "pareto"], probabilities: [1.0, 0.0]}
-
-
-  # Random Standard Deviation Parameters
-  exo_std_mean:  # distribution over the mean of the distribution over the STD of the exogenous noise
+    distribution_parameters:
+      choices:
+        - "gamma"
+        - "pareto"
+      probabilities:
+        - 1.0
+        - 0.0
+  exo_std_mean:
     distribution: "lognormal"
-    distribution_parameters: {mean: 1.0, std: 1.0}
-  exo_std_std:   # distribution over the std of the std of the exogenous noise
+    distribution_parameters:
+      mean: 1.0
+      std: 1.0
+  exo_std_std:
     distribution: "uniform"
-    distribution_parameters: {low: 0.01, high: 1.0}
-  endo_std_mean:  # distribution over the mean of the distribution over the STD
+    distribution_parameters:
+      low: 0.01
+      high: 1.0
+  endo_std_mean:
     distribution: "lognormal"
-    distribution_parameters: {mean: -5.0, std: 1.0}
-  endo_std_std:  # distribution over the mean of the distribution over the STD
+    distribution_parameters:
+      mean: -5.0
+      std: 1.0
+  endo_std_std:
     distribution: "uniform"
-    distribution_parameters: {low: 0.01, high: 0.3}
-
-  # SCM Implementation Settings
-  scm_fast:  # faster sampling disables some checks and disabling it can be useful for debugging
+    distribution_parameters:
+      low: 0.01
+      high: 0.3
+  scm_fast:
     value: true
-  use_exogenous_mechanisms:   #whether to use mechanisms on every exogenous variable before it is passed to the SCM
+  use_exogenous_mechanisms:
     value: true
-  mechanism_generator_seed:   #seed for mechanisms. Does not fully work 
+  mechanism_generator_seed:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 0, high: 100000}
+    distribution_parameters:
+      low: 0
+      high: 100000
 
-# ===============================================================================
-# Dataset Configuration (Data Generation)
-# ===============================================================================
-dataset_config:   #Size of the meta-dataset (dataset of individual tabular datasets). Should have basically unlimited size
+dataset_config:
   dataset_size:
     value: 100000000
-  max_number_train_samples:  #maximum number of training samples in one training dataset
-    value: 1000
-  number_train_samples_per_dataset:  #distribution over number of training samples in one dataset. The rest is zero-padded. The maximum number sampled here must be lower than max_number_train_samples
-    distribution: "uniform"
-    distribution_parameters: {low: 300, high: 1000}
-  max_number_test_samples:  # maximum number of test samples
+  max_number_train_samples:
     value: 250
-  number_test_samples_per_dataset: #number of test samples per dataset. Can be fixed because architecture is agnostic to the number of test samples.
+  number_train_samples_per_dataset:
     distribution: "uniform"
-    distribution_parameters: {low: 100, high: 250}
-  max_number_features:  # maximum number of features. It makes sense to set it to (num_nodes-1). The actual number of features is determined by num_nodes and dropout_prob (which drop out features)
+    distribution_parameters:
+      low: 100
+      high: 250
+  max_number_test_samples:
+    value: 250
+  number_test_samples_per_dataset:
+    value: 210
+  max_number_features:
     value: 19
   seed:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 0, high: 100000}
+    distribution_parameters:
+      low: 0
+      high: 100000
 
-# ===============================================================================
-# Preprocessing Configuration (Data Processing)
-# It determines how a dataset is preprocessed after being sampled from the prior and before being passed to training.
-# ===============================================================================
-preprocessing_config:   
-  dropout_prob:  #probability to hide a feature after sampling a dataset
+preprocessing_config:
+  dropout_prob:
     distribution: "beta"
-    distribution_parameters: {alpha: 2.0, beta: 8.0}
-  shuffle_data: # to make sure the data are shuffeled
+    distribution_parameters:
+      alpha: 2.0
+      beta: 8.0
+  shuffle_data:
     value: true
-  target_feature:  # you can, in principle, fix the target.
+  target_feature:
     value: null
-  negative_one_one_scaling:  # scale each feature to [-1,1] before passing it to the model
+  negative_one_one_scaling:
     value: true
-  standardize:  # standardize (feature_i = (feature_i - mean(feature_i)) / (std(feature_i) + epsilon ))
+  standardize:
     value: true
-  remove_outliers: # remove outliers by setting them to the quantile defined below
+  remove_outliers:
     value: true
   outlier_quantile:
     value: 0.95
-  yeo_johnson:  # whether to apply the Yeo-Johnson transformation to make the data more Gaussian-like
+  yeo_johnson:
     value: false
   random_seed:
     distribution: "discrete_uniform"
-    distribution_parameters: {low: 0, high: 100000}
+    distribution_parameters:
+      low: 0
+      high: 100000
 
-# ===============================================================================
-# Model Configuration (SimplePFN Architecture)
-# Right now, the model is a simple transformer with row-wise and column-wise attention.
-# ===============================================================================
 model_config:
-  # Core Architecture Parameters
-  d_model:  # model dimension
-    value: 256
+  d_model:
+    value: 512
   depth: # number of layers
-    value: 8
+    value: 6
   heads_feat:  # number of attention heads for feature-wise attention
-    value: 4
+    value: 8
   heads_samp: # number of attention heads for sample-wise attention
-    value: 4
+    value: 8
   dropout:  # dropout probability
     value: 0.0
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
@@ -177,16 +224,20 @@ model_config:
   # Attention backend
   use_flash_attention:  # enable PyTorch's FlashAttention kernels when available (CUDA)
     value: true
+  use_feature_positional:
+    value: false
+  feature_pos_rank:
+    value: 16
 
   # BarDistribution Configuration (used to model the output distribution)
   use_bar_distribution:
     value: true
   num_bars:  # number of bars (K). Higher values allow for more complex, fine-grained posteriors, but make training more difficult.
-    value: 1000
+    value: 500
   min_width:  # minimum width of each bar to avoid numerical issues
-    value: 1e-10
+    value: "1e-10"
   scale_floor:  # for the tails, this ensures that the scale is never too small
-    value: 1e-8
+    value: "1e-8"
   max_fit_items:  # maximum number of datasets to fit the BarDistribution initially.
     value: 100000
   max_fit_batches:  # maximum number of batches to use when fitting the BarDistribution initially. This is usually not critical.
@@ -204,15 +255,17 @@ training_config:
   learning_rate:  # usually 1e-5 - 1e-4 work well
     value: 0.0001
   weight_decay: # weight decay for optimizer, might not be needed
-    value: 0.000001
+    value: 1e-8
   max_steps:  #critial for determing training duration!
-    value: 10000
+    value: 100000
   max_epochs: # should always be 1
     value: 1
 
   # Data Loading Parameters
   batch_size: # batch size
-    value: 8
+    value: 16
+  accumulate_grad_batches:
+    value: 4
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
     value: 60
 
@@ -256,10 +309,8 @@ training_config:
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    #value: 300
     value: 500
   eval_batches: # number of batches to use for evaluation
-    #value: 200
     value: 200
   eval_dataset_size: # size of the evaluation dataset
     value: 1000000

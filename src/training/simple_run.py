@@ -309,18 +309,26 @@ def main():
         
         # Create SimplePFN model
         print(f"\nMODEL CREATION:")
+
+        # Helper to extract value objects from model_config dict entries
+        def _mcfg_val(key, default):
+            v = model_config.get(key)
+            if isinstance(v, dict):
+                return v.get("value", default)
+            return v if v is not None else default
+
         model = SimplePFNRegressor(
             num_features=num_features,
-            d_model=model_config.get("d_model", 8),
-            depth=model_config.get("depth", 1), 
-            heads_feat=model_config.get("heads_feat", 2),
-            heads_samp=model_config.get("heads_samp", 2),
-            dropout=model_config.get("dropout", 0.1),
-            hidden_mult=model_config.get("hidden_mult", 4),
+            d_model=_mcfg_val("d_model", 8),
+            depth=_mcfg_val("depth", 1),
+            heads_feat=_mcfg_val("heads_feat", 2),
+            heads_samp=_mcfg_val("heads_samp", 2),
+            dropout=_mcfg_val("dropout", 0.1),
+            hidden_mult=_mcfg_val("hidden_mult", 4),
             output_dim=output_dim,  # Use calculated output dimension
-            use_flash_attention=model_config.get("use_flash_attention", False),
-            use_feature_positional=model_config.get("use_feature_positional", True),
-            feature_pos_rank=model_config.get("feature_pos_rank", 16),
+            use_flash_attention=_mcfg_val("use_flash_attention", False),
+            use_feature_positional=bool(_mcfg_val("use_feature_positional", False)),
+            feature_pos_rank=int(_mcfg_val("feature_pos_rank", 16)),
         )
         # Count parameters
         total_params = sum(p.numel() for p in model.parameters())

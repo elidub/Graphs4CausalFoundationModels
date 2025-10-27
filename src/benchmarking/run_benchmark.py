@@ -143,10 +143,10 @@ def main(args):
 if __name__ == "__main__":
     # Configuration (ALL_CAPS) - edit these constants instead of using CLI args
     TASKS = ""  # comma-separated task ids, e.g. "361072,361073" or empty to use defaults
-    MAX_TASKS = 20
+    MAX_TASKS = 3
     DATA_DIR = "data_cache"
     CONFIG = str(repo_root / "experiments/FirstTests/configs/early_test2.yaml")
-    CHECKPOINT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16423776.0/final_model_with_bardist.pt"  # Leave empty to auto-detect or skip PFN
+    CHECKPOINT = "/Users/arikreuter/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16549228/final_model_with_bardist.pt"  # Leave empty to auto-detect or skip PFN
     DEVICE = "cpu"
     OUTPUT = "benchmark_results.csv"  # Process ID will be automatically added: benchmark_results_pid12345.csv
     NO_TARGET_ENCODING = True
@@ -156,17 +156,17 @@ if __name__ == "__main__":
     from types import SimpleNamespace
 
     # Subsampling env vars (optional) - read from ALL_CAPS environment variables so submit files can set them
-    N_FEATURES = 10
+    N_FEATURES = 19
     MAX_N_FEATURES = 19
     N_TRAIN = 100
-    MAX_N_TRAIN = 125
-    N_TEST = 500
-    MAX_N_TEST = 500
+    MAX_N_TRAIN = 200
+    N_TEST = 100
+    MAX_N_TEST = 100
     PREFER_NUMERIC = False
     ONLY_NUMERIC = False
-    REPEATS = 10
-    BASELINE_SET = "extended"  
-    BOOTSTRAP_SAMPLES = 1000
+    REPEATS = 1
+    BASELINE_SET = "basic"  
+    BOOTSTRAP_SAMPLES = 1
 
     args = SimpleNamespace(
         tasks=TASKS,

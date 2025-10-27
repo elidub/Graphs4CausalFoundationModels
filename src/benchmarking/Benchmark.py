@@ -122,7 +122,7 @@ class Benchmark:
         standardize: bool = True,
         yeo_johnson: bool = False,
         remove_outliers: bool = True,
-        outlier_quantile: float = 0.95,
+        outlier_quantile: float = 0.90,
         shuffle_samples: bool = True,
         shuffle_features: bool = True,
     ) -> Dict[str, Any]:
