@@ -32,7 +32,7 @@ scm_config:
     distribution: "uniform"
     distribution_parameters:
       low: 0.0
-      high: 0.1
+      high: 0.2
   mechanism_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -136,7 +136,7 @@ scm_config:
     distribution: "uniform"
     distribution_parameters:
       low: 0.01
-      high: 1.0
+      high: 2.0
   endo_std_mean:
     distribution: "lognormal"
     distribution_parameters:
