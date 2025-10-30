@@ -175,7 +175,7 @@ dataset_config:
       low: 124
       high: 125
   max_number_features:
-    value: 20
+    value: 19
   seed:
     distribution: "discrete_uniform"
     distribution_parameters:
