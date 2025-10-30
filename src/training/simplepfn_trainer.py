@@ -127,6 +127,23 @@ class SimplePFNTrainer:
         self.terminate = False
         # Rollback checkpoint path (for eval NaN rollback)
         self._rollback_ckpt_path = None
+        # Evaluation logging: keep latest evaluation metrics around so they can be
+        # logged on every training-step payload (repeat until updated). Keys are
+        # the same names produced by `evaluate()`.
+        self._eval_metric_keys = [
+            'eval/loss_mean', 'eval/loss_median', 'eval/loss_std', 'eval/loss_iqr',
+            'eval/mse_mean', 'eval/mse_median', 'eval/mse_std', 'eval/mse_iqr',
+            'eval/r2_mean', 'eval/r2_median', 'eval/r2_std', 'eval/r2_iqr',
+            'eval/num_batches', 'eval/num_samples'
+        ]
+        self._latest_eval_metrics = {k: float('nan') for k in self._eval_metric_keys}
+        # Benchmark (real-world) metric cache: we track median MSE/R² for
+        # common models so they can be logged on every training step as well.
+        self._benchmark_metric_keys = [
+            'benchmark/mse_lr_median', 'benchmark/mse_rf_median', 'benchmark/mse_pfn_median',
+            'benchmark/r2_lr_median',  'benchmark/r2_rf_median',  'benchmark/r2_pfn_median'
+        ]
+        self._latest_benchmark_metrics = {k: float('nan') for k in self._benchmark_metric_keys}
     
     def _create_scheduler(self, scheduler_config):
         sched_type = scheduler_config.get("type")
@@ -508,6 +525,9 @@ class SimplePFNTrainer:
         """
         if self.eval_dataloader is None:
             print("Warning: No evaluation dataloader provided, skipping evaluation")
+            # Ensure latest eval metrics are NaN so training-step logging will
+            # reflect that no evaluation has been performed yet.
+            self._latest_eval_metrics = {k: float('nan') for k in self._eval_metric_keys}
             return {}
             
         print(f"Running evaluation on {self.eval_batches} batches...")
@@ -616,6 +636,7 @@ class SimplePFNTrainer:
         # Check if we have any valid data
         if len(eval_losses) == 0:
             print("Warning: No valid evaluation data collected (all batches contained NaN/inf)")
+            self._latest_eval_metrics = {k: float('nan') for k in self._eval_metric_keys}
             return {}
         
         if len(eval_mses) == 0:
@@ -654,7 +675,18 @@ class SimplePFNTrainer:
                 'eval/num_batches': len(eval_losses),
                 'eval/num_samples': len(eval_mses)
             }
-        
+
+        # Update the latest-eval cache so the training loop can repeatedly log
+        # the most recent evaluation values at every training-step payload.
+        # Fill any missing keys with NaN for consistency.
+        self._latest_eval_metrics = {k: float('nan') for k in self._eval_metric_keys}
+        for k, v in metrics.items():
+            if k in self._latest_eval_metrics:
+                try:
+                    self._latest_eval_metrics[k] = float(v)
+                except Exception:
+                    self._latest_eval_metrics[k] = float('nan')
+
         # Print evaluation summary
         print(f"Evaluation Results ({len(eval_mses)} samples from {len(eval_losses)} valid batches):")
         if len(eval_losses) > 0:
@@ -799,6 +831,16 @@ class SimplePFNTrainer:
                     payload['train/loss'] = loss_value
                 else:
                     payload['train/loss_nan'] = 1
+                # Include the most recent evaluation metrics (repeated every step
+                # until a new evaluation occurs). If no evaluation has run yet,
+                # these will be NaN as initialized in __init__.
+                for _k, _v in self._latest_eval_metrics.items():
+                    payload[_k] = _v
+                # Also include latest benchmark (real-world) metrics so they are
+                # logged in the same per-step payload. Keys will be NaN until
+                # a benchmark run populates them.
+                for _k, _v in self._latest_benchmark_metrics.items():
+                    payload[_k] = _v
                 self.wandb_run.log(payload, step=self.global_step)
             
             # Print progress - more frequent at start, less frequent later
@@ -860,9 +902,18 @@ class SimplePFNTrainer:
                     # Skip logging metrics and benchmarking for this eval cycle
                     continue
 
-                # Log evaluation metrics to wandb
-                if self.wandb_run and eval_metrics:
-                    self.wandb_run.log(eval_metrics, step=self.global_step)
+                # Cache evaluation metrics so they will be included in the per-step
+                # training payload (logged where train loss is logged). Fill
+                # missing keys with NaN.
+                if eval_metrics:
+                    for k in self._eval_metric_keys:
+                        try:
+                            self._latest_eval_metrics[k] = float(eval_metrics.get(k, float('nan')))
+                        except Exception:
+                            self._latest_eval_metrics[k] = float('nan')
+                else:
+                    # No metrics produced (e.g., skipped due to NaNs) -> mark as NaN
+                    self._latest_eval_metrics = {k: float('nan') for k in self._eval_metric_keys}
 
                 # Optionally run external OpenML benchmark at evaluation checkpoints
                 if self.benchmark_eval_fidelity:
@@ -1057,8 +1108,35 @@ class SimplePFNTrainer:
                 print("\nMean MSE:\n", mean_mse)
                 print("\nMedian R\u00b2:\n", median_r2)
                 print("\nMean R\u00b2:\n", mean_r2)
+                # Update benchmark cache so these values are logged in the per-step
+                # training payload. Use keys that match the logging convention
+                # below: 'benchmark/<metric>_<model>_median'. Fill missing with NaN.
+                try:
+                    for model_col in [("mse_lr", "benchmark/mse_lr_median"),
+                                      ("mse_rf", "benchmark/mse_rf_median"),
+                                      ("mse_pfn", "benchmark/mse_pfn_median")]:
+                        col, key = model_col
+                        if col in median_mse.index:
+                            self._latest_benchmark_metrics[key] = float(median_mse[col])
+                        else:
+                            self._latest_benchmark_metrics[key] = float('nan')
+
+                    for model_col in [("r2_lr", "benchmark/r2_lr_median"),
+                                      ("r2_rf", "benchmark/r2_rf_median"),
+                                      ("r2_pfn", "benchmark/r2_pfn_median")]:
+                        col, key = model_col
+                        if col in median_r2.index:
+                            self._latest_benchmark_metrics[key] = float(median_r2[col])
+                        else:
+                            self._latest_benchmark_metrics[key] = float('nan')
+                except Exception:
+                    # On any failure, mark benchmark cache as NaN so per-step logs
+                    # reflect missing real-world results.
+                    self._latest_benchmark_metrics = {k: float('nan') for k in self._benchmark_metric_keys}
             else:
                 print("\nNo per-task metric rows available to summarize (0 successful tasks or missing metric columns).")
+                # No per-task metrics available -> reset benchmark cache to NaN
+                self._latest_benchmark_metrics = {k: float('nan') for k in self._benchmark_metric_keys}
 
             if "process_id" in df.columns and (df["process_id"] == "summary_model").any():
                 df_sm = df[df["process_id"] == "summary_model"]
@@ -1101,3 +1179,7 @@ class SimplePFNTrainer:
                     self.wandb_run.log(log, step=self.global_step)
             except Exception:
                 pass
+        # If an exception happened earlier and we didn't populate the benchmark
+        # cache, ensure it's set to NaN so per-step logging remains consistent.
+        if not hasattr(self, '_latest_benchmark_metrics'):
+            self._latest_benchmark_metrics = {k: float('nan') for k in self._benchmark_metric_keys}

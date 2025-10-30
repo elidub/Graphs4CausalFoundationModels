@@ -161,19 +161,19 @@ dataset_config:
   dataset_size:
     value: 100000000
   max_number_train_samples:
-    value: 125
+    value: 100
   number_train_samples_per_dataset:
     distribution: "uniform"
     distribution_parameters:
-      low: 124
-      high: 125
+      low: 100
+      high: 99
   max_number_test_samples:
-    value: 125
+    value: 100
   number_test_samples_per_dataset:
     distribution: "uniform"
     distribution_parameters:
-      low: 124
-      high: 125
+      low: 100
+      high: 99
   max_number_features:
     value: 19
   seed:
@@ -223,9 +223,9 @@ model_config:
 
   # Attention backend
   use_flash_attention:  # enable PyTorch's FlashAttention kernels when available (CUDA)
-    value: false
+    value: true
   use_feature_positional:
-    value: false
+    value: true
   feature_pos_rank:
     value: 16
 
@@ -233,7 +233,7 @@ model_config:
   use_bar_distribution:
     value: true
   num_bars:  # number of bars (K). Higher values allow for more complex, fine-grained posteriors, but make training more difficult.
-    value: 500
+    value: 2000
   min_width:  # minimum width of each bar to avoid numerical issues
     value: "1e-6"
   scale_floor:  # for the tails, this ensures that the scale is never too small
@@ -309,7 +309,7 @@ training_config:
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 100
+    value: 500
   eval_batches: # number of batches to use for evaluation
     value: 200
   eval_dataset_size: # size of the evaluation dataset
