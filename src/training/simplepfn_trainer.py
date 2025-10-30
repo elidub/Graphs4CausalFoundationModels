@@ -125,8 +125,8 @@ class SimplePFNTrainer:
             
         # Flag for graceful termination
         self.terminate = False
-    # Rollback checkpoint path (for eval NaN rollback)
-    self._rollback_ckpt_path = None
+        # Rollback checkpoint path (for eval NaN rollback)
+        self._rollback_ckpt_path = None
     
     def _create_scheduler(self, scheduler_config):
         sched_type = scheduler_config.get("type")
