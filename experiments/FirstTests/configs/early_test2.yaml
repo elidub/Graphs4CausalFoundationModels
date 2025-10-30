@@ -22,17 +22,17 @@ scm_config:
     distribution: "beta"
     distribution_parameters:
       alpha: 2
-      beta: 8
+      beta: 5
   graph_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
       low: 0
       high: 100000
   xgboost_prob:
-    distribution: "beta"
+    distribution: "uniform"
     distribution_parameters:
-      alpha: 1.5
-      beta: 10
+      low: 0.0
+      high: 0.1
   mechanism_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -48,9 +48,9 @@ scm_config:
         - 1
         - 2
       probabilities:
-        - 0.5
-        - 0.25
-        - 0.25
+        - 0.7
+        - 0.15
+        - 0.15
   mlp_hidden_dim:
     distribution: "categorical"
     distribution_parameters:
@@ -60,8 +60,8 @@ scm_config:
         - 16
         - 32
       probabilities:
-        - 0.25
         - 0.5
+        - 0.25
         - 0.125
         - 0.125
   mlp_activation_mode:
@@ -71,8 +71,8 @@ scm_config:
         - "pre"
         - "post"
       probabilities:
-        - 0.8
-        - 0.2
+        - 0.9
+        - 0.1
   mlp_node_shape:
     value: [1]
   xgb_num_hidden_layers:
@@ -96,8 +96,8 @@ scm_config:
   xgb_n_training_samples:
     distribution: "discrete_uniform"
     distribution_parameters:
-      low: 500
-      high: 1000
+      low: 100
+      high: 500
   xgb_add_noise:
     distribution: "categorical"
     distribution_parameters:
@@ -105,8 +105,8 @@ scm_config:
         - true
         - false
       probabilities:
-        - 0.3
-        - 0.7
+        - 0.2
+        - 0.8
   random_additive_std:
     value: true
   exo_std_distribution:
@@ -140,13 +140,13 @@ scm_config:
   endo_std_mean:
     distribution: "lognormal"
     distribution_parameters:
-      mean: -5.0
-      std: 1.0
+      mean: -3.0
+      std: 0.6
   endo_std_std:
     distribution: "uniform"
     distribution_parameters:
       low: 0.01
-      high: 0.3
+      high: 0.5
   scm_fast:
     value: true
   use_exogenous_mechanisms:
@@ -161,18 +161,21 @@ dataset_config:
   dataset_size:
     value: 100000000
   max_number_train_samples:
-    value: 250
+    value: 125
   number_train_samples_per_dataset:
     distribution: "uniform"
     distribution_parameters:
-      low: 100
-      high: 250
+      low: 124
+      high: 125
   max_number_test_samples:
-    value: 250
+    value: 125
   number_test_samples_per_dataset:
-    value: 210
+    distribution: "uniform"
+    distribution_parameters:
+      low: 124
+      high: 125
   max_number_features:
-    value: 19
+    value: 20
   seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -181,10 +184,7 @@ dataset_config:
 
 preprocessing_config:
   dropout_prob:
-    distribution: "beta"
-    distribution_parameters:
-      alpha: 2.0
-      beta: 8.0
+    value: 0.2
   shuffle_data:
     value: true
   target_feature:
@@ -207,23 +207,23 @@ preprocessing_config:
 
 model_config:
   d_model:
-    value: 512
+    value: 256
   depth: # number of layers
     value: 6
   heads_feat:  # number of attention heads for feature-wise attention
-    value: 8
+    value: 4
   heads_samp: # number of attention heads for sample-wise attention
-    value: 8
+    value: 4
   dropout:  # dropout probability
-    value: 0.0
+    value: 0.1
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
-    value: 1
+    value: 2
   num_features:
     value: 19  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
 
   # Attention backend
   use_flash_attention:  # enable PyTorch's FlashAttention kernels when available (CUDA)
-    value: true
+    value: false
   use_feature_positional:
     value: false
   feature_pos_rank:
@@ -235,9 +235,9 @@ model_config:
   num_bars:  # number of bars (K). Higher values allow for more complex, fine-grained posteriors, but make training more difficult.
     value: 500
   min_width:  # minimum width of each bar to avoid numerical issues
-    value: "1e-10"
+    value: "1e-6"
   scale_floor:  # for the tails, this ensures that the scale is never too small
-    value: "1e-8"
+    value: "1e-3"
   max_fit_items:  # maximum number of datasets to fit the BarDistribution initially.
     value: 100000
   max_fit_batches:  # maximum number of batches to use when fitting the BarDistribution initially. This is usually not critical.
@@ -255,7 +255,7 @@ training_config:
   learning_rate:  # usually 1e-5 - 1e-4 work well
     value: 0.0001
   weight_decay: # weight decay for optimizer, might not be needed
-    value: 1e-8
+    value: 0.000001 
   max_steps:  #critial for determing training duration!
     value: 100000
   max_epochs: # should always be 1
@@ -263,11 +263,11 @@ training_config:
 
   # Data Loading Parameters
   batch_size: # batch size
-    value: 16
+    value: 64
   accumulate_grad_batches:
-    value: 4
+    value: 1
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
-    value: 60
+    value: 128
 
   # Training Control
   early_stopping_patience: # patience for early stopping
@@ -291,7 +291,7 @@ training_config:
   device:
     value: "cuda"
   precision: # precision for training. 16 has not been tested yet.
-    value: "bf16"
+    value: "32"
 
   # Experiment Organization
   experiment_name: # name of the experiment, used for logging 
@@ -309,7 +309,7 @@ training_config:
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 500
+    value: 100
   eval_batches: # number of batches to use for evaluation
     value: 200
   eval_dataset_size: # size of the evaluation dataset
