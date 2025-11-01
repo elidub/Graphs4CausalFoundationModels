@@ -152,11 +152,7 @@ scm_config:
     # The remaining probability mass is uniformly distributed among
     # Normal, Laplace, and StudentT distributions
     # Range: [0.0, 1.0] where 0.0 = no TabICL, 1.0 = only TabICL
-    #distribution: "uniform"
-    #distribution_parameters:
-    #  low: 0.8
-    #  high: 1.0
-    value: 1.0
+    value: 0.0
   scm_fast:
     value: true
   use_exogenous_mechanisms:
