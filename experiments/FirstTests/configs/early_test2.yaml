@@ -215,7 +215,7 @@ model_config:
   heads_samp: # number of attention heads for sample-wise attention
     value: 4
   dropout:  # dropout probability
-    value: 0.1
+    value: 0.0
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
     value: 2
   num_features:
