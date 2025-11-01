@@ -104,6 +104,7 @@ class SCMHyperparameterSampler:
         "random_additive_std": bool,
         "exo_std_distribution": str,  # New: "gamma" or "pareto"
         "endo_std_distribution": str,  # New: "gamma" or "pareto"
+        "tabicl_noise_proportion": float,  # Proportion of TabICL noise in mixture
         "exo_std": (float, type(None)),
         "endo_std": (float, type(None)),
         "exo_std_mean": (float, type(None)),

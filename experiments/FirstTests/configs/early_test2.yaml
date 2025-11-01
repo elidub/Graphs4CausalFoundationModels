@@ -147,6 +147,16 @@ scm_config:
     distribution_parameters:
       low: 0.01
       high: 0.5
+  tabicl_noise_proportion:
+    # Proportion of TabICL noise in the exogenous noise mixture
+    # The remaining probability mass is uniformly distributed among
+    # Normal, Laplace, and StudentT distributions
+    # Range: [0.0, 1.0] where 0.0 = no TabICL, 1.0 = only TabICL
+    #distribution: "uniform"
+    #distribution_parameters:
+    #  low: 0.8
+    #  high: 1.0
+    value: 1.0
   scm_fast:
     value: true
   use_exogenous_mechanisms:
@@ -165,15 +175,15 @@ dataset_config:
   number_train_samples_per_dataset:
     distribution: "uniform"
     distribution_parameters:
-      low: 100
-      high: 99
+      low: 99
+      high: 100
   max_number_test_samples:
     value: 100
   number_test_samples_per_dataset:
     distribution: "uniform"
     distribution_parameters:
-      low: 100
-      high: 99
+      low: 99
+      high: 100
   max_number_features:
     value: 19
   seed:

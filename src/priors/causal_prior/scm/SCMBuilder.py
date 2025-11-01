@@ -12,6 +12,14 @@ from priors.causal_prior.noise_distributions.MixedDist import MixedDist
 from priors.causal_prior.noise_distributions.MixedDist_RandomSTD import MixedDistRandomStd
 from priors.causal_prior.noise_distributions.Sample_STD import GammaMeanStd, ParetoMeanStd
 
+# Try to import TabICLResamplingDist
+try:
+    from priors.causal_prior.noise_distributions.TabICL_prior_resampling_dist import TabICLResamplingDist
+    TABICL_AVAILABLE = True
+except ImportError:
+    TABICL_AVAILABLE = False
+    TabICLResamplingDist = None
+
 
 class SCMBuilder:
     """
@@ -78,6 +86,11 @@ class SCMBuilder:
     endo_std_distribution : str, default "gamma"
         Type of distribution to use for endogenous noise standard deviations when random_additive_std=True.
         Options: "gamma" (Gamma distribution), "pareto" (Pareto distribution - heavy-tailed).
+    tabicl_noise_proportion : float, default 0.0
+        Proportion of TabICL noise in the exogenous noise mixture (range: [0.0, 1.0]).
+        When > 0, the noise mixture includes TabICL resampling distribution with this proportion,
+        and the remaining probability mass is split equally among Normal, Laplace, and StudentT.
+        Requires TabICL samples to be generated first (see TabICL_prior_resampling_dist.py).
     
     # Fixed Standard Deviation Parameters (used when random_additive_std=False)
     exo_std : float, default 1.0
@@ -209,6 +222,7 @@ class SCMBuilder:
         random_additive_std: bool = True,
         exo_std_distribution: Literal["gamma", "pareto"] = "gamma",
         endo_std_distribution: Literal["gamma", "pareto"] = "gamma",
+        tabicl_noise_proportion: float = 0.0,
         
         # Fixed Standard Deviation Parameters
         exo_std: Optional[float] = None,
@@ -284,6 +298,7 @@ class SCMBuilder:
         self.random_additive_std = random_additive_std
         self.exo_std_distribution = exo_std_distribution
         self.endo_std_distribution = endo_std_distribution
+        self.tabicl_noise_proportion = tabicl_noise_proportion
         self.exo_std = exo_std
         self.endo_std = endo_std
         self.exo_std_mean = exo_std_mean
@@ -469,8 +484,58 @@ class SCMBuilder:
             else:
                 raise ValueError(f"Unknown endo_std_distribution: {self.endo_std_distribution}")
             
-            exogenous_noise = {var: MixedDistRandomStd(exo_std_dist) for var in exogenous_variables}
-            endogenous_noise = {var: MixedDistRandomStd(endo_std_dist) for var in endogenous_variables}
+            # Determine mixture proportions and distributions based on tabicl_noise_proportion
+            if self.tabicl_noise_proportion > 0.0 and TABICL_AVAILABLE:
+                import torch.distributions as dist
+                from pathlib import Path
+                
+                # Check if TabICL samples exist
+                tabicl_samples_dir = Path("/Users/arikreuter/CausalPriorFitting/data_cache/TabICL_samples")
+                if not tabicl_samples_dir.exists() or not list(tabicl_samples_dir.glob("*.pt")):
+                    raise FileNotFoundError(
+                        f"TabICL samples not found in {tabicl_samples_dir}. "
+                        "Run TabICL_prior_resampling_dist.py to generate samples first."
+                    )
+                
+                # Create TabICL distribution instance
+                tabicl_dist = TabICLResamplingDist(
+                    samples_dir=str(tabicl_samples_dir),
+                    scale=1.0,
+                    device='cpu'
+                )
+                
+                # Calculate mixture proportions
+                # TabICL gets tabicl_noise_proportion, the rest is split equally among Normal, Laplace, StudentT
+                tabicl_prop = self.tabicl_noise_proportion
+                remaining_prop = 1.0 - tabicl_prop
+                other_prop = remaining_prop / 3.0  # Split among Normal, Laplace, StudentT
+                
+                distributions = [dist.Normal, dist.Laplace, dist.StudentT, tabicl_dist]
+                mixture_proportions = [other_prop, other_prop, other_prop, tabicl_prop]
+                
+                exogenous_noise = {
+                    var: MixedDistRandomStd(
+                        std_dist=exo_std_dist,
+                        distributions=distributions,
+                        mixture_proportions=mixture_proportions
+                    ) for var in exogenous_variables
+                }
+                endogenous_noise = {
+                    var: MixedDistRandomStd(
+                        std_dist=endo_std_dist,
+                        distributions=distributions,
+                        mixture_proportions=mixture_proportions
+                    ) for var in endogenous_variables
+                }
+            elif self.tabicl_noise_proportion > 0.0 and not TABICL_AVAILABLE:
+                raise ImportError(
+                    "tabicl_noise_proportion > 0 but TabICLResamplingDist is not available. "
+                    "Check that TabICL_prior_resampling_dist.py is in the correct location."
+                )
+            else:
+                # Standard mixture without TabICL (default behavior)
+                exogenous_noise = {var: MixedDistRandomStd(std_dist=exo_std_dist) for var in exogenous_variables}
+                endogenous_noise = {var: MixedDistRandomStd(std_dist=endo_std_dist) for var in endogenous_variables}
         
         return exogenous_noise, endogenous_noise
     
@@ -550,6 +615,13 @@ class SCMBuilder:
         
         if self.endo_std_distribution not in ["gamma", "pareto"]:
             raise ValueError(f"endo_std_distribution must be 'gamma' or 'pareto', got '{self.endo_std_distribution}'")
+        
+        # TabICL noise proportion validation
+        if not isinstance(self.tabicl_noise_proportion, (int, float)):
+            raise ValueError(f"tabicl_noise_proportion must be numeric, got {type(self.tabicl_noise_proportion)}")
+        
+        if not (0.0 <= self.tabicl_noise_proportion <= 1.0):
+            raise ValueError(f"tabicl_noise_proportion must be in [0.0, 1.0], got {self.tabicl_noise_proportion}")
         
         # Fixed std validation (when applicable)
         if not self.random_additive_std:
