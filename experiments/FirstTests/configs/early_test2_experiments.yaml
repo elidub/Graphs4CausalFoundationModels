@@ -142,10 +142,14 @@ scm_config:
       low: 0.01
       high: 1.0
   endo_std_mean:
-    distribution: "lognormal"
+    #distribution: "lognormal"
+    #distribution_parameters:
+    #  mean: -6.0
+    #  std: 0.6
+    distribution: "uniform"
     distribution_parameters:
-      mean: -6.0
-      std: 0.6
+      low: 0.1
+      high: 0.3
   endo_std_std:
     distribution: "uniform"
     distribution_parameters:

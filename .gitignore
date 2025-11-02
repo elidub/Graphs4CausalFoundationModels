@@ -19,4 +19,4 @@ src/training/checks/ResultsBaselines
 /experiments/FirstTests/benchmark_results
 /data_cache/*
 wandb/
-src/training/checks/ResultsComplexitys
+src/training/checks/ResultsComplexity
