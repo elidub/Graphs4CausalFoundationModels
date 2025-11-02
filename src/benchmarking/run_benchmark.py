@@ -95,6 +95,10 @@ def main(args):
         repeats=int(getattr(args, "repeats", 1) or 1),
         baseline_set=str(getattr(args, "baseline_set", "basic") or "basic"),
         bootstrap_samples=int(getattr(args, "bootstrap_samples", 1000) or 1000),
+        # SimplePFN ensemble parameters
+        n_estimators=int(getattr(args, "n_estimators", 1) or 1),
+        norm_methods=getattr(args, "norm_methods", None),
+        outlier_strategies=getattr(args, "outlier_strategies", None),
     )
 
     # Print summary metrics robustly (ignore summary row if present, handle missing columns)
@@ -164,9 +168,14 @@ if __name__ == "__main__":
     MAX_N_TEST = 100
     PREFER_NUMERIC = False
     ONLY_NUMERIC = False
-    REPEATS = 10
-    BASELINE_SET = "extended"  
+    REPEATS = 1
+    BASELINE_SET = "basic"  # 'basic' or 'extended'
     BOOTSTRAP_SAMPLES = 10000
+    
+    # SimplePFN Ensemble parameters
+    N_ESTIMATORS = 1  # Number of ensemble members (1 = no ensemble)
+    NORM_METHODS = ["none", "power", "quantile", "robust"]  # Normalization methods for ensemble
+    OUTLIER_STRATEGIES = ["none", "moderate", "aggressive"]  # Outlier removal strategies
 
     args = SimpleNamespace(
         tasks=TASKS,
@@ -190,6 +199,10 @@ if __name__ == "__main__":
         repeats=int(REPEATS) if REPEATS else 1,
         baseline_set=BASELINE_SET,
         bootstrap_samples=int(BOOTSTRAP_SAMPLES) if BOOTSTRAP_SAMPLES else 1000,
+        # SimplePFN ensemble parameters
+        n_estimators=int(N_ESTIMATORS) if N_ESTIMATORS else 1,
+        norm_methods=NORM_METHODS,
+        outlier_strategies=OUTLIER_STRATEGIES,
     )
 
     main(args)

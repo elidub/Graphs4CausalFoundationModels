@@ -294,6 +294,10 @@ class Benchmark:
         repeats: int = 1,
         baseline_set: str = "basic",  # 'basic' or 'extended'
         bootstrap_samples: int = 1000,
+        # SimplePFN ensemble parameters
+        n_estimators: int = 1,
+        norm_methods: Optional[List[str]] = None,
+        outlier_strategies: Optional[List[str]] = None,
     ) -> pd.DataFrame:
         if tasks is None or len(tasks) == 0:
             tasks = DEFAULT_TABULAR_NUM_REG_TASKS[: max_tasks]
@@ -378,6 +382,9 @@ class Benchmark:
                                 checkpoint_path=checkpoint_path,
                                 device=use_device,
                                 verbose=not quiet,
+                                n_estimators=n_estimators,
+                                norm_methods=norm_methods,
+                                outlier_strategies=outlier_strategies,
                             )
                             mkwargs = {
                                 "num_features": int(max_n_features or X_train.shape[1]),
@@ -588,6 +595,10 @@ class Benchmark:
         device: Optional[str] = None,
         quiet: bool = False,
         bootstrap_samples: int = 1000,
+        # SimplePFN ensemble parameters
+        n_estimators: int = 1,
+        norm_methods: Optional[List[str]] = None,
+        outlier_strategies: Optional[List[str]] = None,
     ) -> pd.DataFrame:
         """
         Simplified benchmark entrypoint.
@@ -657,4 +668,8 @@ class Benchmark:
             repeats=repeats,
             baseline_set=baseline_set,
             bootstrap_samples=bootstrap_samples,
+            # SimplePFN ensemble parameters
+            n_estimators=n_estimators,
+            norm_methods=norm_methods,
+            outlier_strategies=outlier_strategies,
         )

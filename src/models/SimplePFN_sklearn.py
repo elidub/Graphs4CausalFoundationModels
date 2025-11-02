@@ -365,7 +365,7 @@ class SimplePFNSklearn:
         verbose: bool = False,
         n_estimators: int = 10,
         norm_methods: Optional[Union[str, List[str]]] = ["none", "power", "quantile", "robust"],
-        outlier_strategies: Optional[Union[str, List[str]]] = None,
+        outlier_strategies: Optional[Union[str, List[str]]] = ["none", "moderate", "aggressive"],
         feat_shuffle_method: str = "random",
         random_state: Optional[int] = None,
     ):
