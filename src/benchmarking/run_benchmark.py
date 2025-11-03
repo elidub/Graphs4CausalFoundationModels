@@ -168,12 +168,12 @@ if __name__ == "__main__":
     MAX_N_TEST = 100
     PREFER_NUMERIC = False
     ONLY_NUMERIC = False
-    REPEATS = 1
+    REPEATS = 20
     BASELINE_SET = "basic"  # 'basic' or 'extended'
     BOOTSTRAP_SAMPLES = 10000
     
     # SimplePFN Ensemble parameters
-    N_ESTIMATORS = 1  # Number of ensemble members (1 = no ensemble)
+    N_ESTIMATORS = 10  # Number of ensemble members (1 = no ensemble)
     NORM_METHODS = ["none", "power", "quantile", "robust"]  # Normalization methods for ensemble
     OUTLIER_STRATEGIES = ["none", "moderate", "aggressive"]  # Outlier removal strategies
 

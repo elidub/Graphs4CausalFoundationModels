@@ -23,6 +23,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from types import SimpleNamespace
+from tqdm import tqdm
 
 # Ensure repo root is on sys.path
 repo_root = Path(__file__).resolve().parents[2]
@@ -106,6 +107,13 @@ def run_ablation_study(
     
     all_results = []
     
+    # Calculate total number of configurations to test
+    total_configs = (
+        len(norm_methods_to_test) +  # Phase 1: individual norms
+        len(outlier_strategies_to_test) +  # Phase 2: individual outliers
+        1  # Phase 3: full ensemble
+    )
+    
     print("="*80)
     print("ABLATION STUDY: Testing Preprocessing Variants")
     print("="*80)
@@ -113,8 +121,11 @@ def run_ablation_study(
     print(f"Repeats per task: {repeats}")
     print(f"Normalization methods: {norm_methods_to_test}")
     print(f"Outlier strategies: {outlier_strategies_to_test}")
-    print(f"Total runs: {len(norm_methods_to_test) + len(outlier_strategies_to_test)}")
+    print(f"Total configurations: {total_configs}")
     print("="*80)
+    
+    # Create progress bar for overall progress
+    pbar = tqdm(total=total_configs, desc="Overall Progress", unit="config")
     
     # Test each normalization method (with outlier_strategy='none')
     print("\n" + "="*80)
@@ -159,6 +170,7 @@ def run_ablation_study(
         df_filtered["outlier_strategy"] = "none"
         
         all_results.append(df_filtered)
+        pbar.update(1)
         print(f"✓ Completed {norm_method} normalization test")
     
     # Test each outlier strategy (with norm_method='none')
@@ -204,7 +216,63 @@ def run_ablation_study(
         df_filtered["outlier_strategy"] = outlier_strategy
         
         all_results.append(df_filtered)
+        pbar.update(1)
         print(f"✓ Completed {outlier_strategy} outlier strategy test")
+    
+    # Test full ensemble (all combinations)
+    print("\n" + "="*80)
+    print("PHASE 3: Testing Full Ensemble (all norm_methods, all outlier_strategies)")
+    print("="*80)
+    
+    print(f"\n🔬 Testing full ensemble with diverse preprocessing")
+    print(f"   - Normalization methods: {norm_methods_to_test}")
+    print(f"   - Outlier strategies: {outlier_strategies_to_test}")
+    print(f"   - Expected ensemble size: ~{len(norm_methods_to_test) * len(outlier_strategies_to_test)} members")
+    print("-"*80)
+    
+    output_file = output_path / f"ablation_ensemble_full.csv"
+    
+    # Calculate appropriate n_estimators for full diversity
+    n_combinations = len(norm_methods_to_test) * len(outlier_strategies_to_test)
+    # Use at least as many estimators as combinations to ensure diversity
+    ensemble_size = max(n_combinations, 10)
+    
+    df = bench.run(
+        tasks=tasks,
+        max_tasks=max_tasks,
+        n_features=n_features,
+        max_n_features=max_n_features,
+        n_train=n_train,
+        max_n_train=max_n_train,
+        n_test=n_test,
+        max_n_test=max_n_test,
+        prefer_numeric=prefer_numeric,
+        only_numeric=only_numeric,
+        config_path=config_path,
+        checkpoint_path=checkpoint_path,
+        output_csv=str(output_file),
+        device=device,
+        quiet=quiet,
+        repeats=repeats,
+        baseline_set=baseline_set,
+        bootstrap_samples=bootstrap_samples,
+        # Full ensemble: combine all preprocessing variants
+        n_estimators=ensemble_size,
+        norm_methods=norm_methods_to_test,
+        outlier_strategies=outlier_strategies_to_test,
+    )
+    
+    # Add configuration metadata
+    df_filtered = df[df["process_id"] != "summary"].copy() if "process_id" in df.columns else df.copy()
+    df_filtered["ablation_type"] = "ensemble"
+    df_filtered["norm_method"] = "all"  # Indicates all methods used
+    df_filtered["outlier_strategy"] = "all"  # Indicates all strategies used
+    df_filtered["n_estimators"] = ensemble_size
+    
+    all_results.append(df_filtered)
+    pbar.update(1)
+    pbar.close()
+    print(f"✓ Completed full ensemble test with {ensemble_size} members")
     
     # Combine all results
     print("\n" + "="*80)
@@ -259,12 +327,54 @@ def run_ablation_study(
             rmse = np.sqrt(mse)
             print(f"  {i}. {strategy:12s}: MSE={mse:.4f}, RMSE={rmse:.4f}")
         
+        # Ensemble summary
+        print("\n📊 FULL ENSEMBLE COMPARISON (all norm_methods × all outlier_strategies)")
+        print("-"*80)
+        df_ensemble = df_combined[df_combined["ablation_type"] == "ensemble"]
+        if not df_ensemble.empty:
+            ensemble_summary = df_ensemble.agg({
+                "mse_pfn": ["mean", "median", "std"],
+                "r2_pfn": ["mean", "median", "std"]
+            }).round(4)
+            print(ensemble_summary)
+            
+            ensemble_mse = df_ensemble["mse_pfn"].mean()
+            ensemble_rmse = np.sqrt(ensemble_mse)
+            ensemble_r2 = df_ensemble["r2_pfn"].mean()
+            ensemble_size = df_ensemble["n_estimators"].iloc[0] if "n_estimators" in df_ensemble.columns else "N/A"
+            
+            print(f"\nEnsemble Performance:")
+            print(f"  - Size: {ensemble_size} members")
+            print(f"  - MSE: {ensemble_mse:.4f}")
+            print(f"  - RMSE: {ensemble_rmse:.4f}")
+            print(f"  - R²: {ensemble_r2:.4f}")
+            
+            # Compare ensemble to best individual methods
+            best_norm_mse = norm_ranks.iloc[0]
+            best_outlier_mse = outlier_ranks.iloc[0]
+            
+            print(f"\nComparison to Best Individual Methods:")
+            print(f"  - Best normalization: {norm_ranks.index[0]} (MSE: {best_norm_mse:.4f})")
+            print(f"  - Best outlier: {outlier_ranks.index[0]} (MSE: {best_outlier_mse:.4f})")
+            print(f"  - Full ensemble: MSE: {ensemble_mse:.4f}")
+            
+            if ensemble_mse < best_norm_mse and ensemble_mse < best_outlier_mse:
+                improvement_norm = ((best_norm_mse - ensemble_mse) / best_norm_mse) * 100
+                improvement_outlier = ((best_outlier_mse - ensemble_mse) / best_outlier_mse) * 100
+                print(f"\n✨ Ensemble IMPROVES over best individual methods:")
+                print(f"  - {improvement_norm:.2f}% better than best normalization")
+                print(f"  - {improvement_outlier:.2f}% better than best outlier strategy")
+            elif ensemble_mse < best_norm_mse or ensemble_mse < best_outlier_mse:
+                print(f"\n✓ Ensemble shows competitive performance")
+            else:
+                print(f"\n⚠️  Ensemble does not improve over best individual methods")
+        
         # Save summary
         summary_file = output_path / f"ablation_summary_{timestamp}.txt"
         with open(summary_file, "w") as f:
             f.write("ABLATION STUDY SUMMARY\n")
             f.write("="*80 + "\n\n")
-            f.write("NORMALIZATION METHODS\n")
+            f.write("NORMALIZATION METHODS (outlier_strategy='none')\n")
             f.write("-"*80 + "\n")
             f.write(str(norm_summary) + "\n\n")
             f.write("Rankings by MSE:\n")
@@ -272,13 +382,36 @@ def run_ablation_study(
                 rmse = np.sqrt(mse)
                 f.write(f"  {i}. {method:12s}: MSE={mse:.4f}, RMSE={rmse:.4f}\n")
             f.write("\n")
-            f.write("OUTLIER STRATEGIES\n")
+            f.write("OUTLIER STRATEGIES (norm_method='none')\n")
             f.write("-"*80 + "\n")
             f.write(str(outlier_summary) + "\n\n")
             f.write("Rankings by MSE:\n")
             for i, (strategy, mse) in enumerate(outlier_ranks.items(), 1):
                 rmse = np.sqrt(mse)
                 f.write(f"  {i}. {strategy:12s}: MSE={mse:.4f}, RMSE={rmse:.4f}\n")
+            
+            # Add ensemble summary to file
+            if not df_ensemble.empty:
+                f.write("\n")
+                f.write("FULL ENSEMBLE (all norm_methods × all outlier_strategies)\n")
+                f.write("-"*80 + "\n")
+                f.write(str(ensemble_summary) + "\n\n")
+                f.write(f"Ensemble size: {ensemble_size} members\n")
+                f.write(f"MSE: {ensemble_mse:.4f}\n")
+                f.write(f"RMSE: {ensemble_rmse:.4f}\n")
+                f.write(f"R²: {ensemble_r2:.4f}\n")
+                f.write("\n")
+                f.write("Comparison to Best Individual Methods:\n")
+                f.write(f"  - Best normalization: {norm_ranks.index[0]} (MSE: {best_norm_mse:.4f})\n")
+                f.write(f"  - Best outlier: {outlier_ranks.index[0]} (MSE: {best_outlier_mse:.4f})\n")
+                f.write(f"  - Full ensemble: MSE: {ensemble_mse:.4f}\n")
+                
+                if ensemble_mse < best_norm_mse and ensemble_mse < best_outlier_mse:
+                    improvement_norm = ((best_norm_mse - ensemble_mse) / best_norm_mse) * 100
+                    improvement_outlier = ((best_outlier_mse - ensemble_mse) / best_outlier_mse) * 100
+                    f.write(f"\nEnsemble IMPROVES over best individual methods:\n")
+                    f.write(f"  - {improvement_norm:.2f}% better than best normalization\n")
+                    f.write(f"  - {improvement_outlier:.2f}% better than best outlier strategy\n")
         
         print(f"\n✓ Saved summary to: {summary_file}")
     
@@ -296,7 +429,7 @@ if __name__ == "__main__":
     
     # Fixed settings (constant across all ablation runs)
     TASKS = None  # Will use first MAX_TASKS from defaults
-    MAX_TASKS = 5  # Small number for faster testing
+    MAX_TASKS = 30  # Small number for faster testing
     DATA_DIR = "data_cache"
     CONFIG = str(repo_root / "experiments/FirstTests/configs/early_test2.yaml")
     CHECKPOINT = str(repo_root / "experiments/FirstTests/checkpoints/simple_pfn_16561948/final_model_with_bardist.pt")
@@ -313,7 +446,7 @@ if __name__ == "__main__":
     ONLY_NUMERIC = False
     
     # Benchmark settings (keep constant)
-    REPEATS = 3  # Repeats per task for statistical reliability
+    REPEATS = 10  # Repeats per task for statistical reliability
     BASELINE_SET = "basic"
     BOOTSTRAP_SAMPLES = 10000
     QUIET = False
