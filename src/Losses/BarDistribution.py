@@ -129,15 +129,8 @@ class BarDistribution(PosteriorPredictive):
             if len(batch) != 4:
                 raise ValueError("Each dataloader item must be (X_train, y_train, X_test, y_test).")
             _, y_tr, _, y_te = batch
-            
-            # Handle both (B, N) and (B, N, 1) shapes
-            if y_tr.ndim == 3 and y_tr.shape[-1] == 1:
-                y_tr = y_tr.squeeze(-1)
-            if y_te.ndim == 3 and y_te.shape[-1] == 1:
-                y_te = y_te.squeeze(-1)
-            
             if y_tr.ndim != 2 or y_te.ndim != 2:
-                raise ValueError(f"y_train and y_test must be (B, N/M) or (B, N/M, 1), got shapes {y_tr.shape} and {y_te.shape}.")
+                raise ValueError("y_train and y_test must be (B, N/M).")
 
             y_tr_flat = y_tr.reshape(-1)
             y_te_flat = y_te.reshape(-1)

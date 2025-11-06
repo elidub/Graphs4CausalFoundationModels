@@ -35,6 +35,7 @@ to let the model distinguish it from feature columns.
 from __future__ import annotations
 from typing import Optional, Dict
 from contextlib import nullcontext
+import math
 
 import torch
 import torch.nn as nn
@@ -279,17 +280,46 @@ class SimplePFNRegressor(nn.Module):
         # Output projection from D to desired output_dim per test token
         self.regression_head = nn.Linear(d_model, output_dim)
 
-        # Low-rank learnable positional encodings per feature (L columns)
+        # Feature positional encodings (applied to all L columns)
+        # Structure: fixed (sinusoidal) + learnable (low-rank factorized)
         if self.use_feature_positional and self.feature_pos_rank > 0:
             r = self.feature_pos_rank
+            # Learnable low-rank component: A @ B gives (L, D) position table
             self.feature_pos_A = nn.Parameter(torch.empty(self.num_features, r))   # (L, r)
             self.feature_pos_B = nn.Parameter(torch.empty(r, self.d_model))        # (r, D)
             nn.init.normal_(self.feature_pos_A, std=0.02)
             nn.init.normal_(self.feature_pos_B, std=0.02)
+            
+            # Fixed (non-learnable) sinusoidal component for positional encoding
+            # Uses standard Transformer-style sin/cos encoding across features
+            self.register_buffer('feature_pos_fixed', self._create_sinusoidal_positions(
+                self.num_features, self.d_model))  # (L, D)
         else:
             self.feature_pos_A = None
             self.feature_pos_B = None
+            self.feature_pos_fixed = None
         self._feature_pos_reported = False
+    
+    def _create_sinusoidal_positions(self, num_positions: int, d_model: int) -> torch.Tensor:
+        """
+        Create fixed sinusoidal positional encodings for feature columns.
+        
+        Args:
+            num_positions: Number of feature positions (L)
+            d_model: Embedding dimension (D)
+            
+        Returns:
+            Tensor of shape (num_positions, d_model) with sinusoidal encodings
+        """
+        position = torch.arange(num_positions, dtype=torch.float).unsqueeze(1)  # (L, 1)
+        div_term = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float) * 
+                            (-math.log(10000.0) / d_model))  # (D/2,)
+        
+        pe = torch.zeros(num_positions, d_model)  # (L, D)
+        pe[:, 0::2] = torch.sin(position * div_term)  # Even indices
+        pe[:, 1::2] = torch.cos(position * div_term)  # Odd indices
+        
+        return pe
 
     @staticmethod
     def _build_sample_attn_mask(N: int, M: int, device: torch.device) -> torch.Tensor:
@@ -336,12 +366,22 @@ class SimplePFNRegressor(nn.Module):
         feat_in = Xt.unsqueeze(-1)                      # (B, S, L, 1)
         feat_enc = self.value_encoder(feat_in)          # (B, S, L, D)
 
-        # Add low-rank positional encodings per feature (columns), not samples
+        # Add positional encodings per feature (columns) to ALL samples (train + test)
+        # Structure: fixed (sinusoidal) + learnable (low-rank) components
         if self.feature_pos_A is not None and self.feature_pos_B is not None:
-            # (L, D) table via low-rank factorization
-            pos_table = self.feature_pos_A @ self.feature_pos_B  # (L, D)
-            # Apply ONLY to train samples (first N along S axis)
-            feat_enc[:, :N, :, :] = feat_enc[:, :N, :, :] + pos_table.unsqueeze(0).unsqueeze(0)
+            # Learnable component: (L, D) table via low-rank factorization
+            pos_learnable = self.feature_pos_A @ self.feature_pos_B  # (L, D)
+            
+            # Fixed sinusoidal component: (L, D)
+            pos_fixed = self.feature_pos_fixed  # (L, D), already a buffer
+            
+            # Total positional encoding: fixed + learnable
+            pos_table = pos_fixed + pos_learnable  # (L, D)
+            
+            # Apply to ALL samples (both train and test) by broadcasting
+            # pos_table: (L, D) -> (1, 1, L, D) to broadcast across batch and samples
+            feat_enc = feat_enc + pos_table.unsqueeze(0).unsqueeze(0)  # (B, S, L, D)
+        
         return feat_enc
 
     def _encode_labels(self, y_train: torch.Tensor, M: int) -> torch.Tensor:
@@ -422,7 +462,10 @@ class SimplePFNRegressor(nn.Module):
         # One-time report: feature positional encodings status
         if not self._feature_pos_reported:
             if self.feature_pos_A is not None and self.feature_pos_B is not None:
-                print(f"[SimplePFN] Feature positional encodings: low-rank enabled (rank={self.feature_pos_rank}), applied to TRAIN samples only")
+                print(f"[SimplePFN] Feature positional encodings: enabled (rank={self.feature_pos_rank})")
+                print(f"[SimplePFN]   - Fixed (sinusoidal) component: {self.feature_pos_fixed.shape}")
+                print(f"[SimplePFN]   - Learnable (low-rank) component: A{self.feature_pos_A.shape} @ B{self.feature_pos_B.shape}")
+                print(f"[SimplePFN]   - Applied to: ALL samples (train + test)")
             else:
                 print("[SimplePFN] Feature positional encodings: disabled")
             self._feature_pos_reported = True

@@ -29,16 +29,10 @@ scm_config:
       low: 0
       high: 100000
   xgboost_prob:
-    distribution: "categorical"
+    distribution: "uniform"
     distribution_parameters:
-      choices:
-        - 0.0
-        - 0.1
-        - 0.2
-      probabilities:
-        - 0.8
-        - 0.1
-        - 0.1
+      low: 0.0
+      high: 0.1
   mechanism_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -54,9 +48,9 @@ scm_config:
         - 1
         - 2
       probabilities:
-        - 0.9
-        - 0.05
-        - 0.05
+        - 0.7
+        - 0.15
+        - 0.15
   mlp_hidden_dim:
     distribution: "categorical"
     distribution_parameters:
@@ -65,16 +59,15 @@ scm_config:
         - 2
         - 4
         - 8
-        - 12
         - 16
+        - 32
       probabilities:
-        - 0.4
-        - 0.3
-        - 0.2
-        - 0.034
-        - 0.033
-        - 0.033
-
+        - 0.15
+        - 0.15
+        - 0.15
+        - 0.125
+        - 0.125
+        - 0.125
   mlp_activation_mode:
     distribution: "categorical"
     distribution_parameters:
@@ -82,10 +75,9 @@ scm_config:
         - "pre"
         - "post"
       probabilities:
-        - 0.8
-        - 0.2
-      
-  xgb_node_shape:
+        - 0.7
+        - 0.3
+  mlp_node_shape:
     value: [1]
   xgb_num_hidden_layers:
     value: 0
@@ -103,15 +95,12 @@ scm_config:
       choices:
         - "pre"
         - "post"
-      probabilities:
-        - 0.5
-        - 0.5
   xgb_node_shape:
     value: [1]
   xgb_n_training_samples:
     distribution: "discrete_uniform"
     distribution_parameters:
-      low: 10
+      low: 100
       high: 500
   xgb_add_noise:
     distribution: "categorical"
@@ -120,8 +109,8 @@ scm_config:
         - true
         - false
       probabilities:
-        - 0.3
-        - 0.7
+        - 0.2
+        - 0.8
   random_additive_std:
     value: true
   exo_std_distribution:
@@ -150,22 +139,22 @@ scm_config:
   exo_std_std:
     distribution: "uniform"
     distribution_parameters:
-      low: 0.1
-      high: 0.2
+      low: 0.01
+      high: 1.0
   endo_std_mean:
-    distribution: "lognormal"
-    distribution_parameters:
-      mean: -3.0
-      std: 0.2
-    #distribution: "uniform"
+    #distribution: "lognormal"
     #distribution_parameters:
-    #  low: 0.1
-    #  high: 0.3
-  endo_std_std:
+    #  mean: -6.0
+    #  std: 0.6
     distribution: "uniform"
     distribution_parameters:
       low: 0.1
-      high: 0.2
+      high: 0.3
+  endo_std_std:
+    distribution: "uniform"
+    distribution_parameters:
+      low: 0.01
+      high: 0.5
   tabicl_noise_proportion:
     # Proportion of TabICL noise in the exogenous noise mixture
     # The remaining probability mass is uniformly distributed among
@@ -211,32 +200,32 @@ preprocessing_config:
   dropout_prob:
     distribution: "categorical"
     distribution_parameters:
-      choices:  
+      choices:
         - 0.0
         - 0.05
         - 0.1
+        - 0.15
         - 0.2
+        - 0.25
         - 0.3
-        - 0.4 
-        - 0.5 
+        - 0.35
+        - 0.4
+        - 0.5
         - 0.6
+        - 0.7
       probabilities:
-      - 0.8
-      - 0.1
-      - 0.05
-      - 0.05
-      - 0.0
-      - 0.0
-      - 0.0
-      - 0.0
-        #- 0.8
-        #- 0.1
-        #- 0.1
-        #- 0.05
-        #- 0.05
-        #- 0.05
-        #- 0.01
-        #- 0.01
+        - 0.3
+        - 0.15
+        - 0.15
+        - 0.1
+        - 0.1
+        - 0.05
+        - 0.05
+        - 0.03
+        - 0.03
+        - 0.02
+        - 0.01
+        - 0.01
   shuffle_data:
     value: true
   target_feature:
@@ -259,13 +248,13 @@ preprocessing_config:
 
 model_config:
   d_model:
-    value: 1024
+    value: 256
   depth: # number of layers
     value: 6
   heads_feat:  # number of attention heads for feature-wise attention
-    value: 8
+    value: 4
   heads_samp: # number of attention heads for sample-wise attention
-    value: 8
+    value: 4
   dropout:  # dropout probability
     value: 0.1
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
@@ -279,23 +268,23 @@ model_config:
   use_feature_positional:
     value: true
   feature_pos_rank:
-    value: 16
+    value: 32
 
   # BarDistribution Configuration (used to model the output distribution)
   use_bar_distribution:
     value: true
   num_bars:  # number of bars (K). Higher values allow for more complex, fine-grained posteriors, but make training more difficult.
-    value: 1000
+    value: 5000
   min_width:  # minimum width of each bar to avoid numerical issues
     value: "1e-6"
   scale_floor:  # for the tails, this ensures that the scale is never too small
     value: "1e-3"
   max_fit_items:  # maximum number of datasets to fit the BarDistribution initially.
-    value: 10000000
+    value: 1000000
   max_fit_batches:  # maximum number of batches to use when fitting the BarDistribution initially. This is usually not critical.
     value: 1000000
   log_prob_clip_min:  # clip minimum log probability to avoid numerical issues
-    value: -100000.0
+    value: -1000000.0
   log_prob_clip_max: # clip maximum log probability to avoid numerical issues
     value: 1000000.0
 
@@ -307,17 +296,17 @@ training_config:
   learning_rate:  # usually 1e-5 - 1e-4 work well
     value: 0.0001
   weight_decay: # weight decay for optimizer, might not be needed
-    value: 0.00001 
+    value: 0.000001 
   max_steps:  #critial for determing training duration!
-    value: 10000
+    value: 100000
   max_epochs: # should always be 1
     value: 1
 
   # Data Loading Parameters
   batch_size: # batch size
-    value: 16
+    value: 64
   accumulate_grad_batches:
-    value: 8
+    value: 1
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
     value: 64
 
@@ -351,7 +340,7 @@ training_config:
   save_dir:
     value: "./experiments/FirstTests/logs/early_test2"
   log_every_n_steps: # how often to log training metrics
-    value: 1
+    value: 5
 
   # Model Checkpointing
   checkpoint_every_n_steps: # how often to save a model checkpoint

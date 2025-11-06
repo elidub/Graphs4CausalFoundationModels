@@ -12,14 +12,9 @@ import os
 import yaml
 import json
 import argparse
-import warnings
 import traceback
 from pathlib import Path
 from torch.utils.data import DataLoader
-
-# Capture the initial working directory BEFORE any path manipulation
-# This is where HTCondor unzips files (including data_cache)
-INITIAL_WORKING_DIR = os.getcwd()
 
 # Add src directory to path for imports
 src_dir = Path(__file__).parent.parent
@@ -37,42 +32,6 @@ from training_utils import load_yaml_config, extract_config_values, get_device, 
 # Import BarDistribution for probabilistic output
 from Losses.BarDistribution import BarDistribution
 
-
-# Suppress duplicate warnings globally after first occurrence
-def _suppress_warnings_after_first():
-    seen_keys = set()
-    _orig_showwarning = warnings.showwarning
-
-    def _custom_showwarning(message, category, filename, lineno, file=None, line=None):
-        key = (str(message), category.__name__)
-        if key in seen_keys:
-            return
-        seen_keys.add(key)
-        _orig_showwarning(message, category, filename, lineno, file, line)
-
-    warnings.showwarning = _custom_showwarning
-    # Ensure warnings aren't globally ignored by environment
-    warnings.filterwarnings("default")
-
-
-def _dl_worker_init_fn(worker_id: int):
-    """Initialize DataLoader workers to also suppress duplicate warnings."""
-    try:
-        seen_keys = set()
-        _orig_showwarning = warnings.showwarning
-
-        def _custom_showwarning(message, category, filename, lineno, file=None, line=None):
-            key = (str(message), category.__name__)
-            if key in seen_keys:
-                return
-            seen_keys.add(key)
-            _orig_showwarning(message, category, filename, lineno, file, line)
-
-        warnings.showwarning = _custom_showwarning
-        warnings.filterwarnings("default")
-    except Exception:
-        warnings.simplefilter("once")
-
 # Weights & Biases for experiment tracking
 try:
     import wandb
@@ -89,8 +48,6 @@ def main():
     args = parser.parse_args()
 
     try:
-        # Install global duplicate-warning suppression
-        _suppress_warnings_after_first()
         print("=" * 60)
         print("           SimplePFN Training Session Started")
         print("=" * 60)
@@ -173,8 +130,7 @@ def main():
                         'scm_config': scm_config,
                         'dataset_config': dataset_config,
                         'preprocessing_config': preprocessing_config
-                    },
-                    group="DDP"
+                    }
                 )
                 print(f"   Wandb initialized successfully!")
                 print(f"   Run URL: {wandb_run.get_url()}")
@@ -225,8 +181,7 @@ def main():
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers,
-            persistent_workers=num_workers > 0,  # Only use persistent workers when num_workers > 0
-            worker_init_fn=_dl_worker_init_fn if num_workers and num_workers > 0 else None,
+            persistent_workers=num_workers > 0  # Only use persistent workers when num_workers > 0
         )
         print(f"   DataLoader created successfully")
 
@@ -309,26 +264,15 @@ def main():
         
         # Create SimplePFN model
         print(f"\nMODEL CREATION:")
-
-        # Helper to extract value objects from model_config dict entries
-        def _mcfg_val(key, default):
-            v = model_config.get(key)
-            if isinstance(v, dict):
-                return v.get("value", default)
-            return v if v is not None else default
-
         model = SimplePFNRegressor(
             num_features=num_features,
-            d_model=_mcfg_val("d_model", 8),
-            depth=_mcfg_val("depth", 1),
-            heads_feat=_mcfg_val("heads_feat", 2),
-            heads_samp=_mcfg_val("heads_samp", 2),
-            dropout=_mcfg_val("dropout", 0.1),
-            hidden_mult=_mcfg_val("hidden_mult", 4),
-            output_dim=output_dim,  # Use calculated output dimension
-            use_flash_attention=_mcfg_val("use_flash_attention", False),
-            use_feature_positional=bool(_mcfg_val("use_feature_positional", False)),
-            feature_pos_rank=int(_mcfg_val("feature_pos_rank", 16)),
+            d_model=model_config.get("d_model", 8),
+            depth=model_config.get("depth", 1), 
+            heads_feat=model_config.get("heads_feat", 2),
+            heads_samp=model_config.get("heads_samp", 2),
+            dropout=model_config.get("dropout", 0.1),
+            hidden_mult=model_config.get("hidden_mult", 4),
+            output_dim=output_dim  # Use calculated output dimension
         )
         # Count parameters
         total_params = sum(p.numel() for p in model.parameters())
@@ -411,8 +355,6 @@ def main():
             config_path=args.config,
             benchmark_eval_fidelity=training_config.get("benchmark_eval_fidelity"),
             benchmark_final_fidelity=training_config.get("benchmark_final_fidelity"),
-            benchmark_data_dir=training_config.get("benchmark_data_dir", os.path.join(INITIAL_WORKING_DIR, "data_cache")),
-            benchmark_offline=training_config.get("benchmark_offline", True),
         )
         
         print(f"   Learning rate: {training_config.get('learning_rate', 1e-3)}")
@@ -426,29 +368,12 @@ def main():
         print(f"   Model selection: {'enabled' if training_config.get('model_selection_enabled', False) else 'disabled'}")
         if training_config.get('model_selection_enabled', False):
             print(f"   Selection metric: {training_config.get('model_selection_metric', 'eval/mse_median')} ({training_config.get('model_selection_mode', 'min')})")
-        
-        # Print benchmark configuration
-        if training_config.get("benchmark_eval_fidelity") or training_config.get("benchmark_final_fidelity"):
-            benchmark_data_dir = training_config.get("benchmark_data_dir", os.path.join(INITIAL_WORKING_DIR, "data_cache"))
-            print(f"   Benchmarking: enabled")
-            print(f"   Benchmark data_cache path: {benchmark_data_dir}")
-            print(f"   Benchmark data_cache exists: {os.path.exists(benchmark_data_dir)}")
-            if training_config.get("benchmark_eval_fidelity"):
-                print(f"   Benchmark eval fidelity: {training_config.get('benchmark_eval_fidelity')}")
-            if training_config.get("benchmark_final_fidelity"):
-                print(f"   Benchmark final fidelity: {training_config.get('benchmark_final_fidelity')}")
         if save_dir:
             print(f"   Save directory: {save_dir}")
             print(f"   Save frequency: {'never' if save_every <= 0 else f'every {save_every} steps'}")
             print(f"   Run name: {run_name}")
         print(f"   Trainer initialized")
         
-        # Echo full config right before training starts
-        print("\nCONFIG BEFORE TRAINING (full):")
-        print("-" * 40)
-        print(json.dumps(config, indent=2, default=str))
-        print("-" * 40)
-
         # Start training
         print(f"\nSTARTING TRAINING:")
         print("=" * 60)
