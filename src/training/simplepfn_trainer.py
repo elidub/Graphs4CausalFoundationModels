@@ -134,6 +134,25 @@ class SimplePFNTrainer:
                 print(f"Warning: Mixed precision requested but CUDA not available, using float32")
             else:
                 print(f"Mixed precision training DISABLED (float32)")
+        
+        # Initialize metric caches for per-step logging (start with NaN)
+        # These will be updated when eval/benchmark runs and repeated every step
+        self._latest_eval_metrics = {
+            'eval/mse_mean': float('nan'),
+            'eval/mse_median': float('nan'),
+            'eval/mse_std': float('nan'),
+            'eval/r2_mean': float('nan'),
+            'eval/r2_median': float('nan'),
+            'eval/r2_std': float('nan'),
+        }
+        self._latest_benchmark_metrics = {
+            'benchmark/mse_lr_median': float('nan'),
+            'benchmark/mse_rf_median': float('nan'),
+            'benchmark/mse_pfn_median': float('nan'),
+            'benchmark/r2_lr_median': float('nan'),
+            'benchmark/r2_rf_median': float('nan'),
+            'benchmark/r2_pfn_median': float('nan'),
+        }
             
         # Flag for graceful termination
         self.terminate = False
@@ -677,6 +696,15 @@ class SimplePFNTrainer:
         if self.enable_model_selection:
             self._update_best_model(metrics)
         
+        # Update cached eval metrics for per-step logging
+        # Use .get() to handle cases where metrics might not be computed
+        self._latest_eval_metrics['eval/mse_mean'] = metrics.get('eval/mse_mean', float('nan'))
+        self._latest_eval_metrics['eval/mse_median'] = metrics.get('eval/mse_median', float('nan'))
+        self._latest_eval_metrics['eval/mse_std'] = metrics.get('eval/mse_std', float('nan'))
+        self._latest_eval_metrics['eval/r2_mean'] = metrics.get('eval/r2_mean', float('nan'))
+        self._latest_eval_metrics['eval/r2_median'] = metrics.get('eval/r2_median', float('nan'))
+        self._latest_eval_metrics['eval/r2_std'] = metrics.get('eval/r2_std', float('nan'))
+        
         return metrics
 
     def fit(self):
@@ -808,13 +836,20 @@ class SimplePFNTrainer:
             
             # Log to Weights & Biases
             if self.wandb_run:
-                self.wandb_run.log({
+                # Build complete logging payload with train + eval + benchmark metrics
+                log_dict = {
                     'train/loss': loss.item(),
                     'train/step_time': batch_time,
                     'train/batch_size': X_train.shape[0],
                     'train/global_step': self.global_step,
-                    'train/learning_rate': current_lr
-                }, step=self.global_step)
+                    'train/learning_rate': current_lr,
+                }
+                # Add all cached eval metrics (will be NaN until first evaluation)
+                log_dict.update(self._latest_eval_metrics)
+                # Add all cached benchmark metrics (will be NaN until first benchmark run)
+                log_dict.update(self._latest_benchmark_metrics)
+                
+                self.wandb_run.log(log_dict, step=self.global_step)
             
             # Print progress - more frequent at start, less frequent later
             if step <= 10 or step % max(1, self.max_steps // 10) == 0:
@@ -1040,12 +1075,47 @@ class SimplePFNTrainer:
                 # Log median metrics if present
                 df_metrics = df[df["process_id"] != "summary"] if "process_id" in df.columns else df
                 log = {}
+                
+                # Extract median values for caching
+                mse_lr_median = float('nan')
+                mse_rf_median = float('nan')
+                mse_pfn_median = float('nan')
+                r2_lr_median = float('nan')
+                r2_rf_median = float('nan')
+                r2_pfn_median = float('nan')
+                
                 for k in ["mse_lr", "mse_rf", "mse_pfn"]:
                     if k in df_metrics.columns:
-                        log[f"benchmark/{tag}/{k}_median"] = float(df_metrics[k].median(skipna=True))
+                        median_val = float(df_metrics[k].median(skipna=True))
+                        log[f"benchmark/{tag}/{k}_median"] = median_val
+                        # Store in variables for cache update
+                        if k == "mse_lr":
+                            mse_lr_median = median_val
+                        elif k == "mse_rf":
+                            mse_rf_median = median_val
+                        elif k == "mse_pfn":
+                            mse_pfn_median = median_val
+                            
                 for k in ["r2_lr", "r2_rf", "r2_pfn"]:
                     if k in df_metrics.columns:
-                        log[f"benchmark/{tag}/{k}_median"] = float(df_metrics[k].median(skipna=True))
+                        median_val = float(df_metrics[k].median(skipna=True))
+                        log[f"benchmark/{tag}/{k}_median"] = median_val
+                        # Store in variables for cache update
+                        if k == "r2_lr":
+                            r2_lr_median = median_val
+                        elif k == "r2_rf":
+                            r2_rf_median = median_val
+                        elif k == "r2_pfn":
+                            r2_pfn_median = median_val
+                
+                # Update cached benchmark metrics for per-step logging
+                self._latest_benchmark_metrics['benchmark/mse_lr_median'] = mse_lr_median
+                self._latest_benchmark_metrics['benchmark/mse_rf_median'] = mse_rf_median
+                self._latest_benchmark_metrics['benchmark/mse_pfn_median'] = mse_pfn_median
+                self._latest_benchmark_metrics['benchmark/r2_lr_median'] = r2_lr_median
+                self._latest_benchmark_metrics['benchmark/r2_rf_median'] = r2_rf_median
+                self._latest_benchmark_metrics['benchmark/r2_pfn_median'] = r2_pfn_median
+                
                 if log:
                     self.wandb_run.log(log, step=self.global_step)
             except Exception:

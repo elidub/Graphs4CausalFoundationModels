@@ -136,8 +136,8 @@ class BasicProcessing:
         # Build data tensor [N,F_total]
         data_tensor = torch.cat([dataset[i] for i in feature_indices], dim=1)
 
-        # Target selection
-        target_feat = self._select_target_feature(feature_indices)
+        # Target selection (exclude features with zero variance)
+        target_feat = self._select_target_feature(feature_indices, data_tensor)
         target_col = feature_indices.index(target_feat)
         target_values = data_tensor[:, target_col]
 
@@ -241,12 +241,56 @@ class BasicProcessing:
                 if torch.isinf(v).any():
                     raise ValueError(f"Feature {k} has infs")
 
-    def _select_target_feature(self, feature_indices: list) -> int:
+    def _select_target_feature(self, feature_indices: list, data_tensor: torch.Tensor) -> int:
+        """
+        Select target feature, excluding features with zero variance (trivial prediction tasks).
+        
+        Parameters
+        ----------
+        feature_indices : list
+            List of feature indices available in the dataset
+        data_tensor : torch.Tensor
+            Data tensor of shape (N, F) where F is len(feature_indices)
+            
+        Returns
+        -------
+        int
+            Selected target feature index
+            
+        Raises
+        ------
+        ValueError
+            If provided target_feature is not in dataset, has zero variance,
+            or all features have zero variance
+        """
+        # Compute variance for each feature
+        variances = torch.var(data_tensor, dim=0, unbiased=False)  # (F,)
+        
+        # Filter out features with zero variance (using small epsilon for numerical stability)
+        eps = 1e-12
+        valid_mask = variances > eps
+        valid_cols = [i for i, valid in enumerate(valid_mask) if valid]
+        valid_features = [feature_indices[i] for i in valid_cols]
+        
+        if len(valid_features) == 0:
+            raise ValueError("All features have zero variance - no valid target available")
+        
+        # If user specified a target, check it's valid
         if self.target_feature is not None:
             if self.target_feature not in feature_indices:
                 raise ValueError("Provided target_feature not in dataset")
+            
+            # Check if specified target has zero variance
+            target_col = feature_indices.index(self.target_feature)
+            if not valid_mask[target_col]:
+                raise ValueError(
+                    f"Provided target_feature {self.target_feature} has zero variance "
+                    f"(trivial prediction task) - cannot be used as target"
+                )
             return self.target_feature
-        return random.choice(feature_indices)
+        
+        # Random selection from valid (non-zero variance) features
+        return random.choice(valid_features)
 
     def _apply_feature_dropout(self, remaining_cols: list, feature_indices: list) -> Tuple[list, list]:
         """Randomly drop (hide) some features (by column indices) excluding target.
