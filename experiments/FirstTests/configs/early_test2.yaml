@@ -17,12 +17,12 @@ scm_config:
     distribution: "discrete_uniform"
     distribution_parameters:
       low: 3
-      high: 21
+      high: 51
   graph_edge_prob:
     distribution: "beta"
     distribution_parameters:
       alpha: 2.0
-      beta: 5.0
+      beta: 8.0
   graph_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -32,13 +32,15 @@ scm_config:
     distribution: "categorical"
     distribution_parameters:
       choices:
-        - 0.0
-        - 0.1
-        - 0.2
+      - 0.0
+        #- 0.0
+        #- 0.1
+        #- 0.2
       probabilities:
-        - 0.8
-        - 0.1
-        - 0.1
+      - 1.0
+        #- 0.8
+        #- 0.1
+        #- 0.1
   mechanism_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -54,9 +56,9 @@ scm_config:
         - 1
         - 2
       probabilities:
-        - 0.9
-        - 0.05
-        - 0.05
+        - 1.0
+        - 0.0
+        - 0.0
   mlp_hidden_dim:
     distribution: "categorical"
     distribution_parameters:
@@ -68,12 +70,12 @@ scm_config:
         - 12
         - 16
       probabilities:
-        - 0.4
-        - 0.3
-        - 0.2
-        - 0.034
-        - 0.033
-        - 0.033
+        - 0.9
+        - 0.05
+        - 0.05
+        - 0.0
+        - 0.0
+        - 0.0
 
   mlp_activation_mode:
     distribution: "categorical"
@@ -82,8 +84,8 @@ scm_config:
         - "pre"
         - "post"
       probabilities:
-        - 0.8
-        - 0.2
+        - 1.0
+        - 0.0
       
   xgb_node_shape:
     value: [1]
@@ -104,8 +106,8 @@ scm_config:
         - "pre"
         - "post"
       probabilities:
-        - 0.5
-        - 0.5
+        - 1.0
+        - 0.0
   xgb_node_shape:
     value: [1]
   xgb_n_training_samples:
@@ -120,8 +122,8 @@ scm_config:
         - true
         - false
       probabilities:
-        - 0.3
-        - 0.7
+        - 1.0
+        - 0.0
   random_additive_std:
     value: true
   exo_std_distribution:
@@ -146,12 +148,12 @@ scm_config:
     distribution: "lognormal"
     distribution_parameters:
       mean: 1.0
-      std: 1.0
+      std: 0.1
   exo_std_std:
     distribution: "uniform"
     distribution_parameters:
       low: 0.1
-      high: 0.2
+      high: 0.11
   endo_std_mean:
     distribution: "lognormal"
     distribution_parameters:
@@ -165,7 +167,7 @@ scm_config:
     distribution: "uniform"
     distribution_parameters:
       low: 0.1
-      high: 0.2
+      high: 0.11
   tabicl_noise_proportion:
     # Proportion of TabICL noise in the exogenous noise mixture
     # The remaining probability mass is uniformly distributed among
@@ -186,21 +188,21 @@ dataset_config:
   dataset_size:
     value: 100000000
   max_number_train_samples:
-    value: 100
+    value: 1000
   number_train_samples_per_dataset:
     distribution: "uniform"
     distribution_parameters:
-      low: 99
+      low: 50
       high: 100
   max_number_test_samples:
-    value: 100
+    value: 1000
   number_test_samples_per_dataset:
     distribution: "uniform"
     distribution_parameters:
-      low: 99
-      high: 100
+      low: 999
+      high: 1000
   max_number_features:
-    value: 20
+    value: 50
   seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -221,10 +223,10 @@ preprocessing_config:
         - 0.5 
         - 0.6
       probabilities:
-      - 0.8
-      - 0.1
-      - 0.05
-      - 0.05
+      - 0.99
+      - 0.01
+      - 0.0
+      - 0.0
       - 0.0
       - 0.0
       - 0.0
@@ -242,7 +244,7 @@ preprocessing_config:
   target_feature:
     value: null
   negative_one_one_scaling:
-    value: true
+    value: false
   standardize:
     value: true
   remove_outliers:
@@ -269,9 +271,9 @@ model_config:
   dropout:  # dropout probability
     value: 0.1
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
-    value: 2
+    value: 1
   num_features:
-    value: 20  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
+    value: 50  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
 
   # Attention backend
   use_flash_attention:  # enable PyTorch's FlashAttention kernels when available (CUDA)
@@ -279,7 +281,7 @@ model_config:
   use_feature_positional:
     value: true
   feature_pos_rank:
-    value: 16
+    value: 32
 
   # BarDistribution Configuration (used to model the output distribution)
   use_bar_distribution:
