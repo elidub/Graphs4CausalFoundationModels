@@ -43,6 +43,9 @@ class SimplePFNTrainer:
         config_path: Optional[str] = None,  # Path to YAML config for PFN wrapper
         benchmark_eval_fidelity: Optional[str] = None,  # Run benchmark at each eval with this fidelity (e.g., "minimal", "low", "high", "very high")
         benchmark_final_fidelity: Optional[str] = None,  # Run benchmark at end with this fidelity
+        # Mixed precision training
+        use_amp: bool = False,  # Enable automatic mixed precision (float16)
+        gradient_clip_val: float = 0.0,  # Gradient clipping value (0.0 to disable)
     ):
         self.model = model
         self.dataloader = dataloader
@@ -55,6 +58,7 @@ class SimplePFNTrainer:
         self.save_every = save_every
         self.run_name = run_name or f"model_{int(time.time())}"
         self.bar_distribution = bar_distribution  # Store BarDistribution
+        self.gradient_clip_val = gradient_clip_val  # Store gradient clipping value
         
         # Evaluation parameters
         self.eval_dataloader = eval_dataloader
@@ -118,6 +122,18 @@ class SimplePFNTrainer:
         
         # Setup scheduler if enabled
         self.scheduler = self._create_scheduler(self.scheduler_config)
+        
+        # Setup mixed precision training
+        self.use_amp = use_amp and torch.cuda.is_available()  # Only enable if CUDA available
+        if self.use_amp:
+            self.scaler = torch.cuda.amp.GradScaler()
+            print(f"Mixed precision training ENABLED (float16)")
+        else:
+            self.scaler = None
+            if use_amp and not torch.cuda.is_available():
+                print(f"Warning: Mixed precision requested but CUDA not available, using float32")
+            else:
+                print(f"Mixed precision training DISABLED (float32)")
             
         # Flag for graceful termination
         self.terminate = False
@@ -718,45 +734,63 @@ class SimplePFNTrainer:
             
             self.optimizer.zero_grad()
             
-            # SimplePFN forward pass expects (X_train, y_train, X_test)
-            output = self.model(X_train, y_train, X_test)
-            
-            # Extract predictions from SimplePFN output
-            if isinstance(output, dict) and 'predictions' in output:
-                predictions = output['predictions']
-            else:
-                predictions = output
-            
-            # Compute loss based on available loss function
-            if self.bar_distribution is not None:
-                # Use BarDistribution probabilistic loss
-                # predictions should be (batch_size, n_test, K+4) for BarDistribution
-                # y_test should be (batch_size, n_test)
+            # Forward pass with automatic mixed precision
+            with torch.cuda.amp.autocast(enabled=self.use_amp, dtype=torch.float16):
+                # SimplePFN forward pass expects (X_train, y_train, X_test)
+                output = self.model(X_train, y_train, X_test)
                 
-                # Ensure predictions have the right shape for BarDistribution
-                if len(predictions.shape) == 2:
-                    # If predictions are (batch_size, n_test), this is wrong for BarDistribution
-                    raise ValueError(f"BarDistribution requires high-dimensional predictions, got shape {predictions.shape}")
+                # Extract predictions from SimplePFN output
+                if isinstance(output, dict) and 'predictions' in output:
+                    predictions = output['predictions']
+                else:
+                    predictions = output
                 
-                # Use negative log probability as loss (since we want to maximize log prob)
-                log_prob = self.bar_distribution.average_log_prob(predictions, y_test)  # (batch_size,)
-                loss = -log_prob.mean()  # Average across batch and negate for minimization
-            else:
-                # Use standard MSE loss
-                # Ensure predictions have the right shape for loss computation
-                # predictions should be (batch_size, n_test) to match y_test (batch_size, n_test)
-                if len(predictions.shape) == 3 and predictions.shape[-1] == 1:
-                    # If predictions are (batch_size, n_test, 1), squeeze last dimension
-                    predictions = predictions.squeeze(-1)
-                
-                # Compute MSE loss for the full batch
-                loss = self.criterion(predictions, y_test)
-                
+                # Compute loss based on available loss function
+                if self.bar_distribution is not None:
+                    # Use BarDistribution probabilistic loss
+                    # predictions should be (batch_size, n_test, K+4) for BarDistribution
+                    # y_test should be (batch_size, n_test)
+                    
+                    # Ensure predictions have the right shape for BarDistribution
+                    if len(predictions.shape) == 2:
+                        # If predictions are (batch_size, n_test), this is wrong for BarDistribution
+                        raise ValueError(f"BarDistribution requires high-dimensional predictions, got shape {predictions.shape}")
+                    
+                    # Use negative log probability as loss (since we want to maximize log prob)
+                    log_prob = self.bar_distribution.average_log_prob(predictions, y_test)  # (batch_size,)
+                    loss = -log_prob.mean()  # Average across batch and negate for minimization
+                else:
+                    # Use standard MSE loss
+                    # Ensure predictions have the right shape for loss computation
+                    # predictions should be (batch_size, n_test) to match y_test (batch_size, n_test)
+                    if len(predictions.shape) == 3 and predictions.shape[-1] == 1:
+                        # If predictions are (batch_size, n_test, 1), squeeze last dimension
+                        predictions = predictions.squeeze(-1)
+                    
+                    # Compute MSE loss for the full batch
+                    loss = self.criterion(predictions, y_test)
+                    
             losses.append(loss.item())
             
-            # Backward pass
-            loss.backward()
-            self.optimizer.step()
+            # Backward pass with gradient scaling for mixed precision
+            if self.use_amp:
+                self.scaler.scale(loss).backward()
+                
+                # Unscale gradients before clipping (required for AMP)
+                if self.gradient_clip_val > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_val)
+                
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss.backward()
+                
+                # Apply gradient clipping if enabled
+                if self.gradient_clip_val > 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_val)
+                
+                self.optimizer.step()
             
             # Update learning rate if scheduler is enabled
             if self.scheduler is not None:

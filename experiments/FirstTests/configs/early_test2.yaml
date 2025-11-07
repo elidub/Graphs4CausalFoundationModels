@@ -188,19 +188,19 @@ dataset_config:
   dataset_size:
     value: 100000000
   max_number_train_samples:
-    value: 1000
+    value: 500
   number_train_samples_per_dataset:
     distribution: "uniform"
     distribution_parameters:
-      low: 50
-      high: 100
+      low: 499
+      high: 500
   max_number_test_samples:
-    value: 1000
+    value: 500
   number_test_samples_per_dataset:
     distribution: "uniform"
     distribution_parameters:
-      low: 999
-      high: 1000
+      low: 499
+      high: 500
   max_number_features:
     value: 50
   seed:
@@ -261,13 +261,13 @@ preprocessing_config:
 
 model_config:
   d_model:
-    value: 1024
+    value: 512
   depth: # number of layers
     value: 6
   heads_feat:  # number of attention heads for feature-wise attention
-    value: 8
+    value: 4
   heads_samp: # number of attention heads for sample-wise attention
-    value: 8
+    value: 4
   dropout:  # dropout probability
     value: 0.1
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
@@ -317,7 +317,7 @@ training_config:
 
   # Data Loading Parameters
   batch_size: # batch size
-    value: 16
+    value: 8
   accumulate_grad_batches:
     value: 8
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
@@ -345,7 +345,7 @@ training_config:
   device:
     value: "cuda"
   precision: # precision for training. 16 has not been tested yet.
-    value: "32"
+    value: "16"
 
   # Experiment Organization
   experiment_name: # name of the experiment, used for logging 

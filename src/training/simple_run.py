@@ -324,6 +324,13 @@ def main():
         save_dir = training_config.get("checkpoint_dir")
         save_every = training_config.get("save_every", 0)  # 0 means no periodic saving
         
+        # Get precision configuration
+        precision = training_config.get("precision", "32")  # "32", "16", or "bf16"
+        use_amp = precision in ["16", "16-mixed"]  # Enable mixed precision for float16
+        
+        # Get gradient clipping configuration
+        gradient_clip_val = training_config.get("gradient_clip_val", 0.0)
+        
         # Use the run name (derived from job ID or config) for model naming
         run_name = None
         if cluster_id:
@@ -355,10 +362,16 @@ def main():
             config_path=args.config,
             benchmark_eval_fidelity=training_config.get("benchmark_eval_fidelity"),
             benchmark_final_fidelity=training_config.get("benchmark_final_fidelity"),
+            # Mixed precision training
+            use_amp=use_amp,
+            gradient_clip_val=gradient_clip_val,
         )
         
         print(f"   Learning rate: {training_config.get('learning_rate', 1e-3)}")
         print(f"   Max steps: {training_config.get('max_steps', 10)}")
+        print(f"   Gradient clipping: {'enabled' if gradient_clip_val > 0 else 'disabled'}")
+        if gradient_clip_val > 0:
+            print(f"   Gradient clip value: {gradient_clip_val}")
         print(f"   Wandb logging: {'enabled' if wandb_run else 'disabled'}")
         print(f"   Model checkpoints: {'enabled' if save_dir else 'disabled'}")
         print(f"   Evaluation: {'enabled' if eval_dataloader else 'disabled'}")
