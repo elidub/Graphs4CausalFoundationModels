@@ -735,7 +735,7 @@ class SimplePFNTrainer:
             self.optimizer.zero_grad()
             
             # Forward pass with automatic mixed precision
-            with torch.cuda.amp.autocast(enabled=self.use_amp, dtype=torch.float16):
+            with torch.amp.autocast('cuda', enabled=self.use_amp, dtype=torch.float16):
                 # SimplePFN forward pass expects (X_train, y_train, X_test)
                 output = self.model(X_train, y_train, X_test)
                 
