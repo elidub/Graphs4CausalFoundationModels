@@ -1,11 +1,16 @@
 from __future__ import annotations
-from typing import Optional, Dict, Any, Union, Literal
+from typing import Optional, Dict, Any, Union, Literal, List
+from collections import OrderedDict
+from copy import deepcopy
+import itertools
+import random
 
 import yaml
 import torch
 import numpy as np
 import re
 from pathlib import Path
+from sklearn.preprocessing import StandardScaler, PowerTransformer, QuantileTransformer, RobustScaler
 
 # Robust import: try package-style, then relative, then add repo root to sys.path
 try:
@@ -23,30 +28,333 @@ except Exception:
         from src.Losses.BarDistribution import BarDistribution
 
 
+class SimplePreprocessor:
+    """
+    Simple preprocessing pipeline for tabular data based on TabICL's approach.
+    
+    Applies scaling, normalization, and outlier handling with diverse strategies.
+    """
+    
+    def __init__(self, normalization_method: str = "power", outlier_strategy: str = "moderate",
+                 random_state: Optional[int] = None):
+        """
+        Args:
+            normalization_method: 'power', 'quantile', 'robust', or 'none'
+            outlier_strategy: Outlier handling strategy
+                - 'none': No outlier removal (threshold = infinity)
+                - 'conservative': Remove extreme outliers (threshold = 6.0 std)
+                - 'moderate': Remove moderate outliers (threshold = 4.0 std)
+                - 'aggressive': Remove more outliers (threshold = 2.5 std)
+            random_state: Random seed for reproducibility
+        """
+        self.normalization_method = normalization_method
+        self.outlier_strategy = outlier_strategy
+        self.random_state = random_state
+        self.fitted = False
+        
+        # Map outlier strategy to threshold
+        self.outlier_thresholds = {
+            'none': float('inf'),
+            'conservative': 6.0,
+            'moderate': 4.0,
+            'aggressive': 2.5
+        }
+        self.outlier_threshold = self.outlier_thresholds.get(outlier_strategy, 4.0)
+        
+    def fit(self, X, y=None):
+        """Fit the preprocessing pipeline on training data."""
+        X = np.asarray(X, dtype=np.float32)
+        
+        # 1. Standard scaling
+        self.scaler_ = StandardScaler()
+        X_scaled = self.scaler_.fit_transform(X)
+        
+        # 2. Normalization
+        if self.normalization_method != "none":
+            if self.normalization_method == "power":
+                self.normalizer_ = PowerTransformer(method="yeo-johnson", standardize=True)
+            elif self.normalization_method == "quantile":
+                self.normalizer_ = QuantileTransformer(output_distribution="normal", random_state=self.random_state)
+            elif self.normalization_method == "robust":
+                self.normalizer_ = RobustScaler(unit_variance=True)
+            else:
+                raise ValueError(f"Unknown normalization method: {self.normalization_method}")
+            
+            self.X_min_ = np.min(X_scaled, axis=0, keepdims=True)
+            self.X_max_ = np.max(X_scaled, axis=0, keepdims=True)
+            X_normalized = self.normalizer_.fit_transform(X_scaled)
+        else:
+            self.normalizer_ = None
+            X_normalized = X_scaled
+        
+        # 3. Outlier handling - compute bounds
+        if self.outlier_threshold != float('inf'):
+            self.outlier_mean_ = np.mean(X_normalized, axis=0)
+            self.outlier_std_ = np.std(X_normalized, axis=0, ddof=1 if X.shape[0] > 1 else 0)
+            self.outlier_std_ = np.maximum(self.outlier_std_, 1e-6)
+            
+            self.outlier_lower_ = self.outlier_mean_ - self.outlier_threshold * self.outlier_std_
+            self.outlier_upper_ = self.outlier_mean_ + self.outlier_threshold * self.outlier_std_
+            
+            # Store transformed training data with outlier clipping
+            self.X_transformed_ = np.clip(X_normalized, self.outlier_lower_, self.outlier_upper_)
+        else:
+            # No outlier removal
+            self.outlier_lower_ = None
+            self.outlier_upper_ = None
+            self.X_transformed_ = X_normalized
+        
+        self.fitted = True
+        return self
+    
+    def transform(self, X):
+        """Transform data using fitted preprocessor."""
+        if not self.fitted:
+            raise RuntimeError("Preprocessor not fitted. Call fit() first.")
+        
+        X = np.asarray(X, dtype=np.float32)
+        
+        # Standard scaling
+        X = self.scaler_.transform(X)
+        
+        # Normalization
+        if self.normalizer_ is not None:
+            try:
+                X = self.normalizer_.transform(X)
+            except ValueError:
+                # Clip to training range and retry
+                X = np.clip(X, self.X_min_, self.X_max_)
+                X = self.normalizer_.transform(X)
+        
+        # Outlier clipping (if applicable)
+        if self.outlier_lower_ is not None and self.outlier_upper_ is not None:
+            X = np.clip(X, self.outlier_lower_, self.outlier_upper_)
+        
+        return X
+
+
+class FeatureShuffler:
+    """Generate feature permutations for ensemble diversity."""
+    
+    def __init__(self, n_features: int, method: str = "random", random_state: Optional[int] = None):
+        """
+        Args:
+            n_features: Number of features
+            method: 'none', 'random', or 'shift' (circular shift)
+            random_state: Random seed
+        """
+        self.n_features = n_features
+        self.method = method
+        self.random_state = random_state
+        
+    def generate(self, n_patterns: int) -> List[np.ndarray]:
+        """
+        Generate n_patterns feature permutations.
+        
+        Returns:
+            List of feature index arrays for shuffling
+        """
+        rng = random.Random(self.random_state)
+        feature_indices = list(range(self.n_features))
+        
+        if self.method == "none" or n_patterns == 1:
+            return [np.array(feature_indices)]
+        elif self.method == "shift":
+            # Circular shifts
+            patterns = [np.array(feature_indices[-i:] + feature_indices[:-i]) 
+                       for i in range(min(n_patterns, self.n_features))]
+            return patterns
+        elif self.method == "random":
+            # Random permutations
+            if self.n_features <= 5:
+                all_perms = [list(perm) for perm in itertools.permutations(feature_indices)]
+                patterns = [np.array(p) for p in rng.sample(all_perms, min(n_patterns, len(all_perms)))]
+            else:
+                patterns = [np.array(rng.sample(feature_indices, self.n_features)) 
+                           for _ in range(n_patterns)]
+            return patterns
+        else:
+            raise ValueError(f"Unknown method: {self.method}")
+
+
+class EnsemblePreprocessor:
+    """
+    Create ensemble variants through diverse preprocessing, similar to TabICL.
+    
+    Generates multiple data variants by:
+    1. Applying different normalization methods
+    2. Varying outlier removal strategies
+    3. Permuting feature orders
+    """
+    
+    def __init__(self, n_estimators: int = 1, 
+                 norm_methods: Optional[Union[str, List[str]]] = None,
+                 outlier_strategies: Optional[Union[str, List[str]]] = None,
+                 feat_shuffle_method: str = "random",
+                 random_state: Optional[int] = None):
+        """
+        Args:
+            n_estimators: Number of ensemble variants to create
+            norm_methods: Normalization methods to use ('none', 'power', 'quantile', 'robust')
+                         If None, uses ['none', 'power', 'quantile']
+            outlier_strategies: Outlier handling strategies ('none', 'conservative', 'moderate', 'aggressive')
+                               If None, uses ['none', 'moderate', 'aggressive']
+            feat_shuffle_method: Feature permutation method ('none', 'random', 'shift')
+            random_state: Random seed
+        """
+        self.n_estimators = n_estimators
+        self.norm_methods = norm_methods
+        self.outlier_strategies = outlier_strategies
+        self.feat_shuffle_method = feat_shuffle_method
+        self.random_state = random_state
+        self.fitted = False
+        
+    def fit(self, X_train, y_train=None):
+        """
+        Fit ensemble preprocessors on training data.
+        
+        Args:
+            X_train: Training features (N, F)
+            y_train: Training targets (N,) - not used but kept for compatibility
+        """
+        X_train = np.asarray(X_train, dtype=np.float32)
+        
+        # Default normalization methods
+        if self.norm_methods is None:
+            self.norm_methods_ = ["none", "power", "quantile"]
+        elif isinstance(self.norm_methods, str):
+            self.norm_methods_ = [self.norm_methods]
+        else:
+            self.norm_methods_ = self.norm_methods
+        
+        # Default outlier strategies
+        if self.outlier_strategies is None:
+            self.outlier_strategies_ = ["none", "moderate", "aggressive"]
+        elif isinstance(self.outlier_strategies, str):
+            self.outlier_strategies_ = [self.outlier_strategies]
+        else:
+            self.outlier_strategies_ = self.outlier_strategies
+        
+        self.n_features_ = X_train.shape[1]
+        
+        # Generate ensemble configurations
+        rng = random.Random(self.random_state)
+        
+        # Create feature shuffle patterns
+        shuffler = FeatureShuffler(self.n_features_, self.feat_shuffle_method, self.random_state)
+        shuffle_patterns = shuffler.generate(self.n_estimators)
+        
+        # Combine normalization methods, outlier strategies, and shuffle patterns
+        all_configs = list(itertools.product(self.norm_methods_, self.outlier_strategies_, shuffle_patterns))
+        rng.shuffle(all_configs)
+        selected_configs = all_configs[:self.n_estimators]
+        
+        # Organize by (norm_method, outlier_strategy) pair
+        self.ensemble_configs_ = OrderedDict()
+        for norm_method, outlier_strategy, shuffle_pattern in selected_configs:
+            key = (norm_method, outlier_strategy)
+            if key not in self.ensemble_configs_:
+                self.ensemble_configs_[key] = []
+            self.ensemble_configs_[key].append(shuffle_pattern)
+        
+        # Fit preprocessors for each (normalization, outlier) combination
+        self.preprocessors_ = {}
+        for (norm_method, outlier_strategy) in self.ensemble_configs_:
+            preprocessor = SimplePreprocessor(
+                normalization_method=norm_method,
+                outlier_strategy=outlier_strategy,
+                random_state=self.random_state
+            )
+            preprocessor.fit(X_train)
+            self.preprocessors_[(norm_method, outlier_strategy)] = preprocessor
+        
+        self.fitted = True
+        return self
+    
+    def transform(self, X_train, y_train, X_test):
+        """
+        Transform data into ensemble variants.
+        
+        Args:
+            X_train: Training features (N, F)
+            y_train: Training targets (N,)
+            X_test: Test features (M, F)
+            
+        Returns:
+            Dictionary mapping ensemble indices to (X_train_variant, y_train, X_test_variant) tuples
+            Each variant has shuffled features and potentially different preprocessing
+        """
+        if not self.fitted:
+            raise RuntimeError("EnsemblePreprocessor not fitted. Call fit() first.")
+        
+        X_train = np.asarray(X_train, dtype=np.float32)
+        X_test = np.asarray(X_test, dtype=np.float32)
+        y_train = np.asarray(y_train, dtype=np.float32)
+        
+        ensemble_data = {}
+        variant_idx = 0
+        
+        for (norm_method, outlier_strategy), shuffle_patterns in self.ensemble_configs_.items():
+            # Apply preprocessing for this (normalization, outlier) combination
+            preprocessor = self.preprocessors_[(norm_method, outlier_strategy)]
+            X_train_preprocessed = preprocessor.X_transformed_
+            X_test_preprocessed = preprocessor.transform(X_test)
+            
+            # Apply each shuffle pattern
+            for shuffle_pattern in shuffle_patterns:
+                X_train_variant = X_train_preprocessed[:, shuffle_pattern]
+                X_test_variant = X_test_preprocessed[:, shuffle_pattern]
+                
+                ensemble_data[variant_idx] = (X_train_variant, y_train.copy(), X_test_variant)
+                variant_idx += 1
+        
+        return ensemble_data
+
+
 class SimplePFNSklearn:
     """
-    A small scikit-learn-like wrapper around the SimplePFN PyTorch model with BarDistribution support.
+    A small scikit-learn-like wrapper around the SimplePFN PyTorch model with BarDistribution and ensemble support.
 
     Usage:
+      # Basic usage
       wrapper = SimplePFNSklearn(config_path="path/to/config.yaml", checkpoint_path="model.pt")
-      wrapper.load()                  # builds model and loads weights, sets up BarDistribution if configured
+      wrapper.load()
+      preds = wrapper.predict(X_train, y_train, X_test, prediction_type="mode")
       
-      # For point predictions (mode/mean of posterior)
-      preds = wrapper.predict(X_train, y_train, X_test, prediction_type="mode")  # or "mean"
-      
-      # For probabilistic predictions (samples from posterior)
-      samples = wrapper.predict(X_train, y_train, X_test, prediction_type="sample", num_samples=100)
+      # Ensemble usage (similar to TabICL)
+      wrapper = SimplePFNSklearn(config_path="path/to/config.yaml", checkpoint_path="model.pt",
+                                 n_estimators=5, norm_methods=["none", "power"])
+      wrapper.load()
+      wrapper.fit(X_train, y_train)  # Fits ensemble preprocessors
+      preds = wrapper.predict(X_train, y_train, X_test, prediction_type="mode", aggregate="mean")
 
+    Parameters:
+      n_estimators: Number of ensemble members (default: 4)
+      norm_methods: Normalization methods for ensemble ('none', 'power', 'quantile', 'robust')
+                    Default: ['none', 'power', 'quantile', 'robust']
+      outlier_strategies: Outlier removal strategies ('none', 'conservative', 'moderate', 'aggressive')
+                         Default: ['none', 'moderate', 'aggressive']
+                         - 'none': No outlier removal
+                         - 'conservative': Remove extreme outliers (6.0 std)
+                         - 'moderate': Remove moderate outliers (4.0 std)
+                         - 'aggressive': Remove more outliers (2.5 std)
+      feat_shuffle_method: Feature permutation method ('none', 'random', 'shift')
+      
+    Ensemble Diversity:
+      The ensemble creates diverse preprocessing variants by combining:
+      1. Multiple normalization methods (power transform, quantile transform, robust scaling, or none)
+      2. Different outlier removal strategies (none, conservative, moderate, aggressive)
+      3. Feature permutations (random shuffling or circular shifts)
+      
+      This results in n_estimators different views of the data, which are processed in a single
+      batched forward pass for efficiency, then aggregated (mean/median) or returned individually.
+      
     Notes:
-    - `fit` is a no-op placeholder (training is handled elsewhere); it returns self to
-      satisfy the sklearn convention.
-    - `predict` accepts numpy arrays or torch tensors. It accepts both batched inputs
-      (B, N, F) and single-dataset inputs (N, F) which are treated as batch size 1.
-    - Input shapes are automatically converted to match training format: y_train becomes (B, N, 1)
-    - When BarDistribution is enabled (use_bar_distribution=true in config), the model
-      outputs high-dimensional parameters that are processed through BarDistribution
-      to extract posterior statistics.
-    - All input validation ensures consistency with training data format.
+    - With n_estimators > 1, the model creates diverse preprocessing variants
+    - All ensemble variants are processed in a SINGLE batched forward pass (efficient!)
+    - Ensemble predictions are aggregated using mean, median, or returned as array
+    - When BarDistribution is enabled, ensemble works with all prediction types
+    - Input shapes are automatically converted to match training format
     """
 
     def __init__(
@@ -55,6 +363,11 @@ class SimplePFNSklearn:
         checkpoint_path: Optional[str] = None,
         device: Optional[str] = "cpu",
         verbose: bool = False,
+        n_estimators: int = 10,
+        norm_methods: Optional[Union[str, List[str]]] = ["none", "power", "quantile", "robust"],
+        outlier_strategies: Optional[Union[str, List[str]]] = ["none", "moderate", "aggressive"],
+        feat_shuffle_method: str = "random",
+        random_state: Optional[int] = None,
     ):
         self.config_path = config_path
         self.checkpoint_path = checkpoint_path
@@ -65,6 +378,15 @@ class SimplePFNSklearn:
         self.model_kwargs: Dict[str, Any] = {}
         self.bar_distribution: Optional[BarDistribution] = None
         self.use_bar_distribution: bool = False
+        
+        # Ensemble parameters
+        self.n_estimators = n_estimators
+        self.norm_methods = norm_methods
+        self.outlier_strategies = outlier_strategies
+        self.feat_shuffle_method = feat_shuffle_method
+        self.random_state = random_state
+        self.ensemble_preprocessor: Optional[EnsemblePreprocessor] = None
+        self.use_ensemble = n_estimators > 1
     def load(self, override_kwargs: Optional[Dict[str, Any]] = None) -> "SimplePFNSklearn":
         """Load config (if provided), apply optional override_kwargs, build the model and load checkpoint (if provided).
 
@@ -351,20 +673,61 @@ class SimplePFNSklearn:
         return self
 
     def fit(self, X: Any = None, y: Any = None, **kwargs) -> "SimplePFNSklearn":
-        """Placeholder fit to satisfy sklearn interface. Training should be done with the project's trainer.
+        """Fit ensemble preprocessors if ensemble is enabled. Otherwise placeholder.
 
-        If checkpoint was provided `load()` should have been called before `fit`.
+        Args:
+            X: Training features (N, F)
+            y: Training targets (N,)
+            
+        If n_estimators > 1, this fits the ensemble preprocessors on the training data.
+        If n_estimators == 1, this is a no-op placeholder (training done with project's trainer).
         """
-        # no-op: we don't implement training here
-        if self.verbose:
-            print("[SimplePFNSklearn] fit() is a no-op placeholder. Use the training scripts to train the model.")
+        if self.use_ensemble:
+            if X is None or y is None:
+                raise ValueError("fit() requires X and y when using ensemble (n_estimators > 1)")
+            
+            if self.verbose:
+                print(f"[SimplePFNSklearn] Fitting ensemble preprocessors with {self.n_estimators} variants...")
+            
+            # Create and fit ensemble preprocessor
+            self.ensemble_preprocessor = EnsemblePreprocessor(
+                n_estimators=self.n_estimators,
+                norm_methods=self.norm_methods,
+                outlier_strategies=self.outlier_strategies,
+                feat_shuffle_method=self.feat_shuffle_method,
+                random_state=self.random_state
+            )
+            
+            # Convert to numpy
+            if hasattr(X, "values"):
+                X = X.values
+            if hasattr(y, "values"):
+                y = y.values
+            
+            X = np.asarray(X, dtype=np.float32)
+            y = np.asarray(y, dtype=np.float32)
+            
+            self.ensemble_preprocessor.fit(X, y)
+            
+            if self.verbose:
+                print(f"[SimplePFNSklearn] Ensemble preprocessors fitted successfully")
+                print(f"[SimplePFNSklearn] Using {len(self.ensemble_preprocessor.ensemble_configs_)} unique (normalization, outlier) combinations:")
+                for (norm_method, outlier_strategy), patterns in self.ensemble_preprocessor.ensemble_configs_.items():
+                    print(f"  - {norm_method} normalization + {outlier_strategy} outlier removal: {len(patterns)} variants")
+        else:
+            if self.verbose:
+                print("[SimplePFNSklearn] fit() is a no-op placeholder (n_estimators=1). Use training scripts to train the model.")
+        
         return self
 
     def predict(self, X_train: Any, y_train: Any, X_test: Any, 
                 prediction_type: Literal["point", "mode", "mean", "sample"] = "mean",
-                num_samples: int = 100) -> np.ndarray:
+                num_samples: int = 100,
+                aggregate: Literal["mean", "median", "none"] = "mean") -> np.ndarray:
         """
         Run the PFN forward pass and return predictions as a numpy array.
+        
+        With ensemble (n_estimators > 1), creates multiple preprocessed variants and aggregates predictions.
 
         Args:
             X_train, y_train, X_test: Input data (numpy arrays or torch tensors)
@@ -381,19 +744,24 @@ class SimplePFNSklearn:
                 - "mean": Posterior mean (requires BarDistribution)
                 - "sample": Samples from posterior (requires BarDistribution)
             num_samples: Number of samples to return when prediction_type="sample"
+            aggregate: How to aggregate ensemble predictions
+                - "mean": Average predictions across ensemble members (default)
+                - "median": Median of predictions across ensemble members
+                - "none": Return all predictions as array (B, n_estimators, M) or (n_estimators, M)
 
         Returns:
             numpy array of predictions:
             - For "point", "mode", "mean": shape (B, M) or (M,) for batch size 1
             - For "sample": shape (B, num_samples, M) or (num_samples, M) for batch size 1
+            - For aggregate="none": adds ensemble dimension
             
         Raises:
             ValueError: If input shapes are inconsistent or incompatible with training format
-            RuntimeError: If model not loaded or BarDistribution not fitted when required
+            RuntimeError: If model not loaded or ensemble not fitted when required
         """
         if self.model is None:
             raise RuntimeError("Model not built. Call load() before predict().")
-
+        
         # Validate prediction type
         if prediction_type in ["mode", "mean", "sample"] and not self.use_bar_distribution:
             raise ValueError(f"prediction_type='{prediction_type}' requires BarDistribution to be enabled in config.")
@@ -401,17 +769,44 @@ class SimplePFNSklearn:
         if self.use_bar_distribution and self.bar_distribution is None:
             raise RuntimeError("BarDistribution enabled but not fitted. Call fit_bar_distribution() first.")
 
-        # convert to numpy if pandas
+        # Convert to numpy if pandas
         if hasattr(X_train, "values"):
             X_train = X_train.values
         if hasattr(X_test, "values"):
             X_test = X_test.values
         if hasattr(y_train, "values"):
             y_train = y_train.values
-
-        Xtr = torch.as_tensor(np.asarray(X_train), dtype=torch.float32)
-        Xte = torch.as_tensor(np.asarray(X_test), dtype=torch.float32)
-        ytr = torch.as_tensor(np.asarray(y_train), dtype=torch.float32)
+        
+        X_train_orig = np.asarray(X_train, dtype=np.float32)
+        X_test_orig = np.asarray(X_test, dtype=np.float32)
+        y_train_orig = np.asarray(y_train, dtype=np.float32)
+        
+        # Auto-fit ensemble preprocessor if needed
+        if self.use_ensemble and self.ensemble_preprocessor is None:
+            if self.verbose:
+                print(f"[SimplePFNSklearn] Auto-fitting ensemble preprocessors with {self.n_estimators} variants...")
+            self.fit(X_train_orig, y_train_orig)
+        
+        # Handle ensemble predictions
+        if self.use_ensemble:
+            return self._predict_ensemble(
+                X_train_orig, y_train_orig, X_test_orig,
+                prediction_type, num_samples, aggregate
+            )
+        
+        # Single model prediction (original implementation)
+        return self._predict_single(
+            X_train_orig, y_train_orig, X_test_orig,
+            prediction_type, num_samples
+        )
+    
+    def _predict_single(self, X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray,
+                       prediction_type: str, num_samples: int) -> np.ndarray:
+        """Make predictions with a single model (no ensemble)."""
+        
+        Xtr = torch.as_tensor(X_train, dtype=torch.float32)
+        Xte = torch.as_tensor(X_test, dtype=torch.float32)
+        ytr = torch.as_tensor(y_train, dtype=torch.float32)
 
         # normalize dims to (B, N, F) and (B, N) for y
         if Xtr.ndim == 2:
@@ -502,6 +897,105 @@ class SimplePFNSklearn:
             return result[0]  # Return (num_samples, M) for single batch
         
         return result
+    
+    def _predict_ensemble(self, X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray,
+                         prediction_type: str, num_samples: int, aggregate: str) -> np.ndarray:
+        """Make predictions with ensemble and aggregate results.
+        
+        Efficiently batches all ensemble variants together in a single model forward pass.
+        """
+        
+        if self.verbose:
+            print(f"[SimplePFNSklearn] Making ensemble predictions with {self.n_estimators} variants...")
+        
+        # Generate ensemble variants
+        ensemble_data = self.ensemble_preprocessor.transform(X_train, y_train, X_test)
+        
+        # Stack all variants into a single batch for efficient processing
+        X_train_batch = []
+        y_train_batch = []
+        X_test_batch = []
+        
+        for variant_idx in range(self.n_estimators):
+            X_train_var, y_train_var, X_test_var = ensemble_data[variant_idx]
+            X_train_batch.append(X_train_var)
+            y_train_batch.append(y_train_var)
+            X_test_batch.append(X_test_var)
+        
+        # Stack into single batch: each becomes (n_estimators, N, F) or (n_estimators, M, F)
+        X_train_batch = np.stack(X_train_batch, axis=0)  # (n_estimators, N, F)
+        y_train_batch = np.stack(y_train_batch, axis=0)  # (n_estimators, N)
+        X_test_batch = np.stack(X_test_batch, axis=0)    # (n_estimators, M, F)
+        
+        if self.verbose:
+            print(f"[SimplePFNSklearn] Batched ensemble data: X_train{X_train_batch.shape}, "
+                  f"y_train{y_train_batch.shape}, X_test{X_test_batch.shape}")
+        
+        # Convert to tensors
+        Xtr = torch.as_tensor(X_train_batch, dtype=torch.float32)
+        Xte = torch.as_tensor(X_test_batch, dtype=torch.float32)
+        ytr = torch.as_tensor(y_train_batch, dtype=torch.float32)
+        
+        # Ensure y_train has shape (B, N, 1) as expected by model
+        if ytr.ndim == 2:
+            ytr = ytr.unsqueeze(-1)  # (B, N) -> (B, N, 1)
+        
+        # Move to device
+        Xtr = Xtr.to(self.device)
+        Xte = Xte.to(self.device)
+        ytr = ytr.to(self.device)
+        
+        # Shape validation
+        B, N, F = Xtr.shape
+        _, M, F2 = Xte.shape
+        B_y, N_y, F_y = ytr.shape
+        
+        if F != F2:
+            raise ValueError(f"X_train and X_test must have same number of features: {F} vs {F2}")
+        if F != self.model.num_features:
+            raise ValueError(f"Model expects num_features={self.model.num_features}, but got input with {F} features")
+        if B != B_y:
+            raise ValueError(f"X_train and y_train must have same batch size: {B} vs {B_y}")
+        if N != N_y:
+            raise ValueError(f"X_train and y_train must have same number of training samples: {N} vs {N_y}")
+        if F_y != 1:
+            raise ValueError(f"y_train must have shape (B, N, 1), got shape {ytr.shape}")
+        
+        # Run model once with all ensemble variants batched together
+        self.model.eval()
+        with torch.no_grad():
+            out = self.model(Xtr, ytr, Xte)
+            raw_predictions = out["predictions"]  # Shape: (n_estimators, M, output_dim)
+        
+        # Process predictions based on type and BarDistribution usage
+        if self.use_bar_distribution:
+            # Model outputs BarDistribution parameters
+            if prediction_type in ["point", "mode"]:
+                all_predictions = self.bar_distribution.mode(raw_predictions).cpu().numpy()  # (n_estimators, M)
+            elif prediction_type == "mean":
+                all_predictions = self.bar_distribution.mean(raw_predictions).cpu().numpy()  # (n_estimators, M)
+            elif prediction_type == "sample":
+                all_predictions = self.bar_distribution.sample(raw_predictions, num_samples).cpu().numpy()  # (n_estimators, num_samples, M)
+            else:
+                raise ValueError(f"Unknown prediction_type: {prediction_type}")
+        else:
+            # Standard MSE model output
+            if prediction_type != "point":
+                raise ValueError(f"prediction_type='{prediction_type}' not supported without BarDistribution")
+            all_predictions = raw_predictions.cpu().numpy()  # (n_estimators, M)
+        
+        if self.verbose:
+            print(f"[SimplePFNSklearn] Ensemble predictions shape: {all_predictions.shape}")
+        
+        # Aggregate predictions
+        if aggregate == "none":
+            return all_predictions
+        elif aggregate == "mean":
+            return np.mean(all_predictions, axis=0)
+        elif aggregate == "median":
+            return np.median(all_predictions, axis=0)
+        else:
+            raise ValueError(f"Unknown aggregate method: {aggregate}")
 
 
 if __name__ == "__main__":
@@ -512,7 +1006,9 @@ if __name__ == "__main__":
     cfg_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/configs/early_test.yaml"
     ckpt_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/early_test1_32bs/step_100000.pt"
 
-    print("[SimplePFNSklearn] Building wrapper with config and checkpoint...")
+    print("\n" + "="*80)
+    print("TEST 1: Single Model (no ensemble)")
+    print("="*80)
     w = SimplePFNSklearn(config_path=cfg_path, checkpoint_path=ckpt_path, device="cpu", verbose=True)
     w.load()
     print("[SimplePFNSklearn] Model built. model_kwargs:", w.model_kwargs)
@@ -558,4 +1054,50 @@ if __name__ == "__main__":
         print("[SimplePFNSklearn] Point prediction shape:", preds.shape)
         print("[SimplePFNSklearn] Point predictions:", preds)
 
-    print("[SimplePFNSklearn] Test completed successfully!")
+    print("[SimplePFNSklearn] Test 1 completed successfully!")
+    
+    # TEST 2: Ensemble
+    print("\n" + "="*80)
+    print("TEST 2: Ensemble Model (n_estimators=5)")
+    print("="*80)
+    w_ensemble = SimplePFNSklearn(
+        config_path=cfg_path, 
+        checkpoint_path=ckpt_path, 
+        device="cpu", 
+        verbose=True,
+        n_estimators=5,
+        norm_methods=["none", "power"],
+        feat_shuffle_method="random",
+        random_state=42
+    )
+    w_ensemble.load()
+    
+    # Fit ensemble preprocessors
+    print("\n[SimplePFNSklearn] Fitting ensemble preprocessors...")
+    w_ensemble.fit(Xtr, ytr)
+    
+    # Make ensemble predictions
+    print("\n[SimplePFNSklearn] Making ensemble predictions...")
+    
+    if w_ensemble.use_bar_distribution:
+        # Need to fit BarDistribution first
+        w_ensemble.fit_bar_distribution(train_datasets, train_targets, test_datasets, test_targets, max_batches=5)
+        
+        # Test different aggregation methods
+        mean_preds_ens = w_ensemble.predict(Xtr, ytr, Xte, prediction_type="mode", aggregate="mean")
+        print(f"Ensemble mean predictions shape: {mean_preds_ens.shape}, values: {mean_preds_ens}")
+        
+        median_preds_ens = w_ensemble.predict(Xtr, ytr, Xte, prediction_type="mode", aggregate="median")
+        print(f"Ensemble median predictions shape: {median_preds_ens.shape}, values: {median_preds_ens}")
+        
+        all_preds_ens = w_ensemble.predict(Xtr, ytr, Xte, prediction_type="mode", aggregate="none")
+        print(f"All ensemble predictions shape: {all_preds_ens.shape}")
+        print(f"Individual predictions:\n{all_preds_ens}")
+    else:
+        preds_ens = w_ensemble.predict(Xtr, ytr, Xte, prediction_type="point", aggregate="mean")
+        print(f"Ensemble predictions shape: {preds_ens.shape}, values: {preds_ens}")
+
+    print("\n[SimplePFNSklearn] Test 2 completed successfully!")
+    print("\n" + "="*80)
+    print("ALL TESTS COMPLETED SUCCESSFULLY!")
+    print("="*80)

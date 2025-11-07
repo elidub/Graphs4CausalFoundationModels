@@ -95,6 +95,10 @@ def main(args):
         repeats=int(getattr(args, "repeats", 1) or 1),
         baseline_set=str(getattr(args, "baseline_set", "basic") or "basic"),
         bootstrap_samples=int(getattr(args, "bootstrap_samples", 1000) or 1000),
+        # SimplePFN ensemble parameters
+        n_estimators=int(getattr(args, "n_estimators", 1) or 1),
+        norm_methods=getattr(args, "norm_methods", None),
+        outlier_strategies=getattr(args, "outlier_strategies", None),
     )
 
     # Print summary metrics robustly (ignore summary row if present, handle missing columns)
@@ -143,10 +147,10 @@ def main(args):
 if __name__ == "__main__":
     # Configuration (ALL_CAPS) - edit these constants instead of using CLI args
     TASKS = ""  # comma-separated task ids, e.g. "361072,361073" or empty to use defaults
-    MAX_TASKS = 3
+    MAX_TASKS = 30
     DATA_DIR = "data_cache"
     CONFIG = str(repo_root / "experiments/FirstTests/configs/early_test2.yaml")
-    CHECKPOINT = "/Users/arikreuter/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16549228/final_model_with_bardist.pt"  # Leave empty to auto-detect or skip PFN
+    CHECKPOINT = "/Users/arikreuter/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16561948/final_model_with_bardist.pt"  # Leave empty to auto-detect or skip PFN
     DEVICE = "cpu"
     OUTPUT = "benchmark_results.csv"  # Process ID will be automatically added: benchmark_results_pid12345.csv
     NO_TARGET_ENCODING = True
@@ -159,14 +163,19 @@ if __name__ == "__main__":
     N_FEATURES = 19
     MAX_N_FEATURES = 19
     N_TRAIN = 100
-    MAX_N_TRAIN = 200
+    MAX_N_TRAIN = 100
     N_TEST = 100
     MAX_N_TEST = 100
     PREFER_NUMERIC = False
     ONLY_NUMERIC = False
-    REPEATS = 1
-    BASELINE_SET = "basic"  
-    BOOTSTRAP_SAMPLES = 1
+    REPEATS = 20
+    BASELINE_SET = "basic"  # 'basic' or 'extended'
+    BOOTSTRAP_SAMPLES = 10000
+    
+    # SimplePFN Ensemble parameters
+    N_ESTIMATORS = 10  # Number of ensemble members (1 = no ensemble)
+    NORM_METHODS = ["none", "power", "quantile", "robust"]  # Normalization methods for ensemble
+    OUTLIER_STRATEGIES = ["none", "moderate", "aggressive"]  # Outlier removal strategies
 
     args = SimpleNamespace(
         tasks=TASKS,
@@ -190,6 +199,10 @@ if __name__ == "__main__":
         repeats=int(REPEATS) if REPEATS else 1,
         baseline_set=BASELINE_SET,
         bootstrap_samples=int(BOOTSTRAP_SAMPLES) if BOOTSTRAP_SAMPLES else 1000,
+        # SimplePFN ensemble parameters
+        n_estimators=int(N_ESTIMATORS) if N_ESTIMATORS else 1,
+        norm_methods=NORM_METHODS,
+        outlier_strategies=OUTLIER_STRATEGIES,
     )
 
     main(args)
