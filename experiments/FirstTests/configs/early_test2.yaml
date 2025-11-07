@@ -34,10 +34,11 @@ scm_config:
       choices:
       - 0.0
         #- 0.0
-        #- 0.1
+      - 0.1
         #- 0.2
       probabilities:
-      - 1.0
+      - 0.9
+      - 0.1
         #- 0.8
         #- 0.1
         #- 0.1
@@ -70,9 +71,9 @@ scm_config:
         - 12
         - 16
       probabilities:
-        - 0.9
-        - 0.05
-        - 0.05
+        - 0.8
+        - 0.1
+        - 0.1
         - 0.0
         - 0.0
         - 0.0
@@ -84,8 +85,8 @@ scm_config:
         - "pre"
         - "post"
       probabilities:
-        - 1.0
-        - 0.0
+        - 0.9
+        - 0.1
       
   xgb_node_shape:
     value: [1]
@@ -122,8 +123,8 @@ scm_config:
         - true
         - false
       probabilities:
-        - 1.0
-        - 0.0
+        - 0.1
+        - 0.9
   random_additive_std:
     value: true
   exo_std_distribution:
@@ -148,12 +149,12 @@ scm_config:
     distribution: "lognormal"
     distribution_parameters:
       mean: 1.0
-      std: 0.1
+      std: 1.0
   exo_std_std:
     distribution: "uniform"
     distribution_parameters:
       low: 0.1
-      high: 0.11
+      high: 0.2
   endo_std_mean:
     distribution: "lognormal"
     distribution_parameters:
@@ -167,7 +168,7 @@ scm_config:
     distribution: "uniform"
     distribution_parameters:
       low: 0.1
-      high: 0.11
+      high: 0.2
   tabicl_noise_proportion:
     # Proportion of TabICL noise in the exogenous noise mixture
     # The remaining probability mass is uniformly distributed among
@@ -223,9 +224,9 @@ preprocessing_config:
         - 0.5 
         - 0.6
       probabilities:
-      - 0.99
-      - 0.01
-      - 0.0
+      - 0.95
+      - 0.025
+      - 0.025
       - 0.0
       - 0.0
       - 0.0
@@ -250,7 +251,7 @@ preprocessing_config:
   remove_outliers:
     value: true
   outlier_quantile:
-    value: 0.99
+    value: 0.95
   yeo_johnson:
     value: false
   random_seed:
