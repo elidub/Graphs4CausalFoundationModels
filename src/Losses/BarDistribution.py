@@ -258,7 +258,7 @@ class BarDistribution(PosteriorPredictive):
 
         pdf = self._pdf_from_pred(pred, y)  # (B,M), safely clipped inside
         logpdf = self._safe_log(pdf)
-        logpdf = torch.clamp(logpdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
+        logpdf = torch.clamp(logpdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max).to(dtype=logpdf.dtype)
         return logpdf.mean(dim=1)
 
     def mode(self, pred: Tensor) -> Tensor:
@@ -470,7 +470,8 @@ class BarDistribution(PosteriorPredictive):
             # log N = log_norm_const - log s - 0.5 z^2
             log_gauss = self._log_norm_const - torch.log(sL_sel) - 0.5 * z * z
             log_pdf = torch.log(torch.tensor(2.0, device=device, dtype=dtype)) + torch.log(pL[left_mask]) + log_gauss
-            pdf[left_mask] = torch.exp(torch.clamp(log_pdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max))
+            clamped_log = torch.clamp(log_pdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
+            pdf[left_mask] = torch.exp(clamped_log).to(dtype=pdf.dtype)
 
         # Right half-Gaussian
         if right_mask.any():
@@ -479,7 +480,8 @@ class BarDistribution(PosteriorPredictive):
             z = (yR - edges[-1]) / sR_sel  # nonnegative
             log_gauss = self._log_norm_const - torch.log(sR_sel) - 0.5 * z * z
             log_pdf = torch.log(torch.tensor(2.0, device=device, dtype=dtype)) + torch.log(pR[right_mask]) + log_gauss
-            pdf[right_mask] = torch.exp(torch.clamp(log_pdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max))
+            clamped_log = torch.clamp(log_pdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
+            pdf[right_mask] = torch.exp(clamped_log).to(dtype=pdf.dtype)
 
         # Bars (constant density within bar): f(y) = p_k / width_k
         if mid_mask.any():
