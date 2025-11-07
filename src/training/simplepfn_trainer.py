@@ -126,7 +126,7 @@ class SimplePFNTrainer:
         # Setup mixed precision training
         self.use_amp = use_amp and torch.cuda.is_available()  # Only enable if CUDA available
         if self.use_amp:
-            self.scaler = torch.cuda.amp.GradScaler()
+            self.scaler = torch.amp.GradScaler('cuda')
             print(f"Mixed precision training ENABLED (float16)")
         else:
             self.scaler = None

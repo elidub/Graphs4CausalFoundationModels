@@ -491,10 +491,12 @@ class BarDistribution(PosteriorPredictive):
             pBars_all = pBars[mid_mask]  # (num_mid, K)
             dens = pBars_all.gather(dim=-1, index=k.view(-1, 1)).squeeze(-1) / widths_k
             # Directly clamp density to avoid zeros/denorms
-            pdf[mid_mask] = torch.clamp(dens, min=self._tiny)
+            # Ensure result matches pdf dtype
+            clamped = torch.clamp(dens, min=self._tiny)
+            pdf[mid_mask] = clamped.to(dtype=pdf.dtype)
 
         # Final clamp for safety (to avoid log(0) upstream)
-        return torch.clamp(pdf, min=self._tiny)
+        return torch.clamp(pdf, min=self._tiny).to(dtype=pdf.dtype)
 
     # ------------------------- Convenience -------------------------
 
