@@ -72,6 +72,14 @@ class SimplePFNTrainer:
             self.eval_dataloaders = None
         self.eval_every = eval_every
         self.eval_batches = eval_batches
+        # Human-friendly names for eval sets (used in prints and metrics)
+        if self.eval_dataloaders is not None:
+            if len(self.eval_dataloaders) == 2:
+                self._eval_set_names = ["head", "tail"]
+            else:
+                self._eval_set_names = [f"set{i}" for i in range(len(self.eval_dataloaders))]
+        else:
+            self._eval_set_names = []
         
         # Model selection parameters
         self.enable_model_selection = enable_model_selection
@@ -161,6 +169,32 @@ class SimplePFNTrainer:
             'benchmark/r2_rf_median': float('nan'),
             'benchmark/r2_pfn_median': float('nan'),
         }
+        # Seed per-set and overall eval metric placeholders so keys exist from step 1
+        if self.eval_dataloaders is not None:
+            # Ensure names are defined
+            if not hasattr(self, '_eval_set_names') or len(self._eval_set_names) != len(self.eval_dataloaders):
+                if len(self.eval_dataloaders) == 2:
+                    self._eval_set_names = ["head", "tail"]
+                else:
+                    self._eval_set_names = [f"set{i}" for i in range(len(self.eval_dataloaders))]
+            # Overall placeholders (also mirror legacy top-level)
+            for k in [
+                'eval/overall/loss_mean','eval/overall/loss_median','eval/overall/loss_std','eval/overall/loss_iqr',
+                'eval/overall/mse_mean','eval/overall/mse_median','eval/overall/mse_std','eval/overall/mse_iqr',
+                'eval/overall/r2_mean','eval/overall/r2_median','eval/overall/r2_std','eval/overall/r2_iqr',
+                'eval/loss_mean','eval/loss_median','eval/loss_std','eval/loss_iqr',
+                'eval/mse_mean','eval/mse_median','eval/mse_std',
+                'eval/r2_mean','eval/r2_median','eval/r2_std',
+                'eval/num_batches','eval/num_samples']:
+                if k not in self._latest_eval_metrics:
+                    self._latest_eval_metrics[k] = float('nan') if not k.endswith(('num_batches','num_samples')) else 0
+            # Per-set placeholders
+            per_suffixes = ['loss_mean','loss_median','loss_std','loss_iqr','mse_mean','mse_median','mse_std','mse_iqr','r2_mean','r2_median','r2_std','r2_iqr','num_batches']
+            for name in self._eval_set_names:
+                for suf in per_suffixes:
+                    key = f'eval/{name}/{suf}'
+                    if key not in self._latest_eval_metrics:
+                        self._latest_eval_metrics[key] = 0 if suf == 'num_batches' else float('nan')
         # Cache for latest observed (t, alpha) from batch for logging
         self._latest_schedule_info = {
             'train/t0': float('nan'),
@@ -570,11 +604,14 @@ class SimplePFNTrainer:
         num_sets = len(self.eval_dataloaders)
         print(f"Running evaluation on {self.eval_batches} batches per eval set (num_sets={num_sets})...")
 
-        # Name the sets for clearer logging (prefer head/tail for two sets)
-        if num_sets == 2:
-            set_names = ["head", "tail"]
+        # Reuse stored names to ensure consistency across calls
+        if hasattr(self, '_eval_set_names') and len(self._eval_set_names) == num_sets:
+            set_names = self._eval_set_names
         else:
-            set_names = [f"set{i}" for i in range(num_sets)]
+            if num_sets == 2:
+                set_names = ["head", "tail"]
+            else:
+                set_names = [f"set{i}" for i in range(num_sets)]
 
         self.model.eval()
 
@@ -781,13 +818,25 @@ class SimplePFNTrainer:
         if self.enable_model_selection:
             self._update_best_model(metrics)
 
-        # Update cached eval metrics for per-step logging (use overall keys)
-        self._latest_eval_metrics['eval/mse_mean'] = metrics.get('eval/overall/mse_mean', float('nan'))
-        self._latest_eval_metrics['eval/mse_median'] = metrics.get('eval/overall/mse_median', float('nan'))
-        self._latest_eval_metrics['eval/mse_std'] = metrics.get('eval/overall/mse_std', float('nan'))
-        self._latest_eval_metrics['eval/r2_mean'] = metrics.get('eval/overall/r2_mean', float('nan'))
-        self._latest_eval_metrics['eval/r2_median'] = metrics.get('eval/overall/r2_median', float('nan'))
-        self._latest_eval_metrics['eval/r2_std'] = metrics.get('eval/overall/r2_std', float('nan'))
+        # Update cached eval metrics for per-step logging (include per-set & overall keys)
+        # Clear only keys related to eval to avoid stale per-set metrics from different counts
+        for k in list(self._latest_eval_metrics.keys()):
+            if k.startswith('eval/'):
+                self._latest_eval_metrics[k] = float('nan')
+        # Overall
+        for k in [
+            'eval/overall/mse_mean','eval/overall/mse_median','eval/overall/mse_std',
+            'eval/overall/r2_mean','eval/overall/r2_median','eval/overall/r2_std',
+            'eval/mse_mean','eval/mse_median','eval/mse_std',
+            'eval/r2_mean','eval/r2_median','eval/r2_std']:
+            if k in metrics:
+                self._latest_eval_metrics[k] = metrics[k]
+        # Per sets (mse/r2 + loss means)
+        for name in set_names:
+            for suffix in ['loss_mean','loss_median','loss_std','mse_mean','mse_median','mse_std','r2_mean','r2_median','r2_std']:
+                key = f'eval/{name}/{suffix}'
+                if key in metrics:
+                    self._latest_eval_metrics[key] = metrics[key]
 
         return metrics
 
@@ -815,6 +864,23 @@ class SimplePFNTrainer:
         else:
             print(f"Using learning rate scheduler: disabled (constant LR)")
             
+        # Print evaluation loaders summary if available
+        if self.eval_dataloaders is not None and len(self.eval_dataloaders) > 0:
+            print("\nEVALUATION LOADERS:")
+            print(f"   Number of eval sets: {len(self.eval_dataloaders)}")
+            for i, loader in enumerate(self.eval_dataloaders):
+                name = self._eval_set_names[i] if i < len(self._eval_set_names) else f"set{i}"
+                try:
+                    ds_len = len(getattr(loader, 'dataset', []))
+                except Exception:
+                    ds_len = -1
+                try:
+                    num_batches = len(loader)
+                except Exception:
+                    num_batches = -1
+                bs = getattr(loader, 'batch_size', None)
+                print(f"   - {name}: dataset_size={ds_len}, batch_size={bs}, total_batches={num_batches}, using_up_to_batches={self.eval_batches}")
+
         # Start total timing
         total_start_time = time.time()
         batch_times = []
