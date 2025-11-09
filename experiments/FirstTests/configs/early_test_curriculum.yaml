@@ -12,7 +12,7 @@
 experiment_name: "early_test2"
 description: "First pipeline test. debug scale with fixed seeds for reproducibility"
 
-interpolation_function: "linear" #function to interpolate between t0 and t1 configs
+interpolation_function: "sigmoid" # sigmoid schedule with 10% head/tail clamp
 
 scm_config_t0:
   num_nodes:

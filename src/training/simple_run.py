@@ -12,9 +12,10 @@ import os
 import yaml
 import json
 import argparse
+import time
 import traceback
 from pathlib import Path
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from typing import Callable
 
 # Add src directory to path for imports
@@ -244,21 +245,45 @@ def main():
         else:
             print(f"   Using detected num_features: {num_features}")
         
-        # Create evaluation dataloader if enabled
-        eval_dataloader = None
+        # Create evaluation dataloaders (head & tail) if enabled
+        eval_dataloaders = None
         eval_enabled = training_config.get("eval_enabled", False)
         eval_every = training_config.get("eval_every", 0)
         
         if eval_enabled and eval_every > 0:
             print(f"\nEVALUATION SETUP:")
             eval_batches = training_config.get("eval_batches", 10)
-            print(f"   Using training dataloader for evaluation")
-            print(f"   Evaluation batches: {eval_batches}")
-            eval_dataloader = dataloader  # Use the same training dataloader
-            print(f"   Evaluation setup complete")
+            n_eval_requested = eval_batches * batch_size
+            total_len = len(dataset)
+            if n_eval_requested <= 0:
+                print("   Warning: eval_batches * batch_size <= 0; disabling evaluation")
+            else:
+                max_per_subset = max(1, min(n_eval_requested, total_len))
+                if max_per_subset * 2 > total_len:
+                    print("   Note: Requested eval slice size causes overlap (dataset too small). Proceeding with overlap.")
+                head_end = min(max_per_subset, total_len)
+                tail_start = max(0, total_len - max_per_subset)
+                head_indices = list(range(0, head_end))
+                tail_indices = list(range(tail_start, total_len))
+                t0 = time.time()
+                head_subset = Subset(dataset, head_indices)
+                tail_subset = Subset(dataset, tail_indices)
+                head_loader = DataLoader(head_subset, batch_size=batch_size, shuffle=False, num_workers=0)
+                tail_loader = DataLoader(tail_subset, batch_size=batch_size, shuffle=False, num_workers=0)
+                build_time = time.time() - t0
+                eval_dataloaders = [head_loader, tail_loader]
+                print(f"   Created 2 evaluation dataloaders (head & tail)")
+                print(f"   Head subset size: {len(head_subset)} (indices 0..{head_end-1})")
+                print(f"   Tail subset size: {len(tail_subset)} (indices {tail_start}..{total_len-1})")
+                print(f"   Batches per subset (requested): {eval_batches} (will cap by subset length)")
+                print(f"   Eval build time: {build_time:.4f}s")
+                if wandb_run:
+                    wandb_run.log({'eval/build_time': build_time, 'eval/head_size': len(head_subset), 'eval/tail_size': len(tail_subset)})
+                print(f"   Evaluation setup complete")
         else:
             print(f"\nEVALUATION: Disabled (eval_enabled={eval_enabled}, eval_every={eval_every})")
 
+        print(f"Setting up evaluation done in ")
             
         # Get device first (needed for BarDistribution)
         device = get_device(training_config.get("device", "cpu"))
@@ -396,7 +421,7 @@ def main():
             save_every=save_every,
             run_name=run_name,
             bar_distribution=bar_distribution,  # Pass BarDistribution for probabilistic training
-            eval_dataloader=eval_dataloader,  # Pass evaluation dataloader
+            eval_dataloaders=eval_dataloaders,  # Pass evaluation dataloaders list
             eval_every=training_config.get("eval_every", 0),  # Evaluation frequency
             eval_batches=training_config.get("eval_batches", 10),  # Number of eval batches
             # Model selection parameters
@@ -420,8 +445,8 @@ def main():
             print(f"   Gradient clip value: {gradient_clip_val}")
         print(f"   Wandb logging: {'enabled' if wandb_run else 'disabled'}")
         print(f"   Model checkpoints: {'enabled' if save_dir else 'disabled'}")
-        print(f"   Evaluation: {'enabled' if eval_dataloader else 'disabled'}")
-        if eval_dataloader:
+        print(f"   Evaluation: {'enabled' if eval_dataloaders else 'disabled'}")
+        if eval_dataloaders:
             print(f"   Eval frequency: every {training_config.get('eval_every', 0)} steps")
             print(f"   Eval batches: {training_config.get('eval_batches', 10)}")
         print(f"   Model selection: {'enabled' if training_config.get('model_selection_enabled', False) else 'disabled'}")

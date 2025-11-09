@@ -31,8 +31,9 @@ class SimplePFNTrainer:
         save_dir: str = None,
         save_every: int = 0,
         run_name: str = None,
-        bar_distribution: Optional[object] = None,  # BarDistribution for probabilistic training
-        eval_dataloader: Optional[DataLoader] = None,  # Evaluation dataloader (can be same as training)
+    bar_distribution: Optional[object] = None,  # BarDistribution for probabilistic training
+    eval_dataloader: Optional[DataLoader] = None,  # Evaluation dataloader (legacy single)
+    eval_dataloaders: Optional[list] = None,       # New: list of evaluation dataloaders (e.g., head & tail)
         eval_every: int = 0,  # Evaluate every N steps (0 to disable)
         eval_batches: int = 10,  # Number of batches to use for evaluation
         # Model selection parameters
@@ -62,8 +63,13 @@ class SimplePFNTrainer:
         self.gradient_clip_val = gradient_clip_val  # Store gradient clipping value
         self.schedule_name = schedule_name or "none"
         
-        # Evaluation parameters
-        self.eval_dataloader = eval_dataloader
+        # Evaluation parameters (support multiple eval dataloaders)
+        if eval_dataloaders is not None:
+            self.eval_dataloaders = eval_dataloaders
+        elif eval_dataloader is not None:
+            self.eval_dataloaders = [eval_dataloader]
+        else:
+            self.eval_dataloaders = None
         self.eval_every = eval_every
         self.eval_batches = eval_batches
         
@@ -557,11 +563,12 @@ class SimplePFNTrainer:
             - mean and median R²
             - IQR and standard deviation for all metrics
         """
-        if self.eval_dataloader is None:
-            print("Warning: No evaluation dataloader provided, skipping evaluation")
+        if self.eval_dataloaders is None:
+            print("Warning: No evaluation dataloaders provided, skipping evaluation")
             return {}
             
-        print(f"Running evaluation on {self.eval_batches} batches...")
+        num_sets = len(self.eval_dataloaders)
+        print(f"Running evaluation on {self.eval_batches} batches per eval set (num_sets={num_sets})...")
         
         self.model.eval()
         eval_losses = []
@@ -569,11 +576,12 @@ class SimplePFNTrainer:
         eval_r2s = []
         
         with torch.no_grad():
-            for batch_idx, batch in enumerate(self.eval_dataloader):
-                if batch_idx >= self.eval_batches:
-                    break
+            for _loader in self.eval_dataloaders:
+                for batch_idx, batch in enumerate(_loader):
+                    if batch_idx >= self.eval_batches:
+                        break
                     
-                X_train, y_train, X_test, y_test = self._process_batch(batch)
+                    X_train, y_train, X_test, y_test = self._process_batch(batch)
                 
                 # Forward pass
                 output = self.model(X_train, y_train, X_test)
@@ -895,7 +903,7 @@ class SimplePFNTrainer:
                 self.save_model()
                 
             # Run evaluation if requested
-            if (self.eval_dataloader is not None and 
+            if (self.eval_dataloaders is not None and 
                 self.eval_every > 0 and 
                 self.global_step % self.eval_every == 0):
                 
@@ -923,7 +931,7 @@ class SimplePFNTrainer:
                 # If evaluation is disabled but model selection is enabled,
                 # update best model based on training loss
                 if (self.enable_model_selection and 
-                    self.eval_dataloader is None and 
+                    self.eval_dataloaders is None and 
                     self.global_step % max(1, self.max_steps // 20) == 0):  # Check every 5% of training
                     self._update_best_model({}, train_loss=loss.item())
         

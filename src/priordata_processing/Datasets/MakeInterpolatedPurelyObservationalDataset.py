@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Dict, Any, Callable, Optional
+import math
 
 import torch
 import torch.distributions as dist
@@ -102,7 +103,7 @@ class MakeInterpolatedPurelyObservationalDataset:
         preprocessing_config_t1: Dict[str, Any],
         dataset_config_t0: Dict[str, Any],
         dataset_config_t1: Dict[str, Any],
-        interpolation_function: str = "linear",
+        interpolation_function: str = "sigmoid",
         seed: Optional[int] = None,
     ) -> None:
         self.scm_config_t0 = scm_config_t0
@@ -367,7 +368,7 @@ class _InterpolatedCurriculumDataset(CurriculumPurelyObservationalDataset):
         self.max_feat_sampler = max_feat_sampler
         self.size = size
         self.seed = base_seed
-        self.interp = interpolation_function or "linear"
+        self.interp = interpolation_function or "sigmoid"
 
     def __len__(self):
         return self.size
@@ -378,7 +379,7 @@ class _InterpolatedCurriculumDataset(CurriculumPurelyObservationalDataset):
         return float(idx) / float(self.size - 1)
 
     def _alpha(self, t: float) -> float:
-        s = (self.interp or "linear").strip().lower()
+        s = (self.interp or "sigmoid").strip().lower()
         if s.endswith('.'):
             s = s[:-1]
         if s == "linear":
@@ -399,8 +400,38 @@ class _InterpolatedCurriculumDataset(CurriculumPurelyObservationalDataset):
                 except ValueError:
                     p = 1.0
             return float(max(0.0, min(1.0, p)))
+        if s.startswith("sigmoid"):
+            # New default: slow start, slow end; clamp first/last 10%
+            if t <= 0.1:
+                return 0.0
+            if t >= 0.9:
+                return 1.0
+            # Normalize t to [0,1] within (0.1, 0.9)
+            x = (t - 0.1) / 0.8
+            # Sigmoid centered at 0.5 with moderate slope (k)
+            k = 8.0
+            z = k * (x - 0.5)
+            raw = 1.0 / (1.0 + math.exp(-z))
+            low = 1.0 / (1.0 + math.exp(k * 0.5 * 1.0))   # sigma(-k/2)
+            high = 1.0 / (1.0 + math.exp(-k * 0.5 * 1.0)) # sigma(+k/2)
+            denom = (high - low) if (high - low) != 0.0 else 1.0
+            a = (raw - low) / denom
+            return float(max(0.0, min(1.0, a)))
         # default
-        return float(max(0.0, min(1.0, t)))
+        # Use sigmoid as safe default
+        if t <= 0.1:
+            return 0.0
+        if t >= 0.9:
+            return 1.0
+        x = (t - 0.1) / 0.8
+        k = 8.0
+        z = k * (x - 0.5)
+        raw = 1.0 / (1.0 + math.exp(-z))
+        low = 1.0 / (1.0 + math.exp(k * 0.5))
+        high = 1.0 / (1.0 + math.exp(-k * 0.5))
+        denom = (high - low) if (high - low) != 0.0 else 1.0
+        a = (raw - low) / denom
+        return float(max(0.0, min(1.0, a)))
 
     def __getitem__(self, idx: int):
         if idx < 0 or idx >= self.size:

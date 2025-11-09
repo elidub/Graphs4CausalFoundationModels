@@ -44,6 +44,7 @@ def load_and_modify_existing_config(config_path):
 
     config['model_config']['max_fit_batches'] = {'value': 10}
     config['training_config']['benchmark_final_fidelity'] = {'value': "low"}
+    config['training_config']['eval_every'] = {'value': 3}  # Smaller eval dataset
     
     # Reduce dataset size for speed
     #if 'dataset_config' in config:
