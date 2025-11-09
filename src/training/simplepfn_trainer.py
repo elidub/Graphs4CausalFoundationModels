@@ -569,172 +569,226 @@ class SimplePFNTrainer:
             
         num_sets = len(self.eval_dataloaders)
         print(f"Running evaluation on {self.eval_batches} batches per eval set (num_sets={num_sets})...")
-        
+
+        # Name the sets for clearer logging (prefer head/tail for two sets)
+        if num_sets == 2:
+            set_names = ["head", "tail"]
+        else:
+            set_names = [f"set{i}" for i in range(num_sets)]
+
         self.model.eval()
-        eval_losses = []
-        eval_mses = []
-        eval_r2s = []
-        
+
+        # Accumulate overall metrics across all sets
+        overall_losses = []
+        overall_mses = []
+        overall_r2s = []
+
+        metrics: Dict[str, float] = {}
+
         with torch.no_grad():
-            for _loader in self.eval_dataloaders:
+            for loader_idx, _loader in enumerate(self.eval_dataloaders):
+                set_name = set_names[loader_idx]
+                set_losses = []
+                set_mses = []
+                set_r2s = []
+
                 for batch_idx, batch in enumerate(_loader):
                     if batch_idx >= self.eval_batches:
                         break
-                    
+
                     X_train, y_train, X_test, y_test = self._process_batch(batch)
-                
-                # Forward pass
-                output = self.model(X_train, y_train, X_test)
-                
-                # Extract predictions
-                if isinstance(output, dict) and 'predictions' in output:
-                    predictions = output['predictions']
-                else:
-                    predictions = output
-                
-                # Compute loss (negative log likelihood)
-                if self.bar_distribution is not None:
-                    # BarDistribution loss
-                    log_prob = self.bar_distribution.average_log_prob(predictions, y_test)
-                    loss = -log_prob.mean()
-                    
-                    # For MSE and R² metrics, extract mean predictions from BarDistribution
-                    # predictions shape: (batch_size, n_test, K+4)
-                    # We need to get the mean of the distribution
-                    pred_mean = self.bar_distribution.mean(predictions)  # (batch_size, n_test)
-                    pred_np = pred_mean.cpu().numpy()
-                else:
-                    # MSE loss
-                    if len(predictions.shape) == 3 and predictions.shape[-1] == 1:
-                        predictions = predictions.squeeze(-1)
-                    loss = self.criterion(predictions, y_test)
-                    
-                    # Convert to numpy for sklearn metrics
-                    pred_np = predictions.cpu().numpy()
-                
-                # Check for NaN/infinite values and skip problematic batches
-                loss_value = loss.item()
-                y_test_np = y_test.cpu().numpy()
-                
-                # Check if loss is NaN or infinite
-                if not np.isfinite(loss_value):
-                    print(f"   Skipping batch {batch_idx}: loss contains NaN/inf (loss={loss_value})")
-                    continue
-                    
-                # Check if predictions contain NaN or infinite values
-                if not np.all(np.isfinite(pred_np)):
-                    nan_count = np.sum(~np.isfinite(pred_np))
-                    print(f"   Skipping batch {batch_idx}: predictions contain {nan_count} NaN/inf values")
-                    continue
-                    
-                # Check if targets contain NaN or infinite values
-                if not np.all(np.isfinite(y_test_np)):
-                    nan_count = np.sum(~np.isfinite(y_test_np))
-                    print(f"   Skipping batch {batch_idx}: targets contain {nan_count} NaN/inf values")
-                    continue
-                
-                # If we get here, the batch is valid
-                eval_losses.append(loss_value)
-                
-                # Compute metrics for each sample in the batch
-                batch_mses = []
-                batch_r2s = []
-                
-                for i in range(pred_np.shape[0]):
-                    # Double-check individual samples for safety
-                    if not (np.all(np.isfinite(pred_np[i])) and np.all(np.isfinite(y_test_np[i]))):
-                        continue  # Skip this sample if it has NaN/inf
-                    
-                    # MSE for this sample
-                    try:
-                        mse = mean_squared_error(y_test_np[i], pred_np[i])
-                        if np.isfinite(mse):
-                            batch_mses.append(mse)
-                    except (ValueError, RuntimeWarning):
-                        continue  # Skip if MSE computation fails
-                    
-                    # R² for this sample (handle case where y has no variance)
-                    try:
-                        r2 = r2_score(y_test_np[i], pred_np[i])
-                        if np.isfinite(r2):
-                            batch_r2s.append(r2)
-                    except (ValueError, RuntimeWarning):
-                        # R² is undefined when y has no variance or other issues
+
+                    # Forward pass
+                    output = self.model(X_train, y_train, X_test)
+
+                    # Extract predictions
+                    if isinstance(output, dict) and 'predictions' in output:
+                        predictions = output['predictions']
+                    else:
+                        predictions = output
+
+                    # Compute loss (negative log likelihood)
+                    if self.bar_distribution is not None:
+                        # BarDistribution loss
+                        log_prob = self.bar_distribution.average_log_prob(predictions, y_test)
+                        loss = -log_prob.mean()
+
+                        # For MSE and R² metrics, extract mean predictions from BarDistribution
+                        pred_mean = self.bar_distribution.mean(predictions)  # (batch_size, n_test)
+                        pred_np = pred_mean.cpu().numpy()
+                    else:
+                        # MSE loss
+                        if len(predictions.shape) == 3 and predictions.shape[-1] == 1:
+                            predictions = predictions.squeeze(-1)
+                        loss = self.criterion(predictions, y_test)
+
+                        # Convert to numpy for sklearn metrics
+                        pred_np = predictions.cpu().numpy()
+
+                    # Check for NaN/infinite values and skip problematic batches
+                    loss_value = loss.item()
+                    y_test_np = y_test.cpu().numpy()
+
+                    # Check if loss is NaN or infinite
+                    if not np.isfinite(loss_value):
+                        print(f"   [{set_name}] Skipping batch {batch_idx}: loss contains NaN/inf (loss={loss_value})")
                         continue
-                
-                eval_mses.extend(batch_mses)
-                eval_r2s.extend(batch_r2s)
-        
+
+                    # Check if predictions contain NaN or infinite values
+                    if not np.all(np.isfinite(pred_np)):
+                        nan_count = np.sum(~np.isfinite(pred_np))
+                        print(f"   [{set_name}] Skipping batch {batch_idx}: predictions contain {nan_count} NaN/inf values")
+                        continue
+
+                    # Check if targets contain NaN or infinite values
+                    if not np.all(np.isfinite(y_test_np)):
+                        nan_count = np.sum(~np.isfinite(y_test_np))
+                        print(f"   [{set_name}] Skipping batch {batch_idx}: targets contain {nan_count} NaN/inf values")
+                        continue
+
+                    # If we get here, the batch is valid
+                    set_losses.append(loss_value)
+
+                    # Compute metrics for each sample in the batch
+                    for i in range(pred_np.shape[0]):
+                        # Double-check individual samples for safety
+                        if not (np.all(np.isfinite(pred_np[i])) and np.all(np.isfinite(y_test_np[i]))):
+                            continue  # Skip this sample if it has NaN/inf
+
+                        # MSE for this sample
+                        try:
+                            mse = mean_squared_error(y_test_np[i], pred_np[i])
+                            if np.isfinite(mse):
+                                set_mses.append(mse)
+                        except (ValueError, RuntimeWarning):
+                            continue  # Skip if MSE computation fails
+
+                        # R² for this sample (handle case where y has no variance)
+                        try:
+                            r2 = r2_score(y_test_np[i], pred_np[i])
+                            if np.isfinite(r2):
+                                set_r2s.append(r2)
+                        except (ValueError, RuntimeWarning):
+                            # R² is undefined when y has no variance or other issues
+                            continue
+
+                # Aggregate per-set metrics
+                set_losses_np = np.array(set_losses)
+                set_mses_np = np.array(set_mses)
+                set_r2s_np = np.array(set_r2s)
+
+                # Contribute to overall aggregates
+                overall_losses.extend(list(set_losses_np))
+                overall_mses.extend(list(set_mses_np))
+                overall_r2s.extend(list(set_r2s_np))
+
+                # Compute per-set stats (prefix with eval/{set_name}/...)
+                if len(set_losses_np) == 0 and len(set_mses_np) == 0:
+                    print(f"Warning: No valid evaluation data collected for set '{set_name}'")
+                else:
+                    if len(set_losses_np) > 0:
+                        metrics[f'eval/{set_name}/loss_mean'] = float(np.mean(set_losses_np))
+                        metrics[f'eval/{set_name}/loss_median'] = float(np.median(set_losses_np))
+                        metrics[f'eval/{set_name}/loss_std'] = float(np.std(set_losses_np))
+                        metrics[f'eval/{set_name}/loss_iqr'] = float(np.percentile(set_losses_np, 75) - np.percentile(set_losses_np, 25))
+                        metrics[f'eval/{set_name}/num_batches'] = int(len(set_losses_np))
+                    else:
+                        metrics[f'eval/{set_name}/num_batches'] = 0
+
+                    if len(set_mses_np) > 0:
+                        metrics[f'eval/{set_name}/mse_mean'] = float(np.mean(set_mses_np))
+                        metrics[f'eval/{set_name}/mse_median'] = float(np.median(set_mses_np))
+                        metrics[f'eval/{set_name}/mse_std'] = float(np.std(set_mses_np))
+                        metrics[f'eval/{set_name}/mse_iqr'] = float(np.percentile(set_mses_np, 75) - np.percentile(set_mses_np, 25))
+                    if len(set_r2s_np) > 0:
+                        metrics[f'eval/{set_name}/r2_mean'] = float(np.mean(set_r2s_np))
+                        metrics[f'eval/{set_name}/r2_median'] = float(np.median(set_r2s_np))
+                        metrics[f'eval/{set_name}/r2_std'] = float(np.std(set_r2s_np))
+                        metrics[f'eval/{set_name}/r2_iqr'] = float(np.percentile(set_r2s_np, 75) - np.percentile(set_r2s_np, 25))
+
         self.model.train()  # Return to training mode
-        
-        # Convert to numpy arrays for statistics
-        eval_losses = np.array(eval_losses)
-        eval_mses = np.array(eval_mses)
-        eval_r2s = np.array(eval_r2s)
-        
-        # Check if we have any valid data
-        if len(eval_losses) == 0:
-            print("Warning: No valid evaluation data collected (all batches contained NaN/inf)")
+
+        # Overall aggregation across all sets
+        overall_losses_np = np.array(overall_losses)
+        overall_mses_np = np.array(overall_mses)
+        overall_r2s_np = np.array(overall_r2s)
+
+        if len(overall_losses_np) == 0:
+            print("Warning: No valid evaluation data collected (all sets contained NaN/inf)")
             return {}
-        
-        if len(eval_mses) == 0:
-            print("Warning: No valid MSE/R² samples collected")
-            # Return only loss metrics
-            metrics = {
-                'eval/loss_mean': float(np.mean(eval_losses)),
-                'eval/loss_median': float(np.median(eval_losses)),
-                'eval/loss_std': float(np.std(eval_losses)),
-                'eval/loss_iqr': float(np.percentile(eval_losses, 75) - np.percentile(eval_losses, 25)),
-                'eval/num_batches': len(eval_losses),
-                'eval/num_samples': 0
-            }
-        else:
-            # Compute comprehensive statistics
-            metrics = {
-                # Loss (negative log likelihood)
-                'eval/loss_mean': float(np.mean(eval_losses)),
-                'eval/loss_median': float(np.median(eval_losses)),
-                'eval/loss_std': float(np.std(eval_losses)),
-                'eval/loss_iqr': float(np.percentile(eval_losses, 75) - np.percentile(eval_losses, 25)),
-                
-                # MSE
-                'eval/mse_mean': float(np.mean(eval_mses)),
-                'eval/mse_median': float(np.median(eval_mses)),
-                'eval/mse_std': float(np.std(eval_mses)),
-                'eval/mse_iqr': float(np.percentile(eval_mses, 75) - np.percentile(eval_mses, 25)),
-                
-                # R²
-                'eval/r2_mean': float(np.mean(eval_r2s)),
-                'eval/r2_median': float(np.median(eval_r2s)),
-                'eval/r2_std': float(np.std(eval_r2s)),
-                'eval/r2_iqr': float(np.percentile(eval_r2s, 75) - np.percentile(eval_r2s, 25)),
-                
-                # Additional summary stats
-                'eval/num_batches': len(eval_losses),
-                'eval/num_samples': len(eval_mses)
-            }
-        
+
+        # Overall loss metrics
+        metrics['eval/overall/loss_mean'] = float(np.mean(overall_losses_np))
+        metrics['eval/overall/loss_median'] = float(np.median(overall_losses_np))
+        metrics['eval/overall/loss_std'] = float(np.std(overall_losses_np))
+        metrics['eval/overall/loss_iqr'] = float(np.percentile(overall_losses_np, 75) - np.percentile(overall_losses_np, 25))
+        metrics['eval/overall/num_batches'] = int(len(overall_losses_np))
+
+        # Overall MSE / R2 metrics (when available)
+        if len(overall_mses_np) > 0:
+            metrics['eval/overall/mse_mean'] = float(np.mean(overall_mses_np))
+            metrics['eval/overall/mse_median'] = float(np.median(overall_mses_np))
+            metrics['eval/overall/mse_std'] = float(np.std(overall_mses_np))
+            metrics['eval/overall/mse_iqr'] = float(np.percentile(overall_mses_np, 75) - np.percentile(overall_mses_np, 25))
+        if len(overall_r2s_np) > 0:
+            metrics['eval/overall/r2_mean'] = float(np.mean(overall_r2s_np))
+            metrics['eval/overall/r2_median'] = float(np.median(overall_r2s_np))
+            metrics['eval/overall/r2_std'] = float(np.std(overall_r2s_np))
+            metrics['eval/overall/r2_iqr'] = float(np.percentile(overall_r2s_np, 75) - np.percentile(overall_r2s_np, 25))
+
+        # Backward-compatible top-level keys (mirror overall)
+        # These preserve existing dashboards expecting 'eval/mse_median', etc.
+        if 'eval/overall/mse_mean' in metrics:
+            metrics['eval/mse_mean'] = metrics['eval/overall/mse_mean']
+            metrics['eval/mse_median'] = metrics['eval/overall/mse_median']
+            metrics['eval/mse_std'] = metrics['eval/overall/mse_std']
+        if 'eval/overall/r2_mean' in metrics:
+            metrics['eval/r2_mean'] = metrics['eval/overall/r2_mean']
+            metrics['eval/r2_median'] = metrics['eval/overall/r2_median']
+            metrics['eval/r2_std'] = metrics['eval/overall/r2_std']
+        metrics['eval/loss_mean'] = metrics.get('eval/overall/loss_mean', float('nan'))
+        metrics['eval/loss_median'] = metrics.get('eval/overall/loss_median', float('nan'))
+        metrics['eval/loss_std'] = metrics.get('eval/overall/loss_std', float('nan'))
+        metrics['eval/loss_iqr'] = metrics.get('eval/overall/loss_iqr', float('nan'))
+        metrics['eval/num_batches'] = metrics.get('eval/overall/num_batches', 0)
+        metrics['eval/num_samples'] = int(len(overall_mses_np)) if len(overall_mses_np) > 0 else 0
+
         # Print evaluation summary
-        print(f"Evaluation Results ({len(eval_mses)} samples from {len(eval_losses)} valid batches):")
-        if len(eval_losses) > 0:
-            print(f"   Loss (NLL): {metrics['eval/loss_mean']:.6f} ± {metrics['eval/loss_std']:.6f} (median: {metrics['eval/loss_median']:.6f})")
-        if len(eval_mses) > 0:
-            print(f"   MSE: {metrics['eval/mse_mean']:.6f} ± {metrics['eval/mse_std']:.6f} (median: {metrics['eval/mse_median']:.6f})")
-            print(f"   R²: {metrics['eval/r2_mean']:.6f} ± {metrics['eval/r2_std']:.6f} (median: {metrics['eval/r2_median']:.6f})")
-        
-        # Update best model if model selection is enabled
+        print("Evaluation Results (per set):")
+        for name in set_names:
+            mkeys = [
+                (f'eval/{name}/loss_mean', f'eval/{name}/loss_std', f'eval/{name}/loss_median'),
+                (f'eval/{name}/mse_mean', f'eval/{name}/mse_std', f'eval/{name}/mse_median'),
+                (f'eval/{name}/r2_mean', f'eval/{name}/r2_std', f'eval/{name}/r2_median'),
+            ]
+            if any(k in metrics for ks in mkeys for k in ks):
+                print(f"   [{name}] batches: {metrics.get(f'eval/{name}/num_batches', 0)}")
+                if f'eval/{name}/loss_mean' in metrics:
+                    print(f"      Loss (NLL): {metrics[f'eval/{name}/loss_mean']:.6f} ± {metrics.get(f'eval/{name}/loss_std', float('nan')):.6f} (median: {metrics.get(f'eval/{name}/loss_median', float('nan')):.6f})")
+                if f'eval/{name}/mse_mean' in metrics:
+                    print(f"      MSE: {metrics[f'eval/{name}/mse_mean']:.6f} ± {metrics.get(f'eval/{name}/mse_std', float('nan')):.6f} (median: {metrics.get(f'eval/{name}/mse_median', float('nan')):.6f})")
+                if f'eval/{name}/r2_mean' in metrics:
+                    print(f"      R²: {metrics[f'eval/{name}/r2_mean']:.6f} ± {metrics.get(f'eval/{name}/r2_std', float('nan')):.6f} (median: {metrics.get(f'eval/{name}/r2_median', float('nan')):.6f})")
+
+        if len(overall_losses_np) > 0:
+            print(f"Overall: Loss (NLL): {metrics['eval/overall/loss_mean']:.6f} ± {metrics['eval/overall/loss_std']:.6f} (median: {metrics['eval/overall/loss_median']:.6f})")
+        if len(overall_mses_np) > 0:
+            print(f"Overall: MSE: {metrics['eval/overall/mse_mean']:.6f} ± {metrics['eval/overall/mse_std']:.6f} (median: {metrics['eval/overall/mse_median']:.6f})")
+        if len(overall_r2s_np) > 0:
+            print(f"Overall: R²: {metrics['eval/overall/r2_mean']:.6f} ± {metrics['eval/overall/r2_std']:.6f} (median: {metrics['eval/overall/r2_median']:.6f})")
+
+        # Update best model if model selection is enabled (use overall metrics)
         if self.enable_model_selection:
             self._update_best_model(metrics)
-        
-        # Update cached eval metrics for per-step logging
-        # Use .get() to handle cases where metrics might not be computed
-        self._latest_eval_metrics['eval/mse_mean'] = metrics.get('eval/mse_mean', float('nan'))
-        self._latest_eval_metrics['eval/mse_median'] = metrics.get('eval/mse_median', float('nan'))
-        self._latest_eval_metrics['eval/mse_std'] = metrics.get('eval/mse_std', float('nan'))
-        self._latest_eval_metrics['eval/r2_mean'] = metrics.get('eval/r2_mean', float('nan'))
-        self._latest_eval_metrics['eval/r2_median'] = metrics.get('eval/r2_median', float('nan'))
-        self._latest_eval_metrics['eval/r2_std'] = metrics.get('eval/r2_std', float('nan'))
-        
+
+        # Update cached eval metrics for per-step logging (use overall keys)
+        self._latest_eval_metrics['eval/mse_mean'] = metrics.get('eval/overall/mse_mean', float('nan'))
+        self._latest_eval_metrics['eval/mse_median'] = metrics.get('eval/overall/mse_median', float('nan'))
+        self._latest_eval_metrics['eval/mse_std'] = metrics.get('eval/overall/mse_std', float('nan'))
+        self._latest_eval_metrics['eval/r2_mean'] = metrics.get('eval/overall/r2_mean', float('nan'))
+        self._latest_eval_metrics['eval/r2_median'] = metrics.get('eval/overall/r2_median', float('nan'))
+        self._latest_eval_metrics['eval/r2_std'] = metrics.get('eval/overall/r2_std', float('nan'))
+
         return metrics
 
     def fit(self):
