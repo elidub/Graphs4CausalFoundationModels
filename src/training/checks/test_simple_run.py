@@ -37,10 +37,13 @@ def load_and_modify_existing_config(config_path):
     
     # Reduce training iterations for quick test
 
-    config['training_config']['max_steps'] = {'value': 30}  # Very few steps
-    config['training_config']['batch_size'] = {'value': 16}  # Small batch
+    config['training_config']['max_steps'] = {'value': 5}  # Very few steps
+    config['training_config']['batch_size'] = {'value': 2}  # Small batch
     config['training_config']['device'] = {'value': 'cpu'}  # Force CPU usage
     config['training_config']['num_workers'] = {'value': 4}  # Avoid multiprocessing issues
+
+    config['model_config']['max_fit_batches'] = {'value': 10}
+    config['training_config']['benchmark_final_fidelity'] = {'value': "low"}
     
     # Reduce dataset size for speed
     #if 'dataset_config' in config:
@@ -108,7 +111,7 @@ def run_simple_run_test(config_path):
 
 def main():
 
-    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "FirstTests" / "configs" / "early_test2.yaml"
+    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "FirstTests" / "configs" / "early_test_curriculum.yaml"
     
     """Main test function."""
     print("=" * 60)

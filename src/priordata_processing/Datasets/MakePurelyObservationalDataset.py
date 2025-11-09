@@ -1,11 +1,11 @@
 from __future__ import annotations
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import torch
 import torch.distributions as dist
 import sys
 import os
 
-from priors.causal_prior.scm.SCMSampler import SCMSampler
+from priors.causal_prior.scm.SCMBuilder import SCMBuilder
 from priordata_processing.BasicProcessing import BasicProcessing
 from priordata_processing.Datasets.PurelyObservationalDataset import PurelyObservationalDataset
 
@@ -43,6 +43,42 @@ class MakePurelyObservationalDataset:
         "standardize": bool,
     }
     
+    # Define SCMBuilder's expected hyperparameters and their types (inlined from SCMHyperparameterSampler)
+    EXPECTED_SCM_HYPERPARAMETERS = {
+        # Required parameters
+        "num_nodes": int,
+        "graph_edge_prob": float,
+        "graph_seed": int,
+
+        # Optional parameters with defaults
+        "xgboost_prob": float,
+        "mechanism_seed": int,
+        "mlp_nonlins": str,
+        "mlp_num_hidden_layers": int,
+        "mlp_hidden_dim": int,
+        "mlp_activation_mode": str,
+        "mlp_node_shape": tuple,
+        "xgb_num_hidden_layers": int,
+        "xgb_hidden_dim": int,
+        "xgb_activation_mode": str,
+        "xgb_node_shape": tuple,
+        "xgb_n_training_samples": int,
+        "xgb_add_noise": bool,
+        "random_additive_std": bool,
+        "exo_std_distribution": str,  # "gamma" or "pareto"
+        "endo_std_distribution": str,  # "gamma" or "pareto"
+        "tabicl_noise_proportion": float,
+        "exo_std": (float, type(None)),
+        "endo_std": (float, type(None)),
+        "exo_std_mean": (float, type(None)),
+        "exo_std_std": (float, type(None)),
+        "endo_std_mean": (float, type(None)),
+        "endo_std_std": (float, type(None)),
+        "scm_fast": bool,
+        "use_exogenous_mechanisms": bool,
+        "mechanism_generator_seed": int,
+    }
+
     # Define expected dataset configuration parameters and their types
     EXPECTED_DATASET_HYPERPARAMETERS = {
         "dataset_size": int,
@@ -114,8 +150,9 @@ class MakePurelyObservationalDataset:
         self.dataset_samplers = self._build_samplers(
             self.dataset_config, self.EXPECTED_DATASET_HYPERPARAMETERS, "dataset"
         )
-        
-        # SCM config validation will be handled by SCMSampler itself
+
+        # Build SCM samplers directly (inline SCM HyperparameterSampler)
+        self.scm_samplers = self._build_scm_samplers(self.scm_config)
     
     def _build_samplers(self, config: Dict[str, Any], expected_params: Dict[str, Any], config_name: str) -> Dict[str, Any]:
         """Build sampler objects from the configuration, following SCMHyperparameterSampler pattern."""
@@ -174,6 +211,46 @@ class MakePurelyObservationalDataset:
         missing_params = required_params - provided_params
         if missing_params:
             raise ValueError(f"Missing required {config_name} parameters: {missing_params}")
+
+        return samplers
+
+    def _build_scm_samplers(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Build sampler objects for SCM hyperparameters (inline of SCMHyperparameterSampler)."""
+        samplers = {}
+
+        for param_name, param_config in config.items():
+            # Validate parameter name
+            if param_name not in self.EXPECTED_SCM_HYPERPARAMETERS:
+                raise ValueError(f"Unknown SCM hyperparameter: {param_name}")
+
+            # Fixed value shorthand
+            if "value" in param_config and "distribution" not in param_config:
+                sampler = FixedSampler(param_config["value"])
+            elif "distribution" in param_config:
+                dist_type = param_config["distribution"]
+                if dist_type not in self.DISTRIBUTION_FACTORIES:
+                    raise ValueError(f"Unknown distribution type for SCM param {param_name}: {dist_type}")
+
+                dist_params = param_config.get("distribution_parameters", {})
+                if dist_type == "fixed":
+                    if "value" not in param_config:
+                        raise ValueError(f"Fixed distribution for {param_name} requires 'value' key")
+                    dist_params = {"value": param_config["value"]}
+
+                try:
+                    sampler = self.DISTRIBUTION_FACTORIES[dist_type](dist_params)
+                except Exception as e:
+                    raise ValueError(f"Error creating SCM sampler for {param_name}: {e}")
+            else:
+                raise ValueError(f"Configuration for SCM.{param_name} must specify 'distribution' or 'value'")
+
+            samplers[param_name] = sampler
+
+        # Ensure required parameters are present
+        required = {"num_nodes", "graph_edge_prob", "graph_seed"}
+        missing = required - set(config.keys())
+        if missing:
+            raise ValueError(f"Missing required SCM hyperparameters: {missing}")
 
         return samplers
     
@@ -254,11 +331,11 @@ class MakePurelyObservationalDataset:
             self.preprocessing_samplers, self.EXPECTED_PREPROCESSING_HYPERPARAMETERS, "preprocessing", generator
         )
         
-        # Create SCMSampler with a derived seed
+        # Create an inline SCM sampler with a derived seed (no external dependency)
         scm_seed = None
         if seed is not None:
             scm_seed = (seed * 31 + 17) % (2**32)  # Derive a different seed for SCM
-        scm_sampler = SCMSampler(self.scm_config, seed=scm_seed)
+        scm_sampler = _InlineSCMSampler(self.scm_samplers, seed=scm_seed, expected_types=self.EXPECTED_SCM_HYPERPARAMETERS)
         
         # Get maximum sample counts and feature count from dataset config
         max_n_train_samples = dataset_params["max_number_train_samples"]
@@ -469,12 +546,66 @@ class MakePurelyObservationalDataset:
         
         lines.extend([
             "",
-            "SCM Configuration: Managed by SCMSampler",
+            "SCM Configuration: Managed internally (inline sampler)",
             f"Total dataset parameters configured: {len(self.dataset_samplers)}",
             f"Total preprocessing parameters configured: {len(self.preprocessing_samplers)}",
+            f"Total SCM parameters configured: {len(self.scm_samplers)}",
         ])
         
         return "\n".join(lines)
+
+
+class _InlineSCMSampler:
+    """
+    Minimal inline replacement for SCMSampler + SCMHyperparameterSampler.
+
+    Holds pre-built samplers for SCM hyperparameters and exposes a .sample(seed) method
+    returning a built SCM via SCMBuilder.
+    """
+
+    def __init__(self, samplers: Dict[str, Any], seed: Optional[int], expected_types: Dict[str, Any], verbose: bool = False):
+        self.samplers = samplers
+        self.seed = seed
+        self.expected_types = expected_types
+        self.verbose = verbose
+
+    def sample(self, seed: Optional[int] = None):
+        # Determine seed/generator
+        sampling_seed = seed if seed is not None else self.seed
+        generator = torch.Generator()
+        if sampling_seed is not None:
+            generator.manual_seed(int(sampling_seed))
+
+        # Sample parameters with type normalization (mirrors SCMHyperparameterSampler.sample)
+        sampled_params: Dict[str, Any] = {}
+        for param_name, sampler in self.samplers.items():
+            value = sampler.sample(generator)
+
+            expected_type = self.expected_types[param_name]
+            if not isinstance(value, expected_type):
+                # Allow basic conversions similar to the original sampler
+                if isinstance(expected_type, type) and expected_type is int and isinstance(value, float):
+                    value = int(value)
+                elif isinstance(expected_type, type) and expected_type is float and isinstance(value, int):
+                    value = float(value)
+                elif isinstance(expected_type, type) and expected_type is tuple and isinstance(value, list):
+                    value = tuple(value)
+                elif isinstance(expected_type, tuple) and type(None) in expected_type:
+                    allowed_types = [t for t in expected_type if t is not type(None)]
+                    if value is not None and not isinstance(value, tuple(allowed_types)):
+                        raise ValueError(f"Parameter {param_name} has invalid type. Expected one of {expected_type}, got {type(value)}")
+                else:
+                    raise ValueError(f"Parameter {param_name} has invalid type. Expected {expected_type}, got {type(value)}")
+
+            sampled_params[param_name] = value
+
+        # Build SCM
+        try:
+            builder = SCMBuilder(**sampled_params)
+            scm = builder.build()
+            return scm
+        except Exception as e:
+            raise RuntimeError(f"Failed to build SCM: {e}") from e
 
 
 if __name__ == "__main__":

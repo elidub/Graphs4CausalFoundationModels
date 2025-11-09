@@ -46,6 +46,7 @@ class SimplePFNTrainer:
         # Mixed precision training
         use_amp: bool = False,  # Enable automatic mixed precision (float16)
         gradient_clip_val: float = 0.0,  # Gradient clipping value (0.0 to disable)
+        schedule_name: Optional[str] = None,  # curriculum schedule name for logging
     ):
         self.model = model
         self.dataloader = dataloader
@@ -59,6 +60,7 @@ class SimplePFNTrainer:
         self.run_name = run_name or f"model_{int(time.time())}"
         self.bar_distribution = bar_distribution  # Store BarDistribution
         self.gradient_clip_val = gradient_clip_val  # Store gradient clipping value
+        self.schedule_name = schedule_name or "none"
         
         # Evaluation parameters
         self.eval_dataloader = eval_dataloader
@@ -153,6 +155,11 @@ class SimplePFNTrainer:
             'benchmark/r2_rf_median': float('nan'),
             'benchmark/r2_pfn_median': float('nan'),
         }
+        # Cache for latest observed (t, alpha) from batch for logging
+        self._latest_schedule_info = {
+            'train/t0': float('nan'),
+            'train/alpha0': float('nan'),
+        }
             
         # Flag for graceful termination
         self.terminate = False
@@ -203,8 +210,23 @@ class SimplePFNTrainer:
         
         SimplePFN expects the same format. We now process the full batch.
         """
-        if isinstance(batch, list) and len(batch) == 4:
-            X_train, y_train, X_test, y_test = batch
+        if isinstance(batch, list) and (len(batch) == 4 or len(batch) == 6):
+            X_train, y_train, X_test, y_test = batch[:4]
+            # If t, alpha present, record first values for logging
+            if len(batch) >= 6:
+                t_batch, a_batch = batch[4], batch[5]
+                try:
+                    t0 = float(t_batch[0].item()) if hasattr(t_batch, 'shape') else float(t_batch)
+                    a0 = float(a_batch[0].item()) if hasattr(a_batch, 'shape') else float(a_batch)
+                except Exception:
+                    # best effort fallback
+                    try:
+                        t0 = float(t_batch)
+                        a0 = float(a_batch)
+                    except Exception:
+                        t0, a0 = float('nan'), float('nan')
+                self._latest_schedule_info['train/t0'] = t0
+                self._latest_schedule_info['train/alpha0'] = a0
             
             # Move to device
             X_train = X_train.to(self.device)
@@ -740,12 +762,20 @@ class SimplePFNTrainer:
         
         # Print initial batch info
         sample_batch = next(iter(self.dataloader))
-        if isinstance(sample_batch, list) and len(sample_batch) == 4:
+        if isinstance(sample_batch, list) and (len(sample_batch) == 4 or len(sample_batch) == 6):
             batch_size = sample_batch[0].shape[0]
             n_train = sample_batch[0].shape[1]
             n_test = sample_batch[2].shape[1]
             features = sample_batch[0].shape[2]
             print(f"Batch structure: {batch_size} samples, {n_train} train points, {n_test} test points, {features} features")
+            # If t/alpha present, print the first values seen
+            if len(sample_batch) >= 6:
+                try:
+                    t0 = float(sample_batch[4][0].item())
+                    a0 = float(sample_batch[5][0].item())
+                    print(f"First batch schedule: t={t0:.4f}, alpha={a0:.4f}, schedule={self.schedule_name}")
+                except Exception:
+                    pass
             # Cache shapes for benchmark alignment
             self._train_n_features = int(features)
             self._train_n_train = int(n_train)
@@ -844,6 +874,9 @@ class SimplePFNTrainer:
                     'train/global_step': self.global_step,
                     'train/learning_rate': current_lr,
                 }
+                # Add schedule info if present
+                log_dict['train/schedule'] = self.schedule_name
+                log_dict.update(self._latest_schedule_info)
                 # Add all cached eval metrics (will be NaN until first evaluation)
                 log_dict.update(self._latest_eval_metrics)
                 # Add all cached benchmark metrics (will be NaN until first benchmark run)
@@ -867,6 +900,11 @@ class SimplePFNTrainer:
                 self.global_step % self.eval_every == 0):
                 
                 eval_metrics = self.evaluate()
+                # Print current (t, alpha) on evaluation trigger if known
+                if not math.isnan(self._latest_schedule_info['train/t0']) and not math.isnan(self._latest_schedule_info['train/alpha0']):
+                    t0 = self._latest_schedule_info['train/t0']
+                    a0 = self._latest_schedule_info['train/alpha0']
+                    print(f"[Eval] First-in-batch schedule: t={t0:.4f}, alpha={a0:.4f}, schedule={self.schedule_name}")
                 
                 # Log evaluation metrics to wandb
                 if self.wandb_run and eval_metrics:

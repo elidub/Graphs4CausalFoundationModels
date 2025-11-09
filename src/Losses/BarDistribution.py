@@ -126,9 +126,18 @@ class BarDistribution(PosteriorPredictive):
         for batch in dataloader:
             if max_batches is not None and batch_count >= max_batches:
                 break
-            if len(batch) != 4:
-                raise ValueError("Each dataloader item must be (X_train, y_train, X_test, y_test).")
-            _, y_tr, _, y_te = batch
+            # Accept classic 4-tuple or extended 6-tuple with (t, alpha) metadata
+            if isinstance(batch, (list, tuple)):
+                if len(batch) == 4:
+                    _, y_tr, _, y_te = batch
+                elif len(batch) == 6:
+                    _, y_tr, _, y_te, _t, _alpha = batch  # ignore curriculum metadata
+                else:
+                    raise ValueError(
+                        f"Each dataloader item must be (X_train, y_train, X_test, y_test) or include (t, alpha); got length {len(batch)}"
+                    )
+            else:
+                raise ValueError("Dataloader batch must be a tuple/list of length 4 or 6.")
             
             # Handle both (B, N) and (B, N, 1) shapes
             if y_tr.ndim == 3 and y_tr.shape[-1] == 1:

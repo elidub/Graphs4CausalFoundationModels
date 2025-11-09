@@ -12,7 +12,9 @@
 experiment_name: "early_test2"
 description: "First pipeline test. debug scale with fixed seeds for reproducibility"
 
-scm_config:
+interpolation_function: "linear" #function to interpolate between t0 and t1 configs
+
+scm_config_t0:
   num_nodes:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -33,12 +35,14 @@ scm_config:
     distribution_parameters:
       choices:
       - 0.0
+        #- 0.0
       - 0.1
       - 0.2
+        #- 0.2
       probabilities:
-      - 0.98
-      - 0.1
-      - 0.01
+      - 1.0
+      - 0.0
+      - 0.0
         #- 0.8
         #- 0.1
         #- 0.1
@@ -57,7 +61,7 @@ scm_config:
         - 1
         - 2
       probabilities:
-        - 0.95
+        - 0.9
         - 0.025
         - 0.025
   mlp_hidden_dim:
@@ -67,24 +71,194 @@ scm_config:
         - 1
         - 2
         - 4
-        - 6
         - 8
-        - 10
         - 12
-        - 14
+        - 16
+      probabilities:
+        - 0.9
+        - 0.1
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+
+  mlp_activation_mode:
+    distribution: "categorical"
+    distribution_parameters:
+      choices:
+        - "pre"
+        - "post"
+      probabilities:
+        - 1.0
+        - 0.0
+      
+  xgb_node_shape:
+    value: [1]
+  xgb_num_hidden_layers:
+    value: 0
+  xgb_hidden_dim:
+    distribution: "categorical"
+    distribution_parameters:
+      choices:
+        - 0
         - 16
         - 32
+        - 64
+  xgb_activation_mode:
+    distribution: "categorical"
+    distribution_parameters:
+      choices:
+        - "pre"
+        - "post"
+      probabilities:
+        - 1.0
+        - 0.0
+  xgb_node_shape:
+    value: [1]
+  xgb_n_training_samples:
+    distribution: "discrete_uniform"
+    distribution_parameters:
+      low: 10
+      high: 500
+  xgb_add_noise:
+    distribution: "categorical"
+    distribution_parameters:
+      choices:
+        - true
+        - false
+      probabilities:
+        - 1.0
+        - 0.0
+  random_additive_std:
+    value: true
+  exo_std_distribution:
+    distribution: "categorical"
+    distribution_parameters:
+      choices:
+        - "gamma"
+        - "pareto"
+      probabilities:
+        - 1.0
+        - 0.0
+  endo_std_distribution:
+    distribution: "categorical"
+    distribution_parameters:
+      choices:
+        - "gamma"
+        - "pareto"
+      probabilities:
+        - 1.0
+        - 0.0
+  exo_std_mean:
+    distribution: "lognormal"
+    distribution_parameters:
+      mean: 1.0
+      std: 1.0
+      std: 1.0
+  exo_std_std:
+    distribution: "uniform"
+    distribution_parameters:
+      low: 0.1
+      high: 0.11
+  endo_std_mean:
+    distribution: "lognormal"
+    distribution_parameters:
+      mean: -3.0
+      std: 0.2
+    #distribution: "uniform"
+    #distribution_parameters:
+    #  low: 0.1
+    #  high: 0.3
+  endo_std_std:
+    distribution: "uniform"
+    distribution_parameters:
+      low: 0.1
+      high: 0.11
+  tabicl_noise_proportion:
+    # Proportion of TabICL noise in the exogenous noise mixture
+    # The remaining probability mass is uniformly distributed among
+    # Normal, Laplace, and StudentT distributions
+    # Range: [0.0, 1.0] where 0.0 = no TabICL, 1.0 = only TabICL
+    value: 0.0
+  scm_fast:
+    value: true
+  use_exogenous_mechanisms:
+    value: true
+  mechanism_generator_seed:
+    distribution: "discrete_uniform"
+    distribution_parameters:
+      low: 0
+      high: 100000
+
+
+# ===============================================================================
+scm_config_t1:
+  num_nodes:
+    distribution: "discrete_uniform"
+    distribution_parameters:
+      low: 3
+      high: 51
+  graph_edge_prob:
+    distribution: "beta"
+    distribution_parameters:
+      alpha: 2.0
+      beta: 8.0
+  graph_seed:
+    distribution: "discrete_uniform"
+    distribution_parameters:
+      low: 0
+      high: 100000
+  xgboost_prob:
+    distribution: "categorical"
+    distribution_parameters:
+      choices:
+      - 0.0
+        #- 0.0
+      - 0.1
+      - 0.2
+        #- 0.2
+      probabilities:
+      - 0.8
+      - 0.1
+      - 0.1
+        #- 0.8
+        #- 0.1
+        #- 0.1
+  mechanism_seed:
+    distribution: "discrete_uniform"
+    distribution_parameters:
+      low: 0
+      high: 100000
+  mlp_nonlins:
+    value: "tabicl"
+  mlp_num_hidden_layers:
+    distribution: "categorical"
+    distribution_parameters:
+      choices:
+        - 0
+        - 1
+        - 2
+      probabilities:
+        - 0.9
+        - 0.025
+        - 0.025
+  mlp_hidden_dim:
+    distribution: "categorical"
+    distribution_parameters:
+      choices:
+        - 1
+        - 2
+        - 4
+        - 8
+        - 12
+        - 16
       probabilities:
         - 0.8
         - 0.1
         - 0.05
         - 0.05
-        - 0.05
-        - 0.001
-        - 0.001
-        - 0.001
-        - 0.001
-        - 0.001
+        - 0.0
+        - 0.0
 
   mlp_activation_mode:
     distribution: "categorical"
@@ -158,10 +332,12 @@ scm_config:
     distribution_parameters:
       mean: 1.0
       std: 1.0
+      std: 1.0
   exo_std_std:
     distribution: "uniform"
     distribution_parameters:
       low: 0.1
+      high: 0.2
       high: 0.2
   endo_std_mean:
     distribution: "lognormal"
@@ -176,6 +352,7 @@ scm_config:
     distribution: "uniform"
     distribution_parameters:
       low: 0.1
+      high: 0.2
       high: 0.2
   tabicl_noise_proportion:
     # Proportion of TabICL noise in the exogenous noise mixture
@@ -193,7 +370,9 @@ scm_config:
       low: 0
       high: 100000
 
-dataset_config:
+
+
+dataset_config_t0:
   dataset_size:
     value: 100000000
   max_number_train_samples:
@@ -201,7 +380,7 @@ dataset_config:
   number_train_samples_per_dataset:
     distribution: "uniform"
     distribution_parameters:
-      low: 100
+      low: 499
       high: 500
   max_number_test_samples:
     value: 500
@@ -260,6 +439,83 @@ preprocessing_config:
     value: true
   outlier_quantile:
     value: 0.95
+    value: 0.95
+  yeo_johnson:
+    value: false
+  random_seed:
+    distribution: "discrete_uniform"
+    distribution_parameters:
+      low: 0
+      high: 100000
+
+dataset_config_t1:
+  dataset_size:
+    value: 100000000
+  max_number_train_samples:
+    value: 500
+  number_train_samples_per_dataset:
+    distribution: "uniform"
+    distribution_parameters:
+      low: 499
+      high: 500
+  max_number_test_samples:
+    value: 500
+  number_test_samples_per_dataset:
+    distribution: "uniform"
+    distribution_parameters:
+      low: 499
+      high: 500
+  max_number_features:
+    value: 50
+  seed:
+    distribution: "discrete_uniform"
+    distribution_parameters:
+      low: 0
+      high: 100000
+
+preprocessing_config:
+  dropout_prob:
+    distribution: "categorical"
+    distribution_parameters:
+      choices:  
+        - 0.0
+        - 0.05
+        - 0.1
+        - 0.2
+        - 0.3
+        - 0.4 
+        - 0.5 
+        - 0.6
+      probabilities:
+      - 0.9
+      - 0.05
+      - 0.025
+      - 0.025
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+        #- 0.8
+        #- 0.1
+        #- 0.1
+        #- 0.05
+        #- 0.05
+        #- 0.05
+        #- 0.01
+        #- 0.01
+  shuffle_data:
+    value: true
+  target_feature:
+    value: null
+  negative_one_one_scaling:
+    value: false
+  standardize:
+    value: true
+  remove_outliers:
+    value: true
+  outlier_quantile:
+    value: 0.95
+    value: 0.95
   yeo_johnson:
     value: false
   random_seed:
@@ -270,17 +526,17 @@ preprocessing_config:
 
 model_config:
   d_model:
-    value: 768
+    value: 512
   depth: # number of layers
-    value: 8
+    value: 6
   heads_feat:  # number of attention heads for feature-wise attention
-    value: 6
+    value: 4
   heads_samp: # number of attention heads for sample-wise attention
-    value: 6
+    value: 4
   dropout:  # dropout probability
-    value: 0.0
+    value: 0.1
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
-    value: 2
+    value: 1
   num_features:
     value: 50  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
 
@@ -298,9 +554,9 @@ model_config:
   num_bars:  # number of bars (K). Higher values allow for more complex, fine-grained posteriors, but make training more difficult.
     value: 1000
   min_width:  # minimum width of each bar to avoid numerical issues
-    value: "1e-7"
+    value: "1e-6"
   scale_floor:  # for the tails, this ensures that the scale is never too small
-    value: "1e-4"
+    value: "1e-3"
   max_fit_items:  # maximum number of datasets to fit the BarDistribution initially.
     value: 10000000
   max_fit_batches:  # maximum number of batches to use when fitting the BarDistribution initially. This is usually not critical.
@@ -308,7 +564,7 @@ model_config:
   log_prob_clip_min:  # clip minimum log probability to avoid numerical issues
     value: -100000.0
   log_prob_clip_max: # clip maximum log probability to avoid numerical issues
-    value: 100000.0
+    value: 1000000.0
 
 # ===============================================================================
 # Training Configuration 
@@ -320,15 +576,15 @@ training_config:
   weight_decay: # weight decay for optimizer, might not be needed
     value: 0.00001 
   max_steps:  #critial for determing training duration!
-    value: 20000
+    value: 10000
   max_epochs: # should always be 1
     value: 1
 
   # Data Loading Parameters
   batch_size: # batch size
-    value: 4
+    value: 8
   accumulate_grad_batches:
-    value: 16
+    value: 8
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
     value: 64
 
@@ -366,15 +622,15 @@ training_config:
 
   # Model Checkpointing
   checkpoint_every_n_steps: # how often to save a model checkpoint
-    value: 1000
+    value: 500
 
   # Evaluation Configuration
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 1000
+    value: 500
   eval_batches: # number of batches to use for evaluation
-    value: 100
+    value: 200
   eval_dataset_size: # size of the evaluation dataset
     value: 1000000
 
@@ -409,4 +665,3 @@ training_config:
     value: "First end-to-end pipeline test with wandb integration"
   wandb_offline: # whether to run wandb in offline mode
     value: false
-

@@ -15,6 +15,7 @@ import argparse
 import traceback
 from pathlib import Path
 from torch.utils.data import DataLoader
+from typing import Callable
 
 # Add src directory to path for imports
 src_dir = Path(__file__).parent.parent
@@ -23,6 +24,10 @@ if str(src_dir) not in sys.path:
 
 # AFTER the preamble, do project imports
 from priordata_processing.Datasets.MakePurelyObservationalDataset import MakePurelyObservationalDataset
+# Import interpolated curriculum factory (for t0/t1 curriculum configs)
+from priordata_processing.Datasets.MakeInterpolatedPurelyObservationalDataset import (
+    MakeInterpolatedPurelyObservationalDataset,
+)
 from models.SimplePFN import SimplePFNRegressor
 
 # Import our training modules
@@ -39,6 +44,15 @@ try:
 except ImportError:
     WANDB_AVAILABLE = False
     raise ImportError("wandb library not found. Please install it or disable wandb logging in the config.")
+
+
+def _normalize_interp_name(s: str) -> str:
+    if not isinstance(s, str) or not s:
+        return 'linear'
+    s2 = s.strip()
+    if s2.endswith('.'):
+        s2 = s2[:-1]
+    return s2
 
 
 def main():
@@ -60,7 +74,11 @@ def main():
         print(json.dumps(config, indent=2, default=str))
         print("-" * 40)
 
-        # Extract config sections
+        # Detect curriculum setup (t0/t1) vs classic single-config
+        has_curriculum = ('scm_config_t0' in config and 'scm_config_t1' in config and
+                          'dataset_config_t0' in config and 'dataset_config_t1' in config)
+
+        # Extract config sections (classic)
         scm_config = config.get('scm_config', {})
         dataset_config = config.get('dataset_config', {})
         preprocessing_config = config.get('preprocessing_config', {})
@@ -157,15 +175,42 @@ def main():
             print(f"   {key}: {value}")
 
         print(f"\nDATASET CREATION:")
-        print("   Creating dataset maker...")
-        dataset_maker = MakePurelyObservationalDataset(
-            scm_config=scm_config,
-            preprocessing_config=preprocessing_config,
-            dataset_config=dataset_config
-        )
+        # Branch: curriculum (t0/t1) vs classic
+        if has_curriculum:
+            print("   Curriculum mode detected (t0/t1 configs)")
+            interp_raw = config.get('interpolation_function', 'linear')
+            interp_name = _normalize_interp_name(interp_raw)
 
-        print("   Creating dataset...")
-        dataset = dataset_maker.create_dataset(seed=42)
+            scm_t0 = config['scm_config_t0']
+            scm_t1 = config['scm_config_t1']
+            ds_t0 = config['dataset_config_t0']
+            ds_t1 = config['dataset_config_t1']
+            # preprocessing: accept either explicit t0/t1 or a single shared block
+            pre_t0 = config.get('preprocessing_config_t0') or config.get('preprocessing_config') or {}
+            pre_t1 = config.get('preprocessing_config_t1') or config.get('preprocessing_config') or {}
+
+            print(f"   Building interpolated curriculum dataset (schedule={interp_name})...")
+            interp_factory = MakeInterpolatedPurelyObservationalDataset(
+                scm_config_t0=scm_t0,
+                scm_config_t1=scm_t1,
+                preprocessing_config_t0=pre_t0,
+                preprocessing_config_t1=pre_t1,
+                dataset_config_t0=ds_t0,
+                dataset_config_t1=ds_t1,
+                interpolation_function=interp_name,
+                seed=42,
+            )
+            print("   Creating curriculum dataset...")
+            dataset = interp_factory.create_dataset()
+        else:
+            print("   Creating dataset maker (classic)...")
+            dataset_maker = MakePurelyObservationalDataset(
+                scm_config=scm_config,
+                preprocessing_config=preprocessing_config,
+                dataset_config=dataset_config
+            )
+            print("   Creating dataset...")
+            dataset = dataset_maker.create_dataset(seed=42)
         print(f"   Dataset created with {len(dataset)} samples")
 
         # Create DataLoader in main method
@@ -365,6 +410,7 @@ def main():
             # Mixed precision training
             use_amp=use_amp,
             gradient_clip_val=gradient_clip_val,
+            schedule_name=interp_name if has_curriculum else "none",
         )
         
         print(f"   Learning rate: {training_config.get('learning_rate', 1e-3)}")

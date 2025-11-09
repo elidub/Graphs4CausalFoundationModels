@@ -107,5 +107,12 @@ class PurelyObservationalDataset(Dataset):
 
         X_train, Y_train, X_test, Y_test = out
 
-        # Return tensors directly (keeping them as PyTorch tensors)
-        return X_train, Y_train, X_test, Y_test
+        # Compute a dummy time/alpha for compatibility with curriculum logging
+        if self.size > 1:
+            t = float(idx) / float(self.size - 1)
+        else:
+            t = 1.0
+        alpha = -1.0  # indicates no interpolation
+
+        # Return tensors directly (keeping them as PyTorch tensors) + (t, alpha)
+        return X_train, Y_train, X_test, Y_test, torch.tensor(t, dtype=torch.float32), torch.tensor(alpha, dtype=torch.float32)
