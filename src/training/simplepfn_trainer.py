@@ -31,11 +31,12 @@ class SimplePFNTrainer:
         save_dir: str = None,
         save_every: int = 0,
         run_name: str = None,
-    bar_distribution: Optional[object] = None,  # BarDistribution for probabilistic training
-    eval_dataloader: Optional[DataLoader] = None,  # Evaluation dataloader (legacy single)
-    eval_dataloaders: Optional[list] = None,       # New: list of evaluation dataloaders (e.g., head & tail)
+        bar_distribution: Optional[object] = None,  # BarDistribution for probabilistic training
+        eval_dataloader: Optional[DataLoader] = None,  # Evaluation dataloader (legacy single)
+        eval_dataloaders: Optional[list] = None,       # New: list of evaluation dataloaders (e.g., head & tail)
         eval_every: int = 0,  # Evaluate every N steps (0 to disable)
         eval_batches: int = 10,  # Number of batches to use for evaluation
+        accumulate_grad_batches: int = 1,  # Number of micro-batches to accumulate before optimizer step
         # Model selection parameters
         enable_model_selection: bool = False,  # Whether to enable automatic best model selection
         model_selection_metric: str = "eval/mse_median",  # Metric to use for model selection
@@ -62,6 +63,8 @@ class SimplePFNTrainer:
         self.bar_distribution = bar_distribution  # Store BarDistribution
         self.gradient_clip_val = gradient_clip_val  # Store gradient clipping value
         self.schedule_name = schedule_name or "none"
+        # Gradient accumulation factor (optimizer step every N micro-batches)
+        self.accumulate_grad_batches = max(1, int(accumulate_grad_batches))
         
         # Evaluation parameters (support multiple eval dataloaders)
         if eval_dataloaders is not None:
@@ -134,7 +137,7 @@ class SimplePFNTrainer:
             self.criterion = nn.MSELoss()
             print(f"Using MSE loss")
             
-        self.global_step = 0
+        self.global_step = 0  # counts optimizer steps (not micro-batches)
         
         # Setup scheduler if enabled
         self.scheduler = self._create_scheduler(self.scheduler_config)
@@ -844,6 +847,10 @@ class SimplePFNTrainer:
         """Train the SimplePFN model."""
         print(f"Training SimplePFN for {self.max_steps} steps with learning rate {self.learning_rate}")
         print(f"Using device: {self.device}")
+        if self.accumulate_grad_batches > 1:
+            print(f"Gradient accumulation ENABLED: accumulate_grad_batches={self.accumulate_grad_batches} (effective batch size = batch_size * {self.accumulate_grad_batches})")
+        else:
+            print(f"Gradient accumulation DISABLED: accumulate_grad_batches=1")
         
         # Setup signal handlers for graceful termination
         if self.run_save_dir:
@@ -883,8 +890,8 @@ class SimplePFNTrainer:
 
         # Start total timing
         total_start_time = time.time()
-        batch_times = []
-        losses = []
+        batch_times = []  # per optimizer step wall time
+        losses = []       # per optimizer step loss (averaged over micro-batches)
         
         self.model.train()
         
@@ -909,150 +916,146 @@ class SimplePFNTrainer:
             self._train_n_train = int(n_train)
             self._train_n_test = int(n_test)
         
-        for step, batch in enumerate(self.dataloader):
-            if step >= self.max_steps or self.terminate:
-                break   
+        micro_count = 0
+        opt_step_time_acc = 0.0
+        loss_accumulator = 0.0
+        current_lr = self.learning_rate
+        
+        for micro_idx, batch in enumerate(self.dataloader):
+            if self.terminate or self.global_step >= self.max_steps:
+                break
 
-            # Start batch timing
-            batch_start_time = time.time()
-                
+            # Start micro-batch timing
+            micro_start = time.time()
+
+            # Zero grads at the start of an accumulation window
+            if micro_count % self.accumulate_grad_batches == 0:
+                self.optimizer.zero_grad()
+
             X_train, y_train, X_test, y_test = self._process_batch(batch)
-            
-            self.optimizer.zero_grad()
-            
-            # Forward pass with automatic mixed precision
+
+            # Forward + loss
             with torch.amp.autocast('cuda', enabled=self.use_amp, dtype=torch.float16):
-                # SimplePFN forward pass expects (X_train, y_train, X_test)
                 output = self.model(X_train, y_train, X_test)
-                
-                # Extract predictions from SimplePFN output
                 if isinstance(output, dict) and 'predictions' in output:
                     predictions = output['predictions']
                 else:
                     predictions = output
-                
-                # Compute loss based on available loss function
-                if self.bar_distribution is not None:
-                    # Use BarDistribution probabilistic loss
-                    # predictions should be (batch_size, n_test, K+4) for BarDistribution
-                    # y_test should be (batch_size, n_test)
-                    
-                    # Ensure predictions have the right shape for BarDistribution
-                    if len(predictions.shape) == 2:
-                        # If predictions are (batch_size, n_test), this is wrong for BarDistribution
-                        raise ValueError(f"BarDistribution requires high-dimensional predictions, got shape {predictions.shape}")
-                    
-                    # Use negative log probability as loss (since we want to maximize log prob)
-                    log_prob = self.bar_distribution.average_log_prob(predictions, y_test)  # (batch_size,)
-                    loss = -log_prob.mean()  # Average across batch and negate for minimization
-                else:
-                    # Use standard MSE loss
-                    # Ensure predictions have the right shape for loss computation
-                    # predictions should be (batch_size, n_test) to match y_test (batch_size, n_test)
-                    if len(predictions.shape) == 3 and predictions.shape[-1] == 1:
-                        # If predictions are (batch_size, n_test, 1), squeeze last dimension
-                        predictions = predictions.squeeze(-1)
-                    
-                    # Compute MSE loss for the full batch
-                    loss = self.criterion(predictions, y_test)
-                    
-            losses.append(loss.item())
-            
-            # Backward pass with gradient scaling for mixed precision
-            if self.use_amp:
-                self.scaler.scale(loss).backward()
-                
-                # Unscale gradients before clipping (required for AMP)
-                if self.gradient_clip_val > 0:
-                    self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_val)
-                
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                loss.backward()
-                
-                # Apply gradient clipping if enabled
-                if self.gradient_clip_val > 0:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_val)
-                
-                self.optimizer.step()
-            
-            # Update learning rate if scheduler is enabled
-            if self.scheduler is not None:
-                self.scheduler.step()
-                current_lr = self.scheduler.get_last_lr()[0]
-            else:
-                current_lr = self.learning_rate
-            
-            self.global_step += 1
-            
-            # End batch timing
-            batch_end_time = time.time()
-            batch_time = batch_end_time - batch_start_time
-            batch_times.append(batch_time)
-            
-            # Log to Weights & Biases
-            if self.wandb_run:
-                # Build complete logging payload with train + eval + benchmark metrics
-                log_dict = {
-                    'train/loss': loss.item(),
-                    'train/step_time': batch_time,
-                    'train/batch_size': X_train.shape[0],
-                    'train/global_step': self.global_step,
-                    'train/learning_rate': current_lr,
-                }
-                # Add schedule info if present
-                log_dict['train/schedule'] = self.schedule_name
-                log_dict.update(self._latest_schedule_info)
-                # Add all cached eval metrics (will be NaN until first evaluation)
-                log_dict.update(self._latest_eval_metrics)
-                # Add all cached benchmark metrics (will be NaN until first benchmark run)
-                log_dict.update(self._latest_benchmark_metrics)
-                
-                self.wandb_run.log(log_dict, step=self.global_step)
-            
-            # Print progress - more frequent at start, less frequent later
-            if step <= 10 or step % max(1, self.max_steps // 10) == 0:
-                wandb_status = "[wandb]" if self.wandb_run else "[no wandb]"
-                lr_info = f"LR: {current_lr:.6f}" if self.scheduler is not None else ""
-                print(f"   Step {step:4d}/{self.max_steps} | Loss: {loss.item():.6f} | Time: {batch_time:.3f}s | Batch size: {X_train.shape[0]} {lr_info} {wandb_status}")
-            
-            # Save model checkpoint if requested
-            if self.run_save_dir and self.save_every > 0 and self.global_step % self.save_every == 0:
-                self.save_model()
-                
-            # Run evaluation if requested
-            if (self.eval_dataloaders is not None and 
-                self.eval_every > 0 and 
-                self.global_step % self.eval_every == 0):
-                
-                eval_metrics = self.evaluate()
-                # Print current (t, alpha) on evaluation trigger if known
-                if not math.isnan(self._latest_schedule_info['train/t0']) and not math.isnan(self._latest_schedule_info['train/alpha0']):
-                    t0 = self._latest_schedule_info['train/t0']
-                    a0 = self._latest_schedule_info['train/alpha0']
-                    print(f"[Eval] First-in-batch schedule: t={t0:.4f}, alpha={a0:.4f}, schedule={self.schedule_name}")
-                
-                # Log evaluation metrics to wandb
-                if self.wandb_run and eval_metrics:
-                    self.wandb_run.log(eval_metrics, step=self.global_step)
 
-                # Optionally run external OpenML benchmark at evaluation checkpoints
-                if self.benchmark_eval_fidelity:
-                    try:
-                        self._run_benchmark_with_current_model(
-                            fidelity=self.benchmark_eval_fidelity,
-                            tag=f"eval_step{self.global_step}"
-                        )
-                    except Exception as e:
-                        print(f"[Trainer] Benchmark at eval step {self.global_step} failed: {e}")
+                if self.bar_distribution is not None:
+                    if len(predictions.shape) == 2:
+                        raise ValueError(f"BarDistribution requires high-dimensional predictions, got shape {predictions.shape}")
+                    log_prob = self.bar_distribution.average_log_prob(predictions, y_test)
+                    loss = -log_prob.mean()
+                else:
+                    if len(predictions.shape) == 3 and predictions.shape[-1] == 1:
+                        predictions = predictions.squeeze(-1)
+                    loss = self.criterion(predictions, y_test)
+
+                # Scale loss by accumulation factor so gradients average across micro-batches
+                loss_to_backward = loss / float(self.accumulate_grad_batches)
+
+            # Backward
+            if self.use_amp:
+                self.scaler.scale(loss_to_backward).backward()
             else:
-                # If evaluation is disabled but model selection is enabled,
-                # update best model based on training loss
+                loss_to_backward.backward()
+
+            # Accumulate timing and loss for logging
+            opt_step_time_acc += (time.time() - micro_start)
+            loss_accumulator += loss.item()
+            micro_count += 1
+
+            # Perform optimizer step at the end of the accumulation window or if this will reach max steps
+            should_step = (micro_count % self.accumulate_grad_batches == 0)
+            if should_step:
+                # Gradient clipping and optimizer step
+                if self.use_amp:
+                    if self.gradient_clip_val > 0:
+                        self.scaler.unscale_(self.optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_val)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    if self.gradient_clip_val > 0:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_val)
+                    self.optimizer.step()
+
+                # Scheduler step after optimizer step
+                if self.scheduler is not None:
+                    self.scheduler.step()
+                    current_lr = self.scheduler.get_last_lr()[0]
+                else:
+                    current_lr = self.learning_rate
+
+                # Update optimizer step counter (global_step) and logs
+                self.global_step += 1
+
+                # Record per-optimizer-step time and averaged loss
+                batch_times.append(opt_step_time_acc)
+                avg_loss = loss_accumulator / float(self.accumulate_grad_batches)
+                losses.append(avg_loss)
+
+                # Reset accumulators for next window
+                opt_step_time_acc = 0.0
+                loss_accumulator = 0.0
+
+                # Log to Weights & Biases once per optimizer step
+                if self.wandb_run:
+                    log_dict = {
+                        'train/loss': avg_loss,
+                        'train/step_time': batch_times[-1],
+                        'train/batch_size': X_train.shape[0],
+                        'train/global_step': self.global_step,
+                        'train/learning_rate': current_lr,
+                    }
+                    log_dict['train/schedule'] = self.schedule_name
+                    log_dict.update(self._latest_schedule_info)
+                    log_dict.update(self._latest_eval_metrics)
+                    log_dict.update(self._latest_benchmark_metrics)
+                    self.wandb_run.log(log_dict, step=self.global_step)
+
+                # Print progress - more frequent at start, less frequent later
+                if self.global_step <= 10 or self.global_step % max(1, self.max_steps // 10) == 0:
+                    wandb_status = "[wandb]" if self.wandb_run else "[no wandb]"
+                    lr_info = f"LR: {current_lr:.6f}" if self.scheduler is not None else ""
+                    eff_bs = X_train.shape[0] * self.accumulate_grad_batches
+                    print(f"   Step {self.global_step:4d}/{self.max_steps} | Loss: {avg_loss:.6f} | Time: {batch_times[-1]:.3f}s | Eff. batch size: {eff_bs} {lr_info} {wandb_status}")
+
+                # Save model checkpoint if requested
+                if self.run_save_dir and self.save_every > 0 and self.global_step % self.save_every == 0:
+                    self.save_model()
+
+                # Run evaluation if requested (triggered on optimizer steps)
+                if (self.eval_dataloaders is not None and 
+                    self.eval_every > 0 and 
+                    self.global_step % self.eval_every == 0):
+                    eval_metrics = self.evaluate()
+                    if not math.isnan(self._latest_schedule_info['train/t0']) and not math.isnan(self._latest_schedule_info['train/alpha0']):
+                        t0 = self._latest_schedule_info['train/t0']
+                        a0 = self._latest_schedule_info['train/alpha0']
+                        print(f"[Eval] First-in-batch schedule: t={t0:.4f}, alpha={a0:.4f}, schedule={self.schedule_name}")
+                    if self.wandb_run and eval_metrics:
+                        self.wandb_run.log(eval_metrics, step=self.global_step)
+                    if self.benchmark_eval_fidelity:
+                        try:
+                            self._run_benchmark_with_current_model(
+                                fidelity=self.benchmark_eval_fidelity,
+                                tag=f"eval_step{self.global_step}"
+                            )
+                        except Exception as e:
+                            print(f"[Trainer] Benchmark at eval step {self.global_step} failed: {e}")
+                else:
+                    if (self.enable_model_selection and 
+                        self.eval_dataloaders is None and 
+                        self.global_step % max(1, self.max_steps // 20) == 0):
+                        self._update_best_model({}, train_loss=avg_loss)
+            
+            else:
+                # If not an optimizer step: optionally update best model when no eval loaders are used
                 if (self.enable_model_selection and 
                     self.eval_dataloaders is None and 
-                    self.global_step % max(1, self.max_steps // 20) == 0):  # Check every 5% of training
+                    self.global_step % max(1, self.max_steps // 20) == 0):
                     self._update_best_model({}, train_loss=loss.item())
         
         # End total timing

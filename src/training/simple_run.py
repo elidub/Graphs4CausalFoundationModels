@@ -499,6 +499,7 @@ def main():
             eval_dataloaders=eval_dataloaders,  # Pass evaluation dataloaders list
             eval_every=training_config.get("eval_every", 0),  # Evaluation frequency
             eval_batches=training_config.get("eval_batches", 10),  # Number of eval batches
+            accumulate_grad_batches=training_config.get("accumulate_grad_batches", 1),  # Gradient accumulation factor
             # Model selection parameters
             enable_model_selection=training_config.get("model_selection_enabled", False),
             model_selection_metric=training_config.get("model_selection_metric", "eval/mse_median"),
