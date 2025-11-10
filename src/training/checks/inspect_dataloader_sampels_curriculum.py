@@ -222,11 +222,43 @@ class DataloaderDatasetVisualizer:
 
             interpolation_function = str(self.config.get('interpolation_function', 'linear')).strip().lower().rstrip('.')
 
+            # Auto-compute dataset_size when configured as None for t0/t1
+            try:
+                max_steps = int(training_config.get('max_steps', 10))
+                batch_size_cfg = int(training_config.get('batch_size', 1))
+                accum = int(training_config.get('accumulate_grad_batches', 1))
+                computed_ds_size = max(1, max_steps * batch_size_cfg * accum)
+            except Exception:
+                computed_ds_size = None
+
+            def _need_auto_size(dcfg: dict) -> bool:
+                if not isinstance(dcfg, dict):
+                    return False
+                ds_field = dcfg.get('dataset_size')
+                if ds_field is None:
+                    return True
+                if isinstance(ds_field, dict):
+                    val = ds_field.get('value')
+                else:
+                    val = ds_field
+                if val is None:
+                    return True
+                if isinstance(val, str) and val.strip().lower() == 'none':
+                    return True
+                return False
+
+            if computed_ds_size is not None and (_need_auto_size(dataset_config_t0) or _need_auto_size(dataset_config_t1)):
+                dataset_config_t0.setdefault('dataset_size', {})
+                dataset_config_t1.setdefault('dataset_size', {})
+                dataset_config_t0['dataset_size']['value'] = computed_ds_size
+                dataset_config_t1['dataset_size']['value'] = computed_ds_size
+                self.log(f"[INFO] Auto-set dataset_size for t0/t1 to {computed_ds_size} (max_steps={max_steps} * batch_size={batch_size_cfg} * accumulate_grad_batches={accum})")
+
             # Log some basics
             self.log(f"[INFO] Interpolation schedule: {interpolation_function}")
             ds_size0 = dataset_config_t0.get('dataset_size', {}).get('value', 'unknown')
             ds_size1 = dataset_config_t1.get('dataset_size', {}).get('value', 'unknown')
-            self.log(f"[INFO] Dataset sizes t0/t1: {ds_size0}/{ds_size1}")
+            self.log(f"[INFO] Dataset sizes t0/t1 (after auto-compute): {ds_size0}/{ds_size1}")
 
             self.dataset_maker = MakeInterpolatedPurelyObservationalDataset(
                 scm_config_t0=scm_config_t0,
@@ -241,6 +273,7 @@ class DataloaderDatasetVisualizer:
 
             self.log(f"[INFO] Creating curriculum dataset with seed {self.seed}…")
             self.dataset = self.dataset_maker.create_dataset()
+            self.log(f"[OK] Curriculum dataset created with {len(self.dataset)} samples")
 
             # If a fixed t is requested, override the dataset's time mapping
             if self.fixed_t is not None:
@@ -261,8 +294,38 @@ class DataloaderDatasetVisualizer:
             dataset_config = self.config.get('dataset_config', {})
             preprocessing_config = self.config.get('preprocessing_config', {})
 
+            # Auto-compute dataset_size when configured as None for classic config too
+            try:
+                max_steps = int(training_config.get('max_steps', 10))
+                batch_size_cfg = int(training_config.get('batch_size', 1))
+                accum = int(training_config.get('accumulate_grad_batches', 1))
+                computed_ds_size = max(1, max_steps * batch_size_cfg * accum)
+            except Exception:
+                computed_ds_size = None
+
+            def _need_auto_size_single(dcfg: dict) -> bool:
+                if not isinstance(dcfg, dict):
+                    return False
+                ds_field = dcfg.get('dataset_size')
+                if ds_field is None:
+                    return True
+                if isinstance(ds_field, dict):
+                    val = ds_field.get('value')
+                else:
+                    val = ds_field
+                if val is None:
+                    return True
+                if isinstance(val, str) and val.strip().lower() == 'none':
+                    return True
+                return False
+
+            if computed_ds_size is not None and _need_auto_size_single(dataset_config):
+                dataset_config.setdefault('dataset_size', {})
+                dataset_config['dataset_size']['value'] = computed_ds_size
+                self.log(f"[INFO] Auto-set dataset_size to {computed_ds_size} (max_steps={max_steps} * batch_size={batch_size_cfg} * accumulate_grad_batches={accum})")
+
             self.log(f"[INFO] SCM nodes: {scm_config.get('num_nodes', {}).get('value', 'unknown')}")
-            self.log(f"[INFO] Dataset size: {dataset_config.get('dataset_size', {}).get('value', 'unknown')}")
+            self.log(f"[INFO] Dataset size (after auto-compute): {dataset_config.get('dataset_size', {}).get('value', 'unknown')}")
             self.log(f"[INFO] Max features: {dataset_config.get('max_number_features', {}).get('value', 'unknown')}")
 
             self.dataset_maker = MakePurelyObservationalDataset(
