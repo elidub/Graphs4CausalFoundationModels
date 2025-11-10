@@ -12,7 +12,7 @@
 experiment_name: "early_test2"
 description: "First pipeline test. debug scale with fixed seeds for reproducibility"
 
-interpolation_function: "sigmoid" # sigmoid schedule with 10% head/tail clamp
+interpolation_function: "linear" # sigmoid schedule with 10% head/tail clamp
 
 scm_config_t0:
   num_nodes:
@@ -24,7 +24,7 @@ scm_config_t0:
     distribution: "beta"
     distribution_parameters:
       alpha: 2.0
-      beta: 8.0
+      beta: 10.0
   graph_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -52,7 +52,7 @@ scm_config_t0:
       low: 0
       high: 100000
   mlp_nonlins:
-    value: "tabicl"
+    value: "mixed"
   mlp_num_hidden_layers:
     distribution: "categorical"
     distribution_parameters:
@@ -61,9 +61,9 @@ scm_config_t0:
         - 1
         - 2
       probabilities:
-        - 0.9
-        - 0.025
-        - 0.025
+        - 1.0
+        - 0.0
+        - 0.0
   mlp_hidden_dim:
     distribution: "categorical"
     distribution_parameters:
@@ -153,8 +153,7 @@ scm_config_t0:
     distribution: "lognormal"
     distribution_parameters:
       mean: 1.0
-      std: 1.0
-      std: 1.0
+      std: 1.0    
   exo_std_std:
     distribution: "uniform"
     distribution_parameters:
@@ -197,12 +196,12 @@ scm_config_t1:
     distribution: "discrete_uniform"
     distribution_parameters:
       low: 3
-      high: 51
+      high: 61
   graph_edge_prob:
     distribution: "beta"
     distribution_parameters:
       alpha: 2.0
-      beta: 8.0
+      beta: 3.0
   graph_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -216,9 +215,11 @@ scm_config_t1:
         #- 0.0
       - 0.1
       - 0.2
+      - 0.3
         #- 0.2
       probabilities:
-      - 0.8
+      - 0.7
+      - 0.1
       - 0.1
       - 0.1
         #- 0.8
@@ -239,9 +240,9 @@ scm_config_t1:
         - 1
         - 2
       probabilities:
-        - 0.9
-        - 0.025
-        - 0.025
+        - 0.8
+        - 0.1
+        - 0.1
   mlp_hidden_dim:
     distribution: "categorical"
     distribution_parameters:
@@ -252,13 +253,15 @@ scm_config_t1:
         - 8
         - 12
         - 16
+        - 32 
       probabilities:
-        - 0.8
+        - 0.4
+        - 0.3
+        - 0.2
         - 0.1
-        - 0.05
-        - 0.05
-        - 0.0
-        - 0.0
+        - 0.1
+        - 0.1
+        - 0.1
 
   mlp_activation_mode:
     distribution: "categorical"
@@ -267,8 +270,8 @@ scm_config_t1:
         - "pre"
         - "post"
       probabilities:
-        - 0.8
-        - 0.2
+        - 0.5
+        - 0.5
       
   xgb_node_shape:
     value: [1]
@@ -289,8 +292,8 @@ scm_config_t1:
         - "pre"
         - "post"
       probabilities:
-        - 0.8
-        - 0.2
+        - 0.5
+        - 0.5
   xgb_node_shape:
     value: [1]
   xgb_n_training_samples:
@@ -337,13 +340,13 @@ scm_config_t1:
     distribution: "uniform"
     distribution_parameters:
       low: 0.1
-      high: 0.2
-      high: 0.2
+      high: 0.0
+      high: 0.3
   endo_std_mean:
     distribution: "lognormal"
     distribution_parameters:
       mean: -3.0
-      std: 0.2
+      std: 0.4
     #distribution: "uniform"
     #distribution_parameters:
     #  low: 0.1
@@ -352,8 +355,8 @@ scm_config_t1:
     distribution: "uniform"
     distribution_parameters:
       low: 0.1
-      high: 0.2
-      high: 0.2
+      high: 0.0
+      high: 0.4
   tabicl_noise_proportion:
     # Proportion of TabICL noise in the exogenous noise mixture
     # The remaining probability mass is uniformly distributed among
@@ -374,7 +377,7 @@ scm_config_t1:
 
 dataset_config_t0:
   dataset_size:
-    value: 100000000
+    value: "None"
   max_number_train_samples:
     value: 500
   number_train_samples_per_dataset:
@@ -397,7 +400,7 @@ dataset_config_t0:
       low: 0
       high: 100000
 
-preprocessing_config:
+preprocessing_config_t0:
   dropout_prob:
     distribution: "categorical"
     distribution_parameters:
@@ -411,10 +414,10 @@ preprocessing_config:
         - 0.5 
         - 0.6
       probabilities:
-      - 0.9
-      - 0.05
-      - 0.025
-      - 0.025
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
       - 0.0
       - 0.0
       - 0.0
@@ -438,8 +441,7 @@ preprocessing_config:
   remove_outliers:
     value: true
   outlier_quantile:
-    value: 0.95
-    value: 0.95
+    value: 0.99
   yeo_johnson:
     value: false
   random_seed:
@@ -450,13 +452,13 @@ preprocessing_config:
 
 dataset_config_t1:
   dataset_size:
-    value: 100000000
+    value: "None"
   max_number_train_samples:
     value: 500
   number_train_samples_per_dataset:
     distribution: "uniform"
     distribution_parameters:
-      low: 499
+      low: 100
       high: 500
   max_number_test_samples:
     value: 500
@@ -473,7 +475,7 @@ dataset_config_t1:
       low: 0
       high: 100000
 
-preprocessing_config:
+preprocessing_config_t1:
   dropout_prob:
     distribution: "categorical"
     distribution_parameters:
@@ -487,14 +489,14 @@ preprocessing_config:
         - 0.5 
         - 0.6
       probabilities:
-      - 0.9
+      - 0.8
+      - 0.1
       - 0.05
       - 0.025
       - 0.025
-      - 0.0
-      - 0.0
-      - 0.0
-      - 0.0
+      - 0.01
+      - 0.01
+      - 0.01
         #- 0.8
         #- 0.1
         #- 0.1
@@ -514,8 +516,7 @@ preprocessing_config:
   remove_outliers:
     value: true
   outlier_quantile:
-    value: 0.95
-    value: 0.95
+    value: 0.99
   yeo_johnson:
     value: false
   random_seed:
@@ -554,9 +555,9 @@ model_config:
   num_bars:  # number of bars (K). Higher values allow for more complex, fine-grained posteriors, but make training more difficult.
     value: 1000
   min_width:  # minimum width of each bar to avoid numerical issues
-    value: "1e-6"
+    value: "1e-7"
   scale_floor:  # for the tails, this ensures that the scale is never too small
-    value: "1e-3"
+    value: "1e-4"
   max_fit_items:  # maximum number of datasets to fit the BarDistribution initially.
     value: 10000000
   max_fit_batches:  # maximum number of batches to use when fitting the BarDistribution initially. This is usually not critical.
@@ -584,9 +585,10 @@ training_config:
   batch_size: # batch size
     value: 8
   accumulate_grad_batches:
-    value: 8
+    value: 1
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
     value: 64
+
 
   # Training Control
   early_stopping_patience: # patience for early stopping
@@ -604,7 +606,7 @@ training_config:
   checkpoint_dir:
     value: "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints"
   save_every: # save a checkpoint every n steps
-    value: 500
+    value: 1000
 
   # Hardware Configuration
   device:
@@ -622,13 +624,13 @@ training_config:
 
   # Model Checkpointing
   checkpoint_every_n_steps: # how often to save a model checkpoint
-    value: 500
+    value: 1000
 
   # Evaluation Configuration
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 500
+    value: 1000
   eval_batches: # number of batches to use for evaluation
     value: 200
   eval_dataset_size: # size of the evaluation dataset

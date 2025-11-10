@@ -13,9 +13,8 @@ Usage:
 """
 
 import sys
-from typing import Optional
-import yaml
 import os
+import json
 from datetime import datetime
 from pathlib import Path
 import numpy as np
@@ -23,8 +22,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 import warnings
+import argparse
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
@@ -43,48 +43,48 @@ if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
 
 # Import required modules
-from priordata_processing.Datasets.MakePurelyObservationalDataset import MakePurelyObservationalDataset
-from priordata_processing.Datasets.MakeInterpolatedPurelyObservationalDataset import (
-    MakeInterpolatedPurelyObservationalDataset,
-)
+# NOTE: Synthetic dataset maker removed; this script now focuses solely on cached real-world data.
+try:
+    # Prefer relative import within repo
+    from src.priordata_processing.Preprocessor import Preprocessor
+except Exception:
+    try:
+        # Fallback if running as a module
+        from priordata_processing.Preprocessor import Preprocessor
+    except Exception:
+        Preprocessor = None  # Will error later with a clear message if used
+
+# =====================================================================================
+# Real-world (OpenML cached) dataset support
+# =====================================================================================
+class RealWorldDataset(Dataset):
+    """Torch Dataset wrapping preprocessed real-world tabular datasets into SimplePFN batch items.
+
+    Each item returns (X_train, y_train, X_test, y_test) tensors with shapes:
+        X_train: [n_train, n_features]
+        y_train: [n_train, 1]
+        X_test:  [n_test, n_features]
+        y_test:  [n_test]  (will be reshaped by collate to [n_test] then squeezed later)
+    DataLoader will stack them to shapes expected by existing visualization code:
+        X_train_batch: [batch_size, n_train, n_features]
+    """
+    def __init__(self, items):
+        self.items = items  # list of dicts with keys X_train, y_train, X_test, y_test
+
+    def __len__(self):
+        return len(self.items)
+
+    def __getitem__(self, idx):
+        entry = self.items[idx]
+        return (
+            entry['X_train'],
+            entry['y_train'],
+            entry['X_test'],
+            entry['y_test'],
+        )
 
 
-def load_yaml_config(config_path: str):
-    """Load YAML configuration file."""
-    # Convert to Path and make it relative to repository root
-    if not Path(config_path).is_absolute():
-        # Get repository root path dynamically
-        file_path = Path(__file__)
-        # Check if we're in src/priors/training/checks/ or src/training/checks/
-        if 'priors' in str(file_path):
-            # For src/priors/training/checks/
-            repo_root = file_path.parent.parent.parent.parent.parent
-        else:
-            # For src/training/checks/
-            repo_root = file_path.parent.parent.parent.parent
-        config_path = repo_root / config_path
-    else:
-        config_path = Path(config_path)
-    
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-    
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    
-    print(f"[OK] Loaded config from: {config_path}")
-    return config
-
-
-def extract_config_values(config_dict):
-    """Extract values from YAML config format (handles both 'value' and direct values)."""
-    extracted = {}
-    for key, value in config_dict.items():
-        if isinstance(value, dict) and 'value' in value:
-            extracted[key] = value['value']
-        else:
-            extracted[key] = value
-    return extracted
+# Removed YAML helper functions: real-world mode only.
 
 
 class DataloaderDatasetVisualizer:
@@ -122,24 +122,17 @@ class DataloaderDatasetVisualizer:
         
         return trimmed, lower_bound, upper_bound
     
-    def __init__(self, config_path: str, seed: int = 42, fixed_t: Optional[float] = None):
-        """
-        Initialize the visualizer with a config file.
-        
-        Args:
-            config_path: Path to YAML configuration file
-            seed: Random seed for reproducibility
-        """
-        self.config_path = Path(config_path)
+    def __init__(self, seed: int = 42, max_datasets: int = 10, task_ids: str = ''):
+        """Initialize the real-world visualizer (YAML-free)."""
         self.seed = seed
-        self.config = None
-        self.dataset_maker = None
         self.dataset = None
         self.dataloader = None
         self.current_output_file = None  # Current output file for logging
         self.results_base_dir = None  # Base directory for all results
-        self.fixed_t = fixed_t  # If set, fix curriculum time to this value across samples
-        
+        self.max_datasets = max_datasets
+        self.task_ids = [int(t.strip()) for t in task_ids.split(',') if t.strip().isdigit()] if task_ids else []
+        self._dataset_target_map = {}
+
         # Dictionary to collect statistics across all datasets for summary
         self.all_stats = {
             'linear_train_r2': [],
@@ -173,130 +166,198 @@ class DataloaderDatasetVisualizer:
         print(message)
         
     def load_config(self):
-        """Load and parse the YAML configuration."""
-        self.log("\n[INFO] Loading configuration...")
-        self.config = load_yaml_config(str(self.config_path))
-        
-        self.log("[OK] Configuration loaded successfully")
-        self.log(f"[INFO] Experiment: {self.config.get('experiment_name', 'unnamed')}")
-        self.log(f"[INFO] Description: {self.config.get('description', 'no description')}")
-        
-        # Write the complete YAML config to the log file
-        self.log("\n" + "="*80)
-        self.log("                    COMPLETE YAML CONFIGURATION")
-        self.log("="*80)
-        # Convert config back to YAML format for pretty printing
-        config_yaml = yaml.dump(self.config, default_flow_style=False, sort_keys=False)
-        self.log(config_yaml)
-        self.log("="*80 + "\n")
+        """Initialize placeholder config labels for logging (no YAML)."""
+        self.log("\n[INFO] Real-world mode: YAML config not used.")
+        self.config = {
+            'dataset_config': {},
+            'experiment_name': 'real_world_inspection',
+            'description': 'Inspection of cached real-world OpenML datasets.'
+        }
         
     def create_dataset_and_dataloader(self, n_datasets_per_batch=None):
-        """Create dataset and dataloader from config (same as simple_run.py)."""
-        self.log("\n[INFO] Creating dataset and dataloader...")
-        
-        training_config = extract_config_values(self.config.get('training_config', {}))
+        """Create a dataloader over cached real-world OpenML datasets in data_cache."""
+        return self.create_real_world_dataloader(n_datasets_per_batch=n_datasets_per_batch)
 
-        is_curriculum = (
-            ('scm_config_t0' in self.config and 'scm_config_t1' in self.config)
-            and ('dataset_config_t0' in self.config and 'dataset_config_t1' in self.config)
-            and (
-                ('preprocessing_config_t0' in self.config and 'preprocessing_config_t1' in self.config)
-                or 'preprocessing_config' in self.config  # allow shared preprocessing config
-            )
-        )
+    def _load_task_mapping(self):
+        """Load task_to_dataset.json and build dataset_id -> target_name mapping."""
+        cache_dir = Path('data_cache')
+        mapping_path = cache_dir / 'task_to_dataset.json'
+        if not mapping_path.exists():
+            self.log(f"[WARN] Mapping file not found: {mapping_path}")
+            return
+        try:
+            data = json.load(open(mapping_path, 'r'))
+            for task_id, info in data.items():
+                ds_id = info.get('dataset_id')
+                target = info.get('target_name')
+                if ds_id is not None:
+                    self._dataset_target_map[int(ds_id)] = target
+            self.log(f"[INFO] Loaded mapping for {len(self._dataset_target_map)} datasets from task_to_dataset.json")
+        except Exception as e:
+            self.log(f"[WARN] Failed to load mapping: {e}")
 
-        if is_curriculum:
-            self.log("[INFO] Curriculum config detected (t0/t1). Building interpolated dataset…")
-            scm_config_t0 = self.config.get('scm_config_t0', {})
-            scm_config_t1 = self.config.get('scm_config_t1', {})
-            dataset_config_t0 = self.config.get('dataset_config_t0', {})
-            dataset_config_t1 = self.config.get('dataset_config_t1', {})
-            # If only one preprocessing_config provided, reuse for both
-            if 'preprocessing_config_t0' in self.config and 'preprocessing_config_t1' in self.config:
-                preprocessing_config_t0 = self.config.get('preprocessing_config_t0', {})
-                preprocessing_config_t1 = self.config.get('preprocessing_config_t1', {})
+    def create_real_world_dataloader(self, n_datasets_per_batch=None):
+        """Create a dataloader over cached real-world OpenML datasets in data_cache.
+
+        Each dataset becomes one item; batching allows reuse of existing visualization code.
+        """
+        self.log("\n[INFO] Creating real-world dataset dataloader from cached OpenML datasets...")
+        self._load_task_mapping()
+        cache_dir = Path('data_cache')
+        if not cache_dir.exists():
+            raise FileNotFoundError("data_cache directory not found; cannot load real-world datasets")
+
+        # Gather dataset IDs either from explicit task IDs mapping or directory scan
+        all_dirs = [d for d in cache_dir.iterdir() if d.is_dir() and d.name.startswith('openml_')]
+        dataset_ids = []
+        for d in all_dirs:
+            try:
+                dataset_ids.append(int(d.name.split('_', 1)[1]))
+            except Exception:
+                continue
+        dataset_ids = sorted(dataset_ids)
+        if self.task_ids:
+            # Filter by specified OpenML task IDs using mapping file
+            mapping_path = cache_dir / 'task_to_dataset.json'
+            if not mapping_path.exists():
+                self.log(f"[WARN] task_ids provided but mapping file missing: {mapping_path}")
             else:
-                preprocessing_shared = self.config.get('preprocessing_config', {})
-                preprocessing_config_t0 = preprocessing_shared
-                preprocessing_config_t1 = preprocessing_shared
+                try:
+                    mapping = json.load(open(mapping_path, 'r'))
+                    task_to_dataset = {int(k): v.get('dataset_id') for k, v in mapping.items() if v.get('dataset_id') is not None}
+                    filtered = []
+                    for tid in self.task_ids:
+                        ds_id = task_to_dataset.get(tid)
+                        if ds_id is not None:
+                            try:
+                                filtered.append(int(ds_id))
+                            except Exception:
+                                pass
+                    if filtered:
+                        dataset_ids = sorted(set(filtered))
+                except Exception as e:
+                    self.log(f"[WARN] Failed to parse mapping for task_ids filtering: {e}")
+        if self.max_datasets and self.max_datasets > 0:
+            dataset_ids = dataset_ids[: self.max_datasets]
+        self.log(f"[INFO] Found {len(dataset_ids)} cached datasets to process: {dataset_ids}")
 
-            interpolation_function = str(self.config.get('interpolation_function', 'linear')).strip().lower().rstrip('.')
-
-            # Log some basics
-            self.log(f"[INFO] Interpolation schedule: {interpolation_function}")
-            ds_size0 = dataset_config_t0.get('dataset_size', {}).get('value', 'unknown')
-            ds_size1 = dataset_config_t1.get('dataset_size', {}).get('value', 'unknown')
-            self.log(f"[INFO] Dataset sizes t0/t1: {ds_size0}/{ds_size1}")
-
-            self.dataset_maker = MakeInterpolatedPurelyObservationalDataset(
-                scm_config_t0=scm_config_t0,
-                scm_config_t1=scm_config_t1,
-                preprocessing_config_t0=preprocessing_config_t0,
-                preprocessing_config_t1=preprocessing_config_t1,
-                dataset_config_t0=dataset_config_t0,
-                dataset_config_t1=dataset_config_t1,
-                interpolation_function=interpolation_function,
-                seed=self.seed,
+        rng = np.random.default_rng(self.seed)
+        items = []
+        for ds_id in dataset_ids:
+            raw_path = cache_dir / f'openml_{ds_id}' / 'raw.csv'
+            if not raw_path.exists():
+                self.log(f"[WARN] raw.csv missing for dataset {ds_id}, skipping")
+                continue
+            try:
+                df = pd.read_csv(raw_path)
+            except Exception as e:
+                self.log(f"[WARN] Failed to read dataset {ds_id}: {e}")
+                continue
+            target = self._dataset_target_map.get(ds_id, df.columns[-1])
+            if target not in df.columns:
+                target = df.columns[-1]
+            # Preprocess and subsample EXACTLY like benchmarking pipeline
+            if Preprocessor is None:
+                raise ImportError("Preprocessor not found. Ensure src is on PYTHONPATH and priordata_processing/Preprocessor.py exists.")
+            # Split X/y with encoding and imputation mirroring Benchmark._preprocess_df
+            y_series = df[target]
+            X_df = df.drop(columns=[target])
+            num_cols = X_df.select_dtypes(include=["number"]).columns.tolist()
+            cat_cols = X_df.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+            if cat_cols:
+                from sklearn.preprocessing import LabelEncoder
+                for col in cat_cols:
+                    le = LabelEncoder()
+                    X_df[col] = X_df[col].astype(str).fillna("missing")
+                    X_df[col] = le.fit_transform(X_df[col])
+            for col in X_df.columns:
+                if X_df[col].isna().any():
+                    X_df[col] = X_df[col].fillna(X_df[col].mean())
+            feature_names = X_df.columns.tolist()
+            X_np = X_df.to_numpy().astype(np.float32)
+            y_np = y_series.to_numpy().astype(np.float32)
+            N, F = X_np.shape
+            if N < 10:
+                self.log(f"[WARN] Dataset {ds_id} too small (N={N}), skipping")
+                continue
+            # Defaults aligned with Benchmark: 50/50 split, keep all features unless specified
+            req_n_features = F
+            req_n_train = max(5, min(N // 2, N))
+            req_n_test = max(1, min(N - req_n_train, N - req_n_train))
+            # Build tensors with batch dim for Preprocessor
+            import torch
+            X_tensor = torch.from_numpy(X_np).unsqueeze(0)
+            y_tensor = torch.from_numpy(y_np).unsqueeze(0)
+            pre = Preprocessor(
+                n_features=req_n_features,
+                max_n_features=req_n_features,
+                n_train_samples=req_n_train,
+                max_n_train_samples=req_n_train,
+                n_test_samples=req_n_test,
+                max_n_test_samples=req_n_test,
+                negative_one_one_scaling=True,
+                standardize=True,
+                yeo_johnson=False,
+                remove_outliers=True,
+                outlier_quantile=0.90,
+                shuffle_samples=True,
+                shuffle_features=True,
             )
+            result = pre.process(X_tensor, y_tensor)
+            if result is None:
+                self.log(f"[WARN] Preprocessor failed for dataset {ds_id}; skipping")
+                continue
+            X_train_t, X_test_t, y_train_t, y_test_t = result
+            # Remove batch dim and ensure types
+            X_train = X_train_t[0].numpy()
+            X_test = X_test_t[0].numpy()
+            y_train = y_train_t[0].numpy()
+            y_test = y_test_t[0].numpy()
+            # Back to tensors for downstream consistency
+            X_train_t = torch.from_numpy(X_train)
+            X_test_t = torch.from_numpy(X_test)
+            # y_train as column vector to match SimplePFN convention
+            y_train_t = torch.from_numpy(y_train).reshape(-1, 1)
+            y_test_t = torch.from_numpy(y_test).reshape(-1)
+            items.append({
+                'dataset_id': ds_id,
+                'target': target,
+                'X_train': X_train_t,
+                'y_train': y_train_t,
+                'X_test': X_test_t,
+                'y_test': y_test_t,
+                'n_features': X_train.shape[1],
+                'n_train': X_train.shape[0],
+                'n_test': X_test.shape[0],
+            })
+            self.log(f"[OK] Prepared (benchmark-like) dataset {ds_id}: train={X_train.shape}, test={X_test.shape}, target='{target}'")
 
-            self.log(f"[INFO] Creating curriculum dataset with seed {self.seed}…")
-            self.dataset = self.dataset_maker.create_dataset()
-
-            # If a fixed t is requested, override the dataset's time mapping
-            if self.fixed_t is not None:
-                fixed_t_val = float(self.fixed_t)
-                self.log(f"[INFO] Forcing fixed curriculum time t={fixed_t_val:.3f} for all samples")
-
-                # Override time function; to avoid multiprocessing pickling issues, we'll use num_workers=0
-                def _fixed_time_for_index(_self, _idx: int) -> float:  # noqa: ANN001
-                    return fixed_t_val
-
-                # Bind to instance
-                import types as _types
-                self.dataset._time_for_index = _types.MethodType(_fixed_time_for_index, self.dataset)
-
-        else:
-            # Fallback to classic single-config dataset
-            scm_config = self.config.get('scm_config', {})
-            dataset_config = self.config.get('dataset_config', {})
-            preprocessing_config = self.config.get('preprocessing_config', {})
-
-            self.log(f"[INFO] SCM nodes: {scm_config.get('num_nodes', {}).get('value', 'unknown')}")
-            self.log(f"[INFO] Dataset size: {dataset_config.get('dataset_size', {}).get('value', 'unknown')}")
-            self.log(f"[INFO] Max features: {dataset_config.get('max_number_features', {}).get('value', 'unknown')}")
-
-            self.dataset_maker = MakePurelyObservationalDataset(
-                scm_config=scm_config,
-                preprocessing_config=preprocessing_config,
-                dataset_config=dataset_config,
+        if not items:
+            raise RuntimeError("No real-world datasets prepared; aborting.")
+        batch_size = n_datasets_per_batch or min(4, len(items))
+        self.log(f"[INFO] Building DataLoader with batch_size={batch_size}")
+        self.dataset = RealWorldDataset(items)
+        # Default collate will attempt to stack tensors across datasets, but our datasets have
+        # variable numbers of samples and features. Provide a custom collate_fn that keeps
+        # per-dataset tensors separate, returning lists (or tuples) so downstream code can
+        # iterate each dataset independently without requiring uniform shapes.
+        def _collate_variable(batch):
+            # batch is a list of items: (X_train, y_train, X_test, y_test)
+            X_train_list, y_train_list, X_test_list, y_test_list = zip(*batch)
+            return (
+                list(X_train_list),
+                list(y_train_list),
+                list(X_test_list),
+                list(y_test_list),
             )
-            self.log(f"[INFO] Creating dataset with seed {self.seed}…")
-            self.dataset = self.dataset_maker.create_dataset(seed=self.seed)
-            self.log(f"[OK] Dataset created with {len(self.dataset)} samples")
-        
-        # Create dataloader (same as simple_run.py)
-        # Override batch_size with n_datasets_per_batch if provided
-        if n_datasets_per_batch is not None:
-            batch_size = n_datasets_per_batch
-            self.log(f"[INFO] Overriding batch_size with N_DATASETS_PER_BATCH: {batch_size}")
-        else:
-            batch_size = training_config.get('batch_size', 4)
-
-        # Use single-process DataLoader when forcing fixed t to avoid pickling local bound method
-        num_workers = 0 if (is_curriculum and self.fixed_t is not None) else 4
-
-        self.log("[INFO] Creating dataloader:")
-        self.log(f"[INFO]   Batch size: {batch_size}")
-        self.log(f"[INFO]   Num workers: {num_workers}")
-
         self.dataloader = DataLoader(
             self.dataset,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=num_workers,
-            persistent_workers=num_workers > 0
+            num_workers=0,
+            collate_fn=_collate_variable,
         )
-        self.log("[OK] Dataloader created successfully")
+        self.log("[OK] Real-world dataloader created successfully")
         
     def extract_tabular_data_from_batch(self, batch):
         """
@@ -310,48 +371,24 @@ class DataloaderDatasetVisualizer:
         """
         datasets = []
         
-        if isinstance(batch, (list, tuple)) and len(batch) in (4, 6):
-            # SimplePFN format: [X_train, y_train, X_test, y_test]
-            if len(batch) == 6:
-                X_train, y_train, X_test, y_test, t_vals, a_vals = batch
-                try:
-                    # Log the first t/alpha in the batch for visibility
-                    t0 = float(t_vals[0].item()) if hasattr(t_vals, 'shape') else float(t_vals)
-                    a0 = float(a_vals[0].item()) if hasattr(a_vals, 'shape') else float(a_vals)
-                    self.log(f"[INFO] Batch metadata: t[0]={t0:.3f}, alpha[0]={a0:.3f}")
-                except Exception:
-                    pass
-            else:
-                X_train, y_train, X_test, y_test = batch
-            batch_size = X_train.shape[0]
-            
-            self.log("[INFO] SimplePFN format detected:")
+        if isinstance(batch, (list, tuple)) and len(batch) == 4:
+            # Real-world variable-shape collate format: lists of tensors
+            X_train_list, y_train_list, X_test_list, y_test_list = batch
+            batch_size = len(X_train_list)
+            self.log("[INFO] Variable-shape batch format detected (list-based):")
             self.log(f"[INFO]   Batch size: {batch_size}")
-            self.log(f"[INFO]   X_train shape: {X_train.shape}")
-            self.log(f"[INFO]   y_train shape: {y_train.shape}")
-            self.log(f"[INFO]   X_test shape: {X_test.shape}")
-            self.log(f"[INFO]   y_test shape: {y_test.shape}")
-            
-            # Extract individual datasets from the batch
             for i in range(batch_size):
-                # Get training data for this dataset
-                X_train_i = X_train[i].detach().cpu().numpy()  # Shape: [n_samples, n_features]
-                y_train_i = y_train[i].detach().cpu().numpy()  # Shape: [n_samples, 1] or [n_samples]
-                X_test_i = X_test[i].detach().cpu().numpy()    # Shape: [n_samples, n_features]
-                y_test_i = y_test[i].detach().cpu().numpy()    # Shape: [n_samples, 1] or [n_samples]
-                
-                # Combine X and y for visualization (squeeze if needed)
+                X_train_i = X_train_list[i].detach().cpu().numpy()
+                y_train_i = y_train_list[i].detach().cpu().numpy()
+                X_test_i = X_test_list[i].detach().cpu().numpy()
+                y_test_i = y_test_list[i].detach().cpu().numpy()
                 if len(y_train_i.shape) > 1 and y_train_i.shape[1] == 1:
                     y_train_i = y_train_i.squeeze(1)
                 if len(y_test_i.shape) > 1 and y_test_i.shape[1] == 1:
                     y_test_i = y_test_i.squeeze(1)
-                
                 datasets.append((X_train_i, y_train_i, X_test_i, y_test_i))
-                
         else:
-            self.log(f"[WARN] Unexpected batch format: {type(batch)}")
-            if hasattr(batch, '__len__'):
-                self.log(f"[WARN] Batch length: {len(batch)}")
+            self.log(f"[WARN] Unexpected batch container/type: {type(batch)} (len={getattr(batch,'__len__',lambda: 'n/a')()})")
             
         return datasets
     
@@ -519,7 +556,10 @@ class DataloaderDatasetVisualizer:
         self.log("[INFO] FEATURE COUNT ANALYSIS:")
         self.log(f"[INFO]   Config max_number_features: {max_features}")
         self.log(f"[INFO]   Actual active features: {n_active_features}")
-        self.log(f"[INFO]   Features lost to preprocessing: {int(max_features) - n_active_features if isinstance(max_features, (int, float)) else 'unknown'}")
+        if isinstance(max_features, (int, float)):
+            self.log(f"[INFO]   Features lost to preprocessing: {int(max_features) - n_active_features}")
+        else:
+            self.log("[INFO]   Features lost to preprocessing: unknown (real-world mode, no synthetic limits)")
         
         # Try to understand what happened to the features
         # Based on BasicProcessing.py, features can be lost due to:
@@ -529,38 +569,23 @@ class DataloaderDatasetVisualizer:
         # Get relevant preprocessing parameters
         preprocessing_config = self.config.get('preprocessing_config', {})
         feature_dropout_prob = preprocessing_config.get('feature_dropout_prob', {}).get('value', 0.0)
-        try:
-            feature_dropout_prob = float(feature_dropout_prob)
-        except Exception:
-            feature_dropout_prob = 0.0
         
         # Get SCM config for node info
         scm_config = self.config.get('scm_config', {})
         num_nodes = scm_config.get('num_nodes', {}).get('value', 'unknown')
         
-        self.log("[INFO] PREPROCESSING IMPACT ANALYSIS:")
-        self.log("[INFO]   Expected feature loss sources:")
-        self.log("[INFO]     - Target feature removed: 1 feature")
-        # Safe conversions for reporting
-        try:
-            max_features_int = int(max_features)
-        except Exception:
-            max_features_int = None
-        if max_features_int is not None:
-            drop_exp = int(feature_dropout_prob * max_features_int)
-            self.log(f"[INFO]     - Feature dropout (config {feature_dropout_prob}): ~{drop_exp} features expected")
-        else:
-            self.log(f"[INFO]     - Feature dropout (config {feature_dropout_prob}): expected features unknown (max_number_features not provided)")
-        self.log(f"[INFO]     - Original SCM features: {num_nodes} (from scm_config.num_nodes)")
-        if max_features_int is not None:
-            expected_remaining = max_features_int - 1  # Target removed
-            self.log(f"[INFO]     - Expected remaining after target removal: {expected_remaining}")
+        self.log("[INFO] PREPROCESSING IMPACT ANALYSIS (synthetic config references may be N/A):")
+        self.log("[INFO]   Potential feature loss sources:")
+        self.log("[INFO]     - Target feature removal (classification/regression target)")
+        if isinstance(max_features, (int, float)):
+            expected_remaining = int(max_features) - 1
             expected_after_dropout = expected_remaining * (1 - feature_dropout_prob)
-            self.log(f"[INFO]     - Expected after dropout: ~{expected_after_dropout:.1f}")
+            self.log(f"[INFO]     - Configured max features: {int(max_features)}")
+            self.log(f"[INFO]     - Expected remaining after target removal: {expected_remaining}")
+            self.log(f"[INFO]     - Expected after feature_dropout={feature_dropout_prob}: ~{expected_after_dropout:.1f}")
         else:
-            self.log("[INFO]     - Expected remaining after target removal: unknown")
-            self.log("[INFO]     - Expected after dropout: unknown")
-        self.log(f"[INFO]     - Actual remaining: {n_active_features}")
+            self.log("[INFO]     - Synthetic max features unknown → skipping dropout projection")
+        self.log(f"[INFO]     - Actual remaining (active): {n_active_features}")
         
         # CRITICAL DEBUGGING: The shape inconsistency!
         self.log("[CRITICAL] SHAPE INCONSISTENCY DETECTED:")
@@ -1287,21 +1312,27 @@ class DataloaderDatasetVisualizer:
             
             # Create histogram of feature counts with trimmed data
             feature_counts_trimmed, _, _ = self.trim_for_plotting(self.all_stats['feature_counts'])
-            plt.figure(figsize=(10, 6))
-            plt.hist(feature_counts_trimmed, bins=min(10, int(np.max(feature_counts_trimmed) - np.min(feature_counts_trimmed) + 1)), 
-                    alpha=0.7, color='steelblue', edgecolor='black')
-            plt.title('Feature Count Distribution Across Datasets (2.5%-97.5% range)', fontsize=14)
-            plt.xlabel('Number of Features', fontsize=12)
-            plt.ylabel('Number of Datasets', fontsize=12)
-            plt.grid(alpha=0.3)
-            plt.tight_layout()
-            
-            # Save histogram
-            feature_hist_path = summary_dir / 'feature_count_histogram.png'
-            plt.savefig(feature_hist_path, dpi=150, bbox_inches='tight')
-            plt.close()
-            
-            self.log(f"[INFO] Feature count histogram saved to: {feature_hist_path}")
+            if len(feature_counts_trimmed) > 0:
+                plt.figure(figsize=(10, 6))
+                # Safe bin calculation: handle case where all values are the same
+                feature_range = np.max(feature_counts_trimmed) - np.min(feature_counts_trimmed)
+                n_bins = min(10, max(1, int(feature_range + 1)))
+                plt.hist(feature_counts_trimmed, bins=n_bins, 
+                        alpha=0.7, color='steelblue', edgecolor='black')
+                plt.title('Feature Count Distribution Across Datasets (2.5%-97.5% range)', fontsize=14)
+                plt.xlabel('Number of Features', fontsize=12)
+                plt.ylabel('Number of Datasets', fontsize=12)
+                plt.grid(alpha=0.3)
+                plt.tight_layout()
+                
+                # Save histogram
+                feature_hist_path = summary_dir / 'feature_count_histogram.png'
+                plt.savefig(feature_hist_path, dpi=150, bbox_inches='tight')
+                plt.close()
+                
+                self.log(f"[INFO] Feature count histogram saved to: {feature_hist_path}")
+            else:
+                self.log(f"[WARN] No feature count data after trimming; skipping histogram")
         
         # 2. PREDICTABILITY SUMMARY
         self.log("\n" + "="*60)
@@ -1704,10 +1735,13 @@ class DataloaderDatasetVisualizer:
         if self.current_output_file and not self.current_output_file.closed:
             self.current_output_file.close()
             
-        # Restore original output file if it's still open
+        # Restore original output file and log summary info
         if original_output_file and not original_output_file.closed:
             self.current_output_file = original_output_file
             self.log(f"\n[INFO] Generated overall summary statistics in: {summary_dir}")
+        else:
+            # If original file is closed, set to None to avoid writing to closed file
+            self.current_output_file = None
     
     def run_visualization(self, n_batches=2, n_datasets_per_batch=3, results_base_dir=None):
         """
@@ -1728,14 +1762,13 @@ class DataloaderDatasetVisualizer:
         self.current_output_file = main_log
         
         self.log("=" * 60)
-        self.log("      DataLoader Dataset Visualization from YAML Config")
+        self.log("      Real-World Dataset Visualization")
         self.log("=" * 60)
         
         try:
-            # Step 1: Load config
+            # Step 1: Load config (synthetic) or placeholder (real)
             self.load_config()
-            
-            # Step 2: Create dataset and dataloader (override batch size)
+            # Step 2: Create appropriate dataloader
             self.create_dataset_and_dataloader(n_datasets_per_batch=n_datasets_per_batch)
             
             # Step 3: Sample batches and visualize datasets
@@ -1752,13 +1785,6 @@ class DataloaderDatasetVisualizer:
             self.log("=" * 60)
             
         except Exception as e:
-            # Ensure we have a valid log file handle (dataset-level "with" blocks may have closed it)
-            if (self.current_output_file is None) or getattr(self.current_output_file, "closed", False):
-                try:
-                    # Try append to the main log file
-                    self.current_output_file = open(main_log_path, 'a', encoding='utf-8')
-                except Exception:
-                    self.current_output_file = None
             self.log("=" * 60)
             self.log("[ERROR] Visualization failed!")
             self.log("=" * 60)
@@ -1780,90 +1806,60 @@ class DataloaderDatasetVisualizer:
 
 
 def main():
-    """Main entry point for dataloader dataset visualization."""
-    
-    # =============================================================
-    # CONFIGURATION - Edit these variables to change behavior
-    # =============================================================
-    
-    # Path to YAML config file (relative to repository root)
-    CONFIG_PATH = 'experiments/FirstTests/configs/early_test_curriculum.yaml'
-    
-    # Random seed for reproducibility
-    SEED = 42
-    
-    # Number of batches to sample from dataloader
-    N_BATCHES = 1
-    
-    # Number of datasets to visualize per batch
-    N_DATASETS_PER_BATCH = 10
+    """Main entry point for real-world dataset visualization from data_cache."""
+    parser = argparse.ArgumentParser(description="Inspect and visualize cached real-world tabular datasets.")
+    parser.add_argument('--seed', type=int, default=42, help="Random seed")
+    parser.add_argument('--n_batches', type=int, default=1, help="# of batches to sample")
+    parser.add_argument('--n_datasets_per_batch', type=int, default=16, help="# of datasets per batch to visualize")
+    parser.add_argument('--max_datasets', type=int, default=32, help="Max # of cached datasets to include")
+    parser.add_argument('--task_ids', type=str, default='', help="Comma-separated OpenML task IDs to filter (optional)")
+    args = parser.parse_args()
 
-    # Fixed curriculum time t in [0, 1]; when using curriculum configs, all samples will be drawn at this timepoint
-    FIXED_T = 0.0
-    
-    # ResultsDataloaderSamples will be saved to organized folders (plots will NOT be displayed)
-    # Format: checks/ResultsDataloaderSamples/run_YYYYMMDD_HHMMSS/batch_X/dataset_Y/
-    # A summary folder with overall statistics will also be created
-    
-    # Detect which directory we're running from to set correct results path
     if 'priors' in str(Path(__file__)):
-        # We're running from src/priors/training/checks/
-        RESULTS_BASE_DIR = 'src/priors/training/checks/ResultsDataloaderSamples'
+        base_dir = 'src/priors/training/checks'
     else:
-        # We're running from src/training/checks/
-        RESULTS_BASE_DIR = 'src/training/checks/ResultsDataloaderSamples'
-    
-    # =============================================================
-    # END CONFIGURATION
-    # =============================================================
-    
+        base_dir = 'src/training/checks'
+    RESULTS_BASE_DIR = f"{base_dir}/ResultsRealWorldSamples"
+
     # Create timestamped results directory
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     results_dir = Path(RESULTS_BASE_DIR) / f'run_{timestamp}'
     results_dir.mkdir(parents=True, exist_ok=True)
-    
+
     print("=" * 60)
-    print("      DataLoader Dataset Analysis - File Output Mode")
+    print("      Dataset Analysis - File Output Mode")
     print("=" * 60)
     print("Configuration:")
-    print(f"  CONFIG_PATH = {CONFIG_PATH}")
-    print(f"  SEED = {SEED}")
-    print(f"  N_BATCHES = {N_BATCHES}")
-    print(f"  N_DATASETS_PER_BATCH = {N_DATASETS_PER_BATCH}")
+    print(f"  SEED = {args.seed}")
+    print(f"  N_BATCHES = {args.n_batches}")
+    print(f"  N_DATASETS_PER_BATCH = {args.n_datasets_per_batch}")
+    print(f"  MAX_DATASETS = {args.max_datasets}")
+    print(f"  TASK_IDS = {args.task_ids or '(none)'}")
     print(f"  RESULTS_DIR = {results_dir}")
-    
-    # Debug information
-    script_path = Path(__file__)
-    script_dir = script_path.parent
-    repo_root = script_dir.parent.parent.parent.parent
-    expected_config_path = repo_root / CONFIG_PATH
-    
-    print("\nDebug Information:")
-    print(f"  Script Path: {script_path}")
-    print(f"  Script Directory: {script_dir}")
-    print(f"  Repository Root: {repo_root}")
-    print(f"  Expected Config Path: {expected_config_path}")
-    print(f"  Config Path Exists: {expected_config_path.exists()}")
+
+    # Debug information (synthetic only)
+    # No YAML debug info needed (real-only)
+
     print()
     print("Output will be saved to organized folders. Plots will NOT be displayed.")
     print("Analysis output will be written to both console and files.")
     print("An overall summary with statistics and histograms will be created in the summary/ folder.")
     print("=" * 60)
-    
+
     # Create visualizer
     visualizer = DataloaderDatasetVisualizer(
-        config_path=CONFIG_PATH,
-        seed=SEED,
-        fixed_t=FIXED_T,
+        seed=args.seed,
+        max_datasets=args.max_datasets,
+        task_ids=args.task_ids,
     )
-    
-    # Run visualization with interactive mode
+
+    # Run visualization
     visualizer.run_visualization(
-        n_batches=N_BATCHES,
-        n_datasets_per_batch=N_DATASETS_PER_BATCH,
+        n_batches=args.n_batches,
+        n_datasets_per_batch=args.n_datasets_per_batch,
         results_base_dir=results_dir
     )
-    
+
     print("=" * 60)
     print("Analysis complete! Results are saved in:")
     print(f"  {results_dir}")
