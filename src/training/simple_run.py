@@ -190,6 +190,45 @@ def main():
             pre_t0 = config.get('preprocessing_config_t0') or config.get('preprocessing_config') or {}
             pre_t1 = config.get('preprocessing_config_t1') or config.get('preprocessing_config') or {}
 
+            # Auto-compute dataset_size when configured as None for t0/t1
+            try:
+                max_steps = int(training_config.get('max_steps', 10))
+                batch_size_cfg = int(training_config.get('batch_size', 1))
+                accum = int(training_config.get('accumulate_grad_batches', 1))
+                computed_ds_size = max(1, max_steps * batch_size_cfg * accum)
+            except Exception:
+                computed_ds_size = None
+
+            def _need_auto_size(dcfg: dict) -> bool:
+                if not isinstance(dcfg, dict):
+                    return False
+                ds_field = dcfg.get('dataset_size')
+                if ds_field is None:
+                    return True
+                if isinstance(ds_field, dict):
+                    val = ds_field.get('value')
+                else:
+                    val = ds_field
+                if val is None:
+                    return True
+                if isinstance(val, str) and val.strip().lower() == 'none':
+                    return True
+                return False
+
+            if computed_ds_size is not None and (_need_auto_size(ds_t0) or _need_auto_size(ds_t1)):
+                ds_t0.setdefault('dataset_size', {})
+                ds_t1.setdefault('dataset_size', {})
+                ds_t0['dataset_size']['value'] = computed_ds_size
+                ds_t1['dataset_size']['value'] = computed_ds_size
+                print(f"   Auto-set dataset_size for t0/t1 to {computed_ds_size} (max_steps={max_steps} * batch_size={batch_size_cfg} * accumulate_grad_batches={accum})")
+                if wandb_run:
+                    wandb_run.log({
+                        'config/dataset_size_auto': computed_ds_size,
+                        'config/accumulate_grad_batches': accum,
+                        'config/max_steps': max_steps,
+                        'config/batch_size': batch_size_cfg,
+                    })
+
             print(f"   Building interpolated curriculum dataset (schedule={interp_name})...")
             interp_factory = MakeInterpolatedPurelyObservationalDataset(
                 scm_config_t0=scm_t0,
@@ -211,6 +250,40 @@ def main():
                 dataset_config=dataset_config
             )
             print("   Creating dataset...")
+            # Auto-compute dataset_size when configured as None for classic config too
+            try:
+                max_steps = int(training_config.get('max_steps', 10))
+                batch_size_cfg = int(training_config.get('batch_size', 1))
+                accum = int(training_config.get('accumulate_grad_batches', 1))
+                computed_ds_size = max(1, max_steps * batch_size_cfg * accum)
+            except Exception:
+                computed_ds_size = None
+            def _need_auto_size_single(dcfg: dict) -> bool:
+                if not isinstance(dcfg, dict):
+                    return False
+                ds_field = dcfg.get('dataset_size')
+                if ds_field is None:
+                    return True
+                if isinstance(ds_field, dict):
+                    val = ds_field.get('value')
+                else:
+                    val = ds_field
+                if val is None:
+                    return True
+                if isinstance(val, str) and val.strip().lower() == 'none':
+                    return True
+                return False
+            if computed_ds_size is not None and _need_auto_size_single(dataset_config):
+                dataset_config.setdefault('dataset_size', {})
+                dataset_config['dataset_size']['value'] = computed_ds_size
+                print(f"   Auto-set dataset_size to {computed_ds_size} (max_steps={max_steps} * batch_size={batch_size_cfg} * accumulate_grad_batches={accum})")
+                if wandb_run:
+                    wandb_run.log({
+                        'config/dataset_size_auto': computed_ds_size,
+                        'config/accumulate_grad_batches': accum,
+                        'config/max_steps': max_steps,
+                        'config/batch_size': batch_size_cfg,
+                    })
             dataset = dataset_maker.create_dataset(seed=42)
         print(f"   Dataset created with {len(dataset)} samples")
 
@@ -249,6 +322,7 @@ def main():
         eval_dataloaders = None
         eval_enabled = training_config.get("eval_enabled", False)
         eval_every = training_config.get("eval_every", 0)
+        eval_setup_start = time.time()
         
         if eval_enabled and eval_every > 0:
             print(f"\nEVALUATION SETUP:")
@@ -277,13 +351,14 @@ def main():
                 print(f"   Tail subset size: {len(tail_subset)} (indices {tail_start}..{total_len-1})")
                 print(f"   Batches per subset (requested): {eval_batches} (will cap by subset length)")
                 print(f"   Eval build time: {build_time:.4f}s")
+                print(f"   Using dedicated evaluation dataloaders (training dataloader will NOT be used for evaluation)")
                 if wandb_run:
                     wandb_run.log({'eval/build_time': build_time, 'eval/head_size': len(head_subset), 'eval/tail_size': len(tail_subset)})
                 print(f"   Evaluation setup complete")
         else:
             print(f"\nEVALUATION: Disabled (eval_enabled={eval_enabled}, eval_every={eval_every})")
-
-        print(f"Setting up evaluation done in ")
+        if eval_dataloaders:
+            print(f"Evaluation setup total time: {time.time() - eval_setup_start:.4f}s")
             
         # Get device first (needed for BarDistribution)
         device = get_device(training_config.get("device", "cpu"))
