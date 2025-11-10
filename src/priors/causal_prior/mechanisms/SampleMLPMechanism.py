@@ -64,6 +64,9 @@ class SampleMLPMechanism(BaseMechanism):
         layers: List[nn.Module] = []
         if n_hidden == 0:
             layers.append(nn.Linear(D, out_dim, bias=False))
+            act = RandomActivation(nonlins=nonlins, generator=self.gen)
+            layers.append(act)
+            
         else:
             d = D
             act = RandomActivation(nonlins=nonlins, generator=self.gen)
