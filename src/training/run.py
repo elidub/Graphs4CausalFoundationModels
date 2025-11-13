@@ -30,7 +30,7 @@ from priordata_processing.Datasets.InterpolatedObservationalDataset import Inter
 from models.SimplePFN import SimplePFNRegressor
 
 # Import our training modules
-from src.training.trainer import Trainer
+from trainer import Trainer
 from training_utils import load_yaml_config, extract_config_values, get_device, determine_input_size
 
 # Import BarDistribution for probabilistic output

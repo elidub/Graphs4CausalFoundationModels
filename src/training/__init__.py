@@ -49,7 +49,7 @@ trained_model = setup.run_training()
 ```
 """
 
-from .simplepfn_trainer import SimplePFNTrainer
+from .trainer import SimplePFNTrainer
 # from .SetupTraining import SetupTraining, quick_train
 from .configs import (
     get_training_config, 

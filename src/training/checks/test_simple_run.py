@@ -44,6 +44,8 @@ def load_and_modify_existing_config(config_path):
 
     config['model_config']['max_fit_batches'] = {'value': 10}
     config['training_config']['benchmark_final_fidelity'] = {'value': "low"}
+    config['training_config']['benchmark_final_fidelity'] = {'value': "low"}
+    config['training_config']['eval_batches'] = {'value': 5}  # Fewer eval batches
     #config['training_config']['eval_every'] = {'value': 3}  # Smaller eval dataset
     
     # Reduce dataset size for speed
@@ -55,7 +57,7 @@ def load_and_modify_existing_config(config_path):
 
 def run_simple_run_test(config_path):
     """Run the simple_run.py script with the test config, streaming output live."""
-    script_path = Path(__file__).parent.parent / 'simple_run.py'  # Go up one level to training directory
+    script_path = Path(__file__).parent.parent / "run.py"  # Go up one level to training directory
 
     if not script_path.exists():
         print(f"[ERROR] simple_run.py not found at: {script_path}")
