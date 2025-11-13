@@ -186,42 +186,6 @@ class BasicProcessing:
         Y_train = Y_train_b[0].unsqueeze(-1)
         Y_test = Y_test_b[0].unsqueeze(-1)
 
-        output = {
-            'X_train': X_train,
-            'Y_train': Y_train,
-            'X_test': X_test,
-            'Y_test': Y_test,
-        }
-
-        metadata = {
-            'target_feature': target_feat,
-            'target_col_original': target_col,
-            'original_feature_indices': feature_indices,
-            'kept_feature_original_indices': [feature_indices[i] for i in kept_cols],
-            'dropped_feature_original_indices': dropped_original_indices,
-            'original_num_features': original_num_features,
-            'original_num_samples': original_num_samples,
-            'n_train_samples': self.n_train_samples,
-            'n_test_samples': self.n_test_samples,
-            'max_n_train_samples': self.max_n_train_samples,
-            'max_n_test_samples': self.max_n_test_samples,
-            'n_features': self.n_features,
-            'max_n_features': self.max_n_features,
-            'negative_one_one_scaling': self.negative_one_one_scaling,
-            'standardize': self.standardize,
-            'yeo_johnson': self.yeo_johnson,
-            'remove_outliers': self.remove_outliers,
-            'outlier_quantile': self.outlier_quantile,
-            'y_clip_quantile': self.y_clip_quantile,
-            'dropout_prob': self.dropout_prob,
-            'shuffle_samples': self.shuffle_samples,            
-            'shuffle_features': self.shuffle_features,
-            'random_seed': self.random_seed,
-            'device': str(self.device) if self.device else None,
-            'dtype': str(self.dtype) if self.dtype else None,
-            'X_train_shape': tuple(X_train.shape),
-            'X_test_shape': tuple(X_test.shape),
-        }
 
         return X_train, Y_train, X_test, Y_test
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 import time
 import math
 from dataclasses import dataclass
@@ -10,8 +12,13 @@ import torch
 from torch import Tensor
 import matplotlib.pyplot as plt
 
-from MixedDist_RandomSTD import MixedDistRandomStd
-from Sample_STD import GammaMeanStd
+# Add src to path for imports when run directly
+src_path = Path(__file__).parent.parent.parent.parent
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
+from priors.causal_prior.noise_distributions.MixedDist_RandomSTD import MixedDistRandomStd
+from priors.causal_prior.noise_distributions.Sample_STD import GammaMeanStd
 
 @dataclass
 class IIDReport:

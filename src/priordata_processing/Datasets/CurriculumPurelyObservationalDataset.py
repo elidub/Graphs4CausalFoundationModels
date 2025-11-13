@@ -131,13 +131,10 @@ class CurriculumPurelyObservationalDataset(Dataset):
         seed = self.seed + idx
         torch.manual_seed(seed)  # Ensure reproducible sampling per item
 
-        # SCM: try passing time, then fallback
+        # SCM: require time support (no fallback)
         scm = None
         if hasattr(self.scm_sampler, "sample") and callable(self.scm_sampler.sample):
-            try:
-                scm = self.scm_sampler.sample(seed=seed, t=t)
-            except TypeError:
-                scm = self.scm_sampler.sample(seed=seed)
+            scm = self.scm_sampler.sample(seed=seed, t=t)
         else:
             raise TypeError("scm_sampler must provide a callable .sample method")
 

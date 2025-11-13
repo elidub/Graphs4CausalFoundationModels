@@ -173,14 +173,7 @@ scm_config_t0:
     distribution_parameters:
       low: 0.1
       high: 0.11
-  tabicl_noise_proportion:
-    # Proportion of TabICL noise in the exogenous noise mixture
-    # The remaining probability mass is uniformly distributed among
-    # Normal, Laplace, and StudentT distributions
-    # Range: [0.0, 1.0] where 0.0 = no TabICL, 1.0 = only TabICL
-    value: 0.0
-  scm_fast:
-    value: true
+
   use_exogenous_mechanisms:
     value: true
   mechanism_generator_seed:
@@ -357,14 +350,6 @@ scm_config_t1:
       low: 0.1
       high: 0.0
       high: 0.4
-  tabicl_noise_proportion:
-    # Proportion of TabICL noise in the exogenous noise mixture
-    # The remaining probability mass is uniformly distributed among
-    # Normal, Laplace, and StudentT distributions
-    # Range: [0.0, 1.0] where 0.0 = no TabICL, 1.0 = only TabICL
-    value: 0.0
-  scm_fast:
-    value: true
   use_exogenous_mechanisms:
     value: true
   mechanism_generator_seed:

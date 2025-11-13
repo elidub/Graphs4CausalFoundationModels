@@ -42,7 +42,7 @@ if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
 
 # Import required modules
-from priordata_processing.Datasets.MakePurelyObservationalDataset import MakePurelyObservationalDataset
+from priordata_processing.Datasets.ObservationalDataset import ObservationalDataset
 
 
 def load_yaml_config(config_path: str):
@@ -129,7 +129,6 @@ class DataloaderDatasetVisualizer:
         self.config_path = Path(config_path)
         self.seed = seed
         self.config = None
-        self.dataset_maker = None
         self.dataset = None
         self.dataloader = None
         self.current_output_file = None  # Current output file for logging
@@ -199,16 +198,14 @@ class DataloaderDatasetVisualizer:
         self.log(f"[INFO] Dataset size: {dataset_config.get('dataset_size', {}).get('value', 'unknown')}")
         self.log(f"[INFO] Max features: {dataset_config.get('max_number_features', {}).get('value', 'unknown')}")
         
-        # Create dataset maker (same as simple_run.py)
-        self.dataset_maker = MakePurelyObservationalDataset(
+        # Create dataset directly (using new refactored ObservationalDataset)
+        self.log(f"[INFO] Creating dataset with seed {self.seed}...")
+        self.dataset = ObservationalDataset(
             scm_config=scm_config,
             preprocessing_config=preprocessing_config,
-            dataset_config=dataset_config
+            dataset_config=dataset_config,
+            seed=self.seed
         )
-        
-        # Create dataset
-        self.log(f"[INFO] Creating dataset with seed {self.seed}...")
-        self.dataset = self.dataset_maker.create_dataset(seed=self.seed)
         self.log(f"[OK] Dataset created with {len(self.dataset)} samples")
         
         # Create dataloader (same as simple_run.py)
@@ -247,11 +244,11 @@ class DataloaderDatasetVisualizer:
         datasets = []
         
         if isinstance(batch, (list, tuple)) and len(batch) == 4:
-            # SimplePFN format: [X_train, y_train, X_test, y_test]
+            # Standard format: [X_train, y_train, X_test, y_test]
             X_train, y_train, X_test, y_test = batch
             batch_size = X_train.shape[0]
             
-            self.log("[INFO] SimplePFN format detected:")
+            self.log("[INFO] Standard format detected (4 elements):")
             self.log(f"[INFO]   Batch size: {batch_size}")
             self.log(f"[INFO]   X_train shape: {X_train.shape}")
             self.log(f"[INFO]   y_train shape: {y_train.shape}")
@@ -1705,12 +1702,7 @@ def main():
     # A summary folder with overall statistics will also be created
     
     # Detect which directory we're running from to set correct results path
-    if 'priors' in str(Path(__file__)):
-        # We're running from src/priors/training/checks/
-        RESULTS_BASE_DIR = 'src/priors/training/checks/ResultsDataloaderSamples'
-    else:
-        # We're running from src/training/checks/
-        RESULTS_BASE_DIR = 'src/training/checks/ResultsDataloaderSamples'
+    RESULTS_BASE_DIR = 'src/training/checks/ResultsDataloaderSamples'   
     
     # =============================================================
     # END CONFIGURATION

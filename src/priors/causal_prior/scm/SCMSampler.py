@@ -1,55 +1,184 @@
 """
-SCMSampler - A high-level interface for sampling Structural Causal Models (SCMs).
+SCMSampler - A comprehensive interface for sampling Structural Causal Models (SCMs).
 
-This class provides a convenient wrapper around the SCM sampling pipeline,
-taking a hyperparameter configuration and producing a fully built SCM ready for data generation.
+This class consolidates the entire SCM sampling pipeline into a single interface:
+1. Hyperparameter sampling from distributions (previously SCMHyperparameterSampler)
+2. SCM building with mechanisms and noise (previously SCMBuilder)  
+3. Data generation from the built SCM
+
+This unified design simplifies the workflow and reduces the need for multiple
+intermediate objects when working with randomly configured SCMs.
+
+Key Features
+------------
+- Flexible hyperparameter specification via distribution configs
+- Support for multiple mechanism types (MLP, XGBoost)
+- Configurable noise distributions (Gamma, Pareto)
+- Convenient batch sampling and data generation methods
+- Full reproducibility via seeding
+
+Example
+-------
+>>> config = {
+...     "num_nodes": {"distribution": "discrete_uniform", "distribution_parameters": {"low": 3, "high": 10}},
+...     "graph_edge_prob": {"distribution": "beta", "distribution_parameters": {"alpha": 2, "beta": 5}},
+...     "graph_seed": {"value": 42},
+... }
+>>> sampler = SCMSampler(config, seed=42)
+>>> scm = sampler.sample()
+>>> samples = sampler.build_and_sample(num_samples=100)
 """
 
-from typing import Dict, Any, Optional
+from __future__ import annotations
+from typing import Dict, Any, Optional, List, Literal, Tuple, Union
 import warnings
+import torch
+import torch.distributions as dist
+import sys
+import os
 
-from priors.causal_prior.scm.SCMHyperparameterSampler import SCMHyperparameterSampler
-from priors.causal_prior.scm.SCMBuilder import SCMBuilder
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
 from priors.causal_prior.scm.SCM import SCM
+from priors.causal_prior.causal_graph.CausalDAG import CausalDAG
+from priors.causal_prior.causal_graph.GraphSampler import GraphSampler
+from priors.causal_prior.mechanisms.SampleMLPMechanism import SampleMLPMechanism
+from priors.causal_prior.mechanisms.SampleXGBoostMechanism import SampleXGBoostMechanism
+from priors.causal_prior.noise_distributions.MixedDist import MixedDist
+from priors.causal_prior.noise_distributions.MixedDist_RandomSTD import MixedDistRandomStd
+from priors.causal_prior.noise_distributions.Sample_STD import GammaMeanStd, ParetoMeanStd
+from utils import FixedSampler, TorchDistributionSampler, CategoricalSampler, DiscreteUniformSampler, DistributionSampler
 
 
 class SCMSampler:
     """
-    A high-level sampler for Structural Causal Models (SCMs).
+    Comprehensive sampler for Structural Causal Models (SCMs).
     
-    This class encapsulates the complete SCM sampling pipeline:
-    1. Takes a hyperparameter configuration
+    This class consolidates the complete SCM sampling pipeline:
+    1. Takes a hyperparameter configuration with distributions
     2. Samples specific hyperparameters according to the configuration
-    3. Builds and returns a complete SCM ready for data generation
+    3. Builds the SCM with mechanisms and noise distributions
+    4. Provides convenient methods for data generation
     
-    The resulting SCM can be used to generate datasets by calling:
-    - scm.sample_exogenous(num_samples)
-    - scm.sample_endogenous_noise(num_samples) 
-    - data = scm.propagate(num_samples)
+    Parameters
+    ----------
+    hyperparameter_config : Dict[str, Any]
+        Configuration dictionary specifying distributions over SCM hyperparameters.
+        Each key is a hyperparameter name, and each value specifies either:
+        - A fixed value: {"value": fixed_value}
+        - A distribution: {"distribution": "type", "distribution_parameters": {...}}
+        
+        Supported distributions:
+        - "fixed": Fixed value
+        - "uniform": Uniform(low, high)
+        - "normal": Normal(mean, std)
+        - "lognormal": LogNormal(mean, std)
+        - "exponential": Exponential(lambd)
+        - "gamma": Gamma(alpha, beta)
+        - "beta": Beta(alpha, beta)
+        - "categorical": Categorical(choices, probabilities)
+        - "discrete_uniform": DiscreteUniform(low, high)
+        
+    seed : Optional[int], default None
+        Random seed for reproducible SCM sampling.
+        
+    verbose : bool, default False
+        Whether to print detailed information during sampling.
+        
+    Examples
+    --------
+    >>> # Create configuration
+    >>> config = {
+    ...     "num_nodes": {"distribution": "discrete_uniform", "distribution_parameters": {"low": 3, "high": 10}},
+    ...     "graph_edge_prob": {"distribution": "beta", "distribution_parameters": {"alpha": 2, "beta": 5}},
+    ...     "graph_seed": {"value": 42},
+    ...     "xgboost_prob": {"distribution": "uniform", "distribution_parameters": {"low": 0.0, "high": 0.5}},
+    ... }
+    >>> 
+    >>> # Create sampler and sample an SCM
+    >>> sampler = SCMSampler(config, seed=42)
+    >>> scm = sampler.sample()
+    >>> 
+    >>> # Generate data from the sampled SCM
+    >>> samples = sampler.sample_and_generate(scm, num_samples=100)
+    >>> print(f"Generated data with {len(samples)} features")
     
-    Args:
-        hyperparameter_config (Dict[str, Any]): Configuration dictionary specifying
-                                               distributions over SCM hyperparameters
-        seed (int, optional): Random seed for reproducible SCM sampling. Defaults to None
-        verbose (bool): Whether to print detailed information during sampling. Defaults to False
-        
-    Example:
-        >>> from priors.causal_prior.ExampleConfigs.Basic_Configs import default_sampling_config
-        >>> sampler = SCMSampler(default_sampling_config, seed=42)
-        >>> scm = sampler.sample()
-        >>> 
-        >>> # Generate data from the sampled SCM
-        >>> scm.sample_exogenous(num_samples=100)
-        >>> scm.sample_endogenous_noise(num_samples=100)
-        >>> data = scm.propagate(num_samples=100)
-        >>> print(f"Generated data with {len(data)} features")
-        
-    Attributes:
-        hyperparameter_config (Dict[str, Any]): The configuration used for sampling
-        seed (int, optional): Random seed used for sampling
-        verbose (bool): Verbosity flag
-        last_sampled_params (Dict[str, Any], optional): Parameters from the most recent sampling
+    >>> # Or use convenience method
+    >>> samples = sampler.build_and_sample(num_samples=100)
+    
+    Attributes
+    ----------
+    hyperparameter_config : Dict[str, Any]
+        The configuration used for sampling
+    seed : Optional[int]
+        Random seed used for sampling
+    verbose : bool
+        Verbosity flag
+    last_sampled_params : Optional[Dict[str, Any]]
+        Parameters from the most recent sampling
     """
+    
+    # Define expected hyperparameters and their types for validation
+    EXPECTED_HYPERPARAMETERS = {
+        # Required parameters
+        "num_nodes": int,
+        "graph_edge_prob": float,
+        "graph_seed": int,
+        
+        # Optional parameters with defaults
+        "xgboost_prob": float,
+        "mechanism_seed": int,
+        "mlp_nonlins": str,
+        "mlp_num_hidden_layers": int,
+        "mlp_hidden_dim": int,
+        "mlp_activation_mode": str,
+        "mlp_node_shape": tuple,
+        "xgb_num_hidden_layers": int,
+        "xgb_hidden_dim": int,
+        "xgb_activation_mode": str,
+        "xgb_node_shape": tuple,
+        "xgb_n_training_samples": int,
+        "xgb_add_noise": bool,
+        "random_additive_std": bool,
+        "exo_std_distribution": str,
+        "endo_std_distribution": str,
+        "exo_std": (float, type(None)),
+        "endo_std": (float, type(None)),
+        "exo_std_mean": (float, type(None)),
+        "exo_std_std": (float, type(None)),
+        "endo_std_mean": (float, type(None)),
+        "endo_std_std": (float, type(None)),
+        "use_exogenous_mechanisms": bool,
+        "mechanism_generator_seed": int,
+    }
+    
+    # Distribution factory mapping
+    DISTRIBUTION_FACTORIES = {
+        "fixed": lambda params: FixedSampler(params["value"]),
+        "uniform": lambda params: TorchDistributionSampler(
+            dist.Uniform(low=params["low"], high=params["high"])
+        ),
+        "normal": lambda params: TorchDistributionSampler(
+            dist.Normal(loc=params["mean"], scale=params["std"])
+        ),
+        "lognormal": lambda params: TorchDistributionSampler(
+            dist.LogNormal(loc=params["mean"], scale=params["std"])
+        ),
+        "exponential": lambda params: TorchDistributionSampler(
+            dist.Exponential(rate=params["lambd"])
+        ),
+        "gamma": lambda params: TorchDistributionSampler(
+            dist.Gamma(concentration=params["alpha"], rate=params["beta"])
+        ),
+        "beta": lambda params: TorchDistributionSampler(
+            dist.Beta(concentration1=params["alpha"], concentration0=params["beta"])
+        ),
+        "categorical": lambda params: CategoricalSampler(
+            params["choices"], params.get("probabilities")
+        ),
+        "discrete_uniform": lambda params: DiscreteUniformSampler(params["low"], params["high"]),
+    }
     
     def __init__(
         self, 
@@ -63,67 +192,250 @@ class SCMSampler:
         self.verbose = verbose
         self.last_sampled_params: Optional[Dict[str, Any]] = None
         
-        # Validate the configuration
-        self._validate_config()
+        # Create PyTorch generator for sampling
+        self.generator = torch.Generator()
+        if seed is not None:
+            self.generator.manual_seed(seed)
+        
+        # Build samplers
+        self.samplers = self._build_samplers()
     
-    def _validate_config(self) -> None:
-        """Validate that the hyperparameter configuration is properly formatted."""
-        if not isinstance(self.hyperparameter_config, dict):
-            raise TypeError("hyperparameter_config must be a dictionary")
+    def _build_samplers(self) -> Dict[str, DistributionSampler]:
+        """Build sampler objects from the configuration."""
+        samplers = {}
         
-        if not self.hyperparameter_config:
-            raise ValueError("hyperparameter_config cannot be empty")
+        for param_name, config in self.hyperparameter_config.items():
+            # Handle shorthand fixed value notation
+            if "value" in config and "distribution" not in config:
+                sampler = FixedSampler(config["value"])
+            elif "distribution" in config:
+                dist_type = config["distribution"]
+                if dist_type not in self.DISTRIBUTION_FACTORIES:
+                    raise ValueError(f"Unknown distribution type: {dist_type}")
+                
+                # Get distribution parameters
+                dist_params = config.get("distribution_parameters", {})
+                if dist_type == "fixed":
+                    if "value" not in config:
+                        raise ValueError(f"Fixed distribution for {param_name} requires 'value' key")
+                    dist_params = {"value": config["value"]}
+                
+                # Create sampler
+                try:
+                    sampler = self.DISTRIBUTION_FACTORIES[dist_type](dist_params)
+                except Exception as e:
+                    raise ValueError(f"Error creating sampler for {param_name}: {e}")
+            else:
+                raise ValueError(f"Configuration for {param_name} must specify 'distribution' or 'value'")
+            
+            samplers[param_name] = sampler
         
-        # Check for required keys (basic validation)
-        required_keys = ["num_nodes"]  # At minimum, we need to specify number of nodes
-        missing_keys = [key for key in required_keys if key not in self.hyperparameter_config]
-        if missing_keys:
-            warnings.warn(f"Configuration missing recommended keys: {missing_keys}")
+        return samplers
+    
+    def _sample_hyperparameters(self) -> Dict[str, Any]:
+        """Sample a single set of hyperparameters from the configured distributions."""
+        sampled_params = {}
+        
+        for param_name, sampler in self.samplers.items():
+            value = sampler.sample(self.generator)
+            
+            # Type validation and conversion
+            expected_type = self.EXPECTED_HYPERPARAMETERS[param_name]
+            if not isinstance(value, expected_type):
+                # Try to convert if possible
+                if isinstance(expected_type, type) and expected_type is int and isinstance(value, float):
+                    value = int(value)
+                elif isinstance(expected_type, type) and expected_type is float and isinstance(value, int):
+                    value = float(value)
+                elif isinstance(expected_type, type) and expected_type is tuple and isinstance(value, list):
+                    value = tuple(value)
+                elif isinstance(expected_type, tuple) and type(None) in expected_type:
+                    # Optional parameter - check if value is one of the allowed types
+                    allowed_types = [t for t in expected_type if t is not type(None)]
+                    if value is not None and not isinstance(value, tuple(allowed_types)):
+                        raise ValueError(f"Parameter {param_name} has invalid type. Expected one of {expected_type}, got {type(value)}")
+                else:
+                    raise ValueError(f"Parameter {param_name} has invalid type. Expected {expected_type}, got {type(value)}")
+            
+            sampled_params[param_name] = value
+        
+        return sampled_params
+    
+    def _build_scm(self, params: Dict[str, Any]) -> SCM:
+        """
+        Build an SCM from a set of hyperparameters.
+        
+        This method implements the SCM building logic previously in SCMBuilder.
+        
+        Parameters
+        ----------
+        params : Dict[str, Any]
+            Dictionary of hyperparameters for building the SCM.
+            
+        Returns
+        -------
+        SCM
+            A fully configured Structural Causal Model ready for sampling.
+        """
+        # Set default values for missing parameters
+        params = self._apply_defaults(params)
+        
+        # Step 1: Create the causal DAG
+        graph_sampler = GraphSampler(seed=params["graph_seed"])
+        graph = graph_sampler.sample_dag(num_nodes=params["num_nodes"], p=params["graph_edge_prob"])
+        causal_dag = CausalDAG(g=graph, check_acyclic=True)
+        
+        # Step 2: Create mechanisms for each node
+        mechanisms = self._create_mechanisms(causal_dag, params)
+        
+        # Step 3: Create noise distributions
+        exogenous_noise, endogenous_noise = self._create_noise_distributions(causal_dag, params)
+        
+        # Step 4: Build the SCM
+        scm = SCM(
+            dag=causal_dag,
+            mechanisms=mechanisms,
+            exogenous_noise=exogenous_noise,
+            endogenous_noise=endogenous_noise,
+            use_exogenous_mechanisms=params["use_exogenous_mechanisms"]
+        )
+        
+        return scm
+    
+    def _create_mechanisms(
+        self, 
+        causal_dag: CausalDAG, 
+        params: Dict[str, Any]
+    ) -> Dict[str, Union[SampleMLPMechanism, SampleXGBoostMechanism]]:
+        """Create mechanisms for each node in the DAG."""
+        mechanisms = {}
+        mechanism_type_generator = torch.Generator().manual_seed(params["mechanism_seed"])
+        
+        for i, node in enumerate(causal_dag.nodes()):
+            parents = causal_dag.parents(node)
+            input_dim = len(parents) if len(parents) > 0 else 1
+            
+            # Create a generator for this specific mechanism
+            mechanism_generator = torch.Generator().manual_seed(params["mechanism_generator_seed"] + i)
+            
+            # Decide mechanism type
+            use_xgboost = torch.rand(1, generator=mechanism_type_generator).item() < params["xgboost_prob"]
+            
+            if use_xgboost:
+                # XGBoost mechanism
+                mechanisms[node] = SampleXGBoostMechanism(
+                    input_dim=input_dim,
+                    num_hidden_layers=params["xgb_num_hidden_layers"],
+                    hidden_dim=params["xgb_hidden_dim"],
+                    activation_mode=params["xgb_activation_mode"],
+                    node_shape=params["xgb_node_shape"],
+                    n_training_samples=params["xgb_n_training_samples"],
+                    add_noise=params["xgb_add_noise"],
+                    generator=mechanism_generator
+                )
+            else:
+                # MLP mechanism
+                mechanisms[node] = SampleMLPMechanism(
+                    input_dim=input_dim,
+                    num_hidden_layers=params["mlp_num_hidden_layers"],
+                    hidden_dim=params["mlp_hidden_dim"],
+                    nonlins=params["mlp_nonlins"],
+                    activation_mode=params["mlp_activation_mode"],
+                    node_shape=params["mlp_node_shape"],
+                    generator=mechanism_generator
+                )
+        
+        return mechanisms
+    
+    def _create_noise_distributions(
+        self, 
+        causal_dag: CausalDAG, 
+        params: Dict[str, Any]
+    ) -> Tuple[Dict[str, Union[MixedDist, MixedDistRandomStd]], Dict[str, Union[MixedDist, MixedDistRandomStd]]]:
+        """Create noise distributions for exogenous and endogenous variables."""
+        exogenous_variables = causal_dag.exogenous_variables()
+        endogenous_variables = causal_dag.endogenous_variables()
+        
+        if not params["random_additive_std"]:
+            # Fixed standard deviation mode
+            exogenous_noise = {node: MixedDist(std=params["exo_std"]) for node in exogenous_variables}
+            endogenous_noise = {node: MixedDist(std=params["endo_std"]) for node in endogenous_variables}
+        else:
+            # Random standard deviation mode
+            # Create std samplers based on distribution type
+            if params["exo_std_distribution"] == "gamma":
+                exo_std_dist = GammaMeanStd(mean=params["exo_std_mean"], std=params["exo_std_std"])
+            elif params["exo_std_distribution"] == "pareto":
+                exo_std_dist = ParetoMeanStd(mean=params["exo_std_mean"], std=params["exo_std_std"])
+            else:
+                raise ValueError(f"Unknown exo_std_distribution: {params['exo_std_distribution']}")
+            
+            if params["endo_std_distribution"] == "gamma":
+                endo_std_dist = GammaMeanStd(mean=params["endo_std_mean"], std=params["endo_std_std"])
+            elif params["endo_std_distribution"] == "pareto":
+                endo_std_dist = ParetoMeanStd(mean=params["endo_std_mean"], std=params["endo_std_std"])
+            else:
+                raise ValueError(f"Unknown endo_std_distribution: {params['endo_std_distribution']}")
+            
+            # Prepare distributions list - use only base distributions with equal weights
+            distributions = [dist.Normal, dist.Laplace, dist.StudentT]
+            mixture_proportions = [1.0 / len(distributions)] * len(distributions)
+            
+            # Create noise distributions
+            exogenous_noise = {
+                node: MixedDistRandomStd(
+                    distributions=distributions,
+                    std_dist=exo_std_dist,
+                    mixture_proportions=mixture_proportions
+                )
+                for node in exogenous_variables
+            }
+            endogenous_noise = {
+                node: MixedDistRandomStd(
+                    distributions=distributions,
+                    std_dist=endo_std_dist,
+                    mixture_proportions=mixture_proportions
+                )
+                for node in endogenous_variables
+            }
+        
+        return exogenous_noise, endogenous_noise
     
     def sample(self, seed: Optional[int] = None) -> SCM:
         """
         Sample a complete SCM according to the hyperparameter configuration.
         
-        Args:
-            seed (int, optional): Random seed for this sampling. If None, uses the instance seed.
-                                If instance seed is also None, sampling will be non-deterministic.
+        Parameters
+        ----------
+        seed : Optional[int], default None
+            Random seed for this sampling. If None, uses the instance seed.
+            If instance seed is also None, sampling will be non-deterministic.
                                 
-        Returns:
-            SCM: A fully constructed Structural Causal Model ready for data generation
+        Returns
+        -------
+        SCM
+            A fully constructed Structural Causal Model ready for data generation.
             
-        Raises:
-            RuntimeError: If SCM construction fails due to invalid parameters
-            ValueError: If the sampled parameters are inconsistent
+        Raises
+        ------
+        RuntimeError
+            If SCM construction fails due to invalid parameters.
+        ValueError
+            If the sampled parameters are inconsistent.
         """
-        # Determine the seed to use
-        sampling_seed = seed if seed is not None else self.seed
+        # Update generator seed if provided
+        if seed is not None:
+            self.generator.manual_seed(seed)
         
         if self.verbose:
             print("Sampling SCM with configuration...")
-            if sampling_seed is not None:
-                print(f"Using seed: {sampling_seed}")
-            else:
-                print("Using non-deterministic sampling (no seed specified)")
+            if seed is not None:
+                print(f"Using seed: {seed}")
         
         try:
-            # Step 1: Sample hyperparameters according to the configuration
-            hyperparameter_sampler = SCMHyperparameterSampler(
-                self.hyperparameter_config, 
-                seed=sampling_seed
-            )
-            
-            if self.verbose:
-                print("Hyperparameter sampler created successfully")
-                print("Parameter summary:")
-                try:
-                    summary = hyperparameter_sampler.get_parameter_summary()
-                    print(summary)
-                except Exception as e:
-                    print(f"Could not get parameter summary: {e}")
-            
-            # Sample the specific parameters
-            sampled_params = hyperparameter_sampler.sample()
-            self.last_sampled_params = sampled_params.copy()  # Store for inspection
+            # Step 1: Sample hyperparameters
+            sampled_params = self._sample_hyperparameters()
+            self.last_sampled_params = sampled_params.copy()
             
             if self.verbose:
                 print(f"Sampled parameters for {sampled_params.get('num_nodes', '?')} nodes")
@@ -132,13 +444,11 @@ class SCMSampler:
                     if key in ['num_nodes', 'graph_edge_prob', 'xgboost_prob']:
                         print(f"  {key}: {value}")
             
-            # Step 2: Build the SCM using the sampled parameters
-            builder = SCMBuilder(**sampled_params)
-            scm = builder.build()
+            # Step 2: Build the SCM
+            scm = self._build_scm(sampled_params)
             
             if self.verbose:
                 print("SCM built successfully!")
-                # Try to get some basic info about the SCM
                 try:
                     num_nodes = len(scm.dag.nodes())
                     num_edges = len(scm.dag.edges())
@@ -155,163 +465,3 @@ class SCMSampler:
                 import traceback
                 traceback.print_exc()
             raise RuntimeError(error_msg) from e
-    
-    def sample_multiple(
-        self, 
-        count: int, 
-        base_seed: Optional[int] = None
-    ) -> list[SCM]:
-        """
-        Sample multiple SCMs with different random seeds.
-        
-        Args:
-            count (int): Number of SCMs to sample
-            base_seed (int, optional): Base seed for deterministic sampling. 
-                                     Each SCM will use base_seed + i as its seed.
-                                     If None, uses instance seed as base.
-                                     
-        Returns:
-            List[SCM]: List of sampled SCMs
-            
-        Raises:
-            ValueError: If count is not positive
-        """
-        if count <= 0:
-            raise ValueError("Count must be positive")
-        
-        # Determine base seed
-        if base_seed is None:
-            base_seed = self.seed
-        
-        if self.verbose:
-            print(f"Sampling {count} SCMs...")
-            if base_seed is not None:
-                print(f"Using base seed: {base_seed}")
-        
-        scms = []
-        for i in range(count):
-            if self.verbose:
-                print(f"\nSampling SCM {i+1}/{count}...")
-            
-            # Use deterministic seed if base_seed is available
-            scm_seed = base_seed + i if base_seed is not None else None
-            scm = self.sample(seed=scm_seed)
-            scms.append(scm)
-        
-        if self.verbose:
-            print(f"\nSuccessfully sampled {len(scms)} SCMs")
-        
-        return scms
-    
-    def get_last_sampled_params(self) -> Optional[Dict[str, Any]]:
-        """
-        Get the parameters from the most recent call to sample().
-        
-        Returns:
-            Dict[str, Any] or None: The sampled parameters, or None if sample() hasn't been called
-        """
-        return self.last_sampled_params.copy() if self.last_sampled_params else None
-    
-    def get_config_summary(self) -> str:
-        """
-        Get a summary of the hyperparameter configuration.
-        
-        Returns:
-            str: Human-readable summary of the configuration
-        """
-        summary_lines = ["SCMSampler Configuration Summary:"]
-        summary_lines.append(f"  Total parameters: {len(self.hyperparameter_config)}")
-        summary_lines.append(f"  Seed: {self.seed}")
-        summary_lines.append(f"  Verbose: {self.verbose}")
-        summary_lines.append("")
-        summary_lines.append("Key configuration parameters:")
-        
-        # Show important parameters
-        important_keys = [
-            'num_nodes', 'graph_edge_prob', 'xgboost_prob', 
-            'mlp_num_hidden_layers', 'mlp_hidden_dim',
-            'random_additive_std', 'scm_fast'
-        ]
-        
-        for key in important_keys:
-            if key in self.hyperparameter_config:
-                value = self.hyperparameter_config[key]
-                summary_lines.append(f"  {key}: {value}")
-        
-        # Count distribution vs value parameters
-        dist_params = sum(1 for v in self.hyperparameter_config.values() 
-                         if isinstance(v, dict) and 'distribution' in v)
-        value_params = sum(1 for v in self.hyperparameter_config.values() 
-                          if isinstance(v, dict) and 'value' in v)
-        
-        summary_lines.append("")
-        summary_lines.append("Parameter types:")
-        summary_lines.append(f"  Distribution parameters: {dist_params}")
-        summary_lines.append(f"  Fixed value parameters: {value_params}")
-        
-        return "\n".join(summary_lines)
-
-
-def create_scm_sampler_from_config(
-    config_name: str = "default",
-    seed: Optional[int] = None,
-    verbose: bool = False
-) -> SCMSampler:
-    """
-    Convenience function to create an SCMSampler from a predefined configuration.
-    
-    Args:
-        config_name (str): Name of the configuration to use. Currently supports:
-                          - "default": Uses default_sampling_config
-        seed (int, optional): Random seed for the sampler
-        verbose (bool): Whether to enable verbose output
-        
-    Returns:
-        SCMSampler: Configured SCMSampler instance
-        
-    Raises:
-        ValueError: If config_name is not recognized
-    """
-    if config_name == "default":
-        from priors.causal_prior.ExampleConfigs.Basic_Configs import default_sampling_config
-        config = default_sampling_config
-    else:
-        raise ValueError(f"Unknown config name: {config_name}. Supported: 'default'")
-    
-    return SCMSampler(config, seed=seed, verbose=verbose)
-
-
-# Example usage demonstration
-def _example_usage():
-    """Example of how to use SCMSampler."""
-    print("=== SCMSampler Usage Example ===\n")
-    
-    # Method 1: Using predefined config
-    print("1. Creating SCMSampler with default configuration...")
-    sampler = create_scm_sampler_from_config("default", seed=42, verbose=True)
-    print(sampler.get_config_summary())
-    
-    print("\n2. Sampling a single SCM...")
-    scm = sampler.sample()
-    
-    print("\n3. Generating data from the SCM...")
-    N_SAMPLES = 100
-    scm.sample_exogenous(num_samples=N_SAMPLES)
-    scm.sample_endogenous_noise(num_samples=N_SAMPLES)
-    data = scm.propagate(num_samples=N_SAMPLES)
-    
-    print(f"Generated dataset with {len(data)} features and {N_SAMPLES} samples")
-    for i, (feature_name, feature_data) in enumerate(data.items()):
-        if i < 3:  # Show first 3 features
-            print(f"  Feature '{feature_name}': shape {feature_data.shape}, "
-                  f"mean={feature_data.mean():.3f}, std={feature_data.std():.3f}")
-    
-    print("\n4. Sampling multiple SCMs...")
-    scms = sampler.sample_multiple(3, base_seed=100)
-    print(f"Sampled {len(scms)} different SCMs")
-    
-    print("\n=== Example completed! ===")
-
-
-if __name__ == "__main__":
-    _example_usage()

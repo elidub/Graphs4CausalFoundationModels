@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Optional, Tuple, Dict, Any, List
+from typing import Optional, Tuple, Dict, Any, List
 
 import time
 import numpy as np
@@ -27,7 +27,6 @@ class GraphStatistics:
         num_samples: int,
         num_nodes: int,
         p: float,
-        method: Literal["ER_vectorized", "ER_legacy"] = "ER_vectorized",
         include_graph: bool = False,
     ) -> pd.DataFrame:
         """
@@ -38,7 +37,7 @@ class GraphStatistics:
 
         for _ in range(num_samples):
             t0 = time.perf_counter()
-            G = self.sampler.sample_dag(num_nodes, p, method=method, return_perm=False)
+            G = self.sampler.sample_dag(num_nodes, p, return_perm=False)
             dt = time.perf_counter() - t0
 
             rec = self._compute_stats(G, num_nodes, max_edges)
@@ -134,7 +133,6 @@ class GraphStatistics:
         num_samples: int,
         num_nodes: int,
         p: float,
-        method: Literal["ER_vectorized", "ER_legacy"] = "ER_vectorized",
         bins: int = 30,
         show_corr: bool = False,
         savepath: Optional[str] = None,
@@ -146,7 +144,7 @@ class GraphStatistics:
         One-shot: sample graphs, compute stats, and plot everything.
         Also annotates the figure with a bootstrap 95% CI estimate for time to sample 1000 DAGs.
         """
-        df = self.sample_and_collect(num_samples, num_nodes, p, method=method)
+        df = self.sample_and_collect(num_samples, num_nodes, p)
 
         fig, _ = self.plot_histograms(
             df,
@@ -262,7 +260,6 @@ if __name__ == "__main__":
         num_samples=1000,
         num_nodes=30,
         p=0.2,
-        method="ER_vectorized",
         bins=25,
         suptitle="ER-DAG Statistics",
         show_corr=True,
