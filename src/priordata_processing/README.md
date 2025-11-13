@@ -1,13 +1,9 @@
-In this folder the code in priors is used to sample and process data for training. 
+This folder contains code to set up a dataset that sampels from the SCM. 
 
-So far, the core functionality can be found in Datasets/MakePurelyObservationalDataset.py. This class takes 
+The core functionality is in Datasets/ObservationalDataset.py
 
-- a SCM hyperparameter config, for the simulator of data. (For more details see the priors/causal_prior folder)
+An ObservationalDataset is a class that takes as input an SCM config, a Preprocessing config and a dataset config. 
 
-- a Preprocessing hyperparameter config, for the preprocessing of the data. This is implemented and explained in the priordata_processing/Preprocessing folder. This config determines the behaviour of the general preprocessing in priordata_processing/BasicProcessing.py 
-
-- A dataset config, that determines further details of the sampled dataset (which are not already covered by the prior config).
-
-The Datasets/MakePurelyObservationalDataset.py file outputs a PyTorch DataSet that can be used for training and evaluating the PFN. 
-
-Furthermore, in priordata_processing/Benchmark_Dataloader, the runtime performance of the dataloader can be evaluated. 
+- The SCM config determines hyperparameter distributions for the SCM. 
+- The dataset config determines how the datasets are generated from the SCM, i.e. how many samples to draw. 
+- The preprocessing config specifies standard preprocessing things for tabular data. 
