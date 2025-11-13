@@ -43,10 +43,8 @@ if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
 
 # Import required modules
-from priordata_processing.Datasets.MakePurelyObservationalDataset import MakePurelyObservationalDataset
-from priordata_processing.Datasets.MakeInterpolatedPurelyObservationalDataset import (
-    MakeInterpolatedPurelyObservationalDataset,
-)
+from priordata_processing.Datasets.ObservationalDataset import ObservationalDataset
+from priordata_processing.Datasets.InterpolatedObservationalDataset import InterpolatedObservationalDataset
 
 
 def load_yaml_config(config_path: str):
@@ -133,7 +131,6 @@ class DataloaderDatasetVisualizer:
         self.config_path = Path(config_path)
         self.seed = seed
         self.config = None
-        self.dataset_maker = None
         self.dataset = None
         self.dataloader = None
         self.current_output_file = None  # Current output file for logging
@@ -260,7 +257,8 @@ class DataloaderDatasetVisualizer:
             ds_size1 = dataset_config_t1.get('dataset_size', {}).get('value', 'unknown')
             self.log(f"[INFO] Dataset sizes t0/t1 (after auto-compute): {ds_size0}/{ds_size1}")
 
-            self.dataset_maker = MakeInterpolatedPurelyObservationalDataset(
+            self.log(f"[INFO] Creating interpolated dataset with seed {self.seed}…")
+            self.dataset = InterpolatedObservationalDataset(
                 scm_config_t0=scm_config_t0,
                 scm_config_t1=scm_config_t1,
                 preprocessing_config_t0=preprocessing_config_t0,
@@ -271,9 +269,7 @@ class DataloaderDatasetVisualizer:
                 seed=self.seed,
             )
 
-            self.log(f"[INFO] Creating curriculum dataset with seed {self.seed}…")
-            self.dataset = self.dataset_maker.create_dataset()
-            self.log(f"[OK] Curriculum dataset created with {len(self.dataset)} samples")
+            self.log(f"[OK] Interpolated dataset created with {len(self.dataset)} samples")
 
             # If a fixed t is requested, override the dataset's time mapping
             if self.fixed_t is not None:
@@ -328,13 +324,13 @@ class DataloaderDatasetVisualizer:
             self.log(f"[INFO] Dataset size (after auto-compute): {dataset_config.get('dataset_size', {}).get('value', 'unknown')}")
             self.log(f"[INFO] Max features: {dataset_config.get('max_number_features', {}).get('value', 'unknown')}")
 
-            self.dataset_maker = MakePurelyObservationalDataset(
+            self.log(f"[INFO] Creating observational dataset with seed {self.seed}…")
+            self.dataset = ObservationalDataset(
                 scm_config=scm_config,
                 preprocessing_config=preprocessing_config,
                 dataset_config=dataset_config,
+                seed=self.seed,
             )
-            self.log(f"[INFO] Creating dataset with seed {self.seed}…")
-            self.dataset = self.dataset_maker.create_dataset(seed=self.seed)
             self.log(f"[OK] Dataset created with {len(self.dataset)} samples")
         
         # Create dataloader (same as simple_run.py)
@@ -1850,7 +1846,7 @@ def main():
     # =============================================================
     
     # Path to YAML config file (relative to repository root)
-    CONFIG_PATH = 'experiments/FirstTests/configs/early_test_curriculum.yaml'
+    CONFIG_PATH = 'experiments/FirstTests/configs/basic_curriculum.yaml'
     
     # Random seed for reproducibility
     SEED = 42
@@ -1862,7 +1858,7 @@ def main():
     N_DATASETS_PER_BATCH = 50
 
     # Fixed curriculum time t in [0, 1]; when using curriculum configs, all samples will be drawn at this timepoint
-    FIXED_T = 1.0
+    FIXED_T = 0.0
     
     # ResultsDataloaderSamples will be saved to organized folders (plots will NOT be displayed)
     # Format: checks/ResultsDataloaderSamples/run_YYYYMMDD_HHMMSS/batch_X/dataset_Y/

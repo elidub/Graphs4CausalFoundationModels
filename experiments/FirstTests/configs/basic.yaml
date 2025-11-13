@@ -246,7 +246,7 @@ preprocessing_config:
   target_feature:
     value: null
   negative_one_one_scaling:
-    value: false
+    value: true
   standardize:
     value: true
   remove_outliers:

@@ -16,7 +16,7 @@ from typing import Optional, Dict, Any, Union, Callable
 from sklearn.metrics import r2_score, mean_squared_error
 
 
-class SimplePFNTrainer:
+class Trainer:
     """Trainer for SimplePFN that accepts a dataloader as input."""
     
     def __init__(

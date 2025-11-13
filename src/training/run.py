@@ -24,15 +24,13 @@ if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
 
 # AFTER the preamble, do project imports
-from priordata_processing.Datasets.MakePurelyObservationalDataset import MakePurelyObservationalDataset
-# Import interpolated curriculum factory (for t0/t1 curriculum configs)
-from priordata_processing.Datasets.MakeInterpolatedPurelyObservationalDataset import (
-    MakeInterpolatedPurelyObservationalDataset,
-)
+from priordata_processing.Datasets.ObservationalDataset import ObservationalDataset
+# Import interpolated curriculum dataset (for t0/t1 curriculum configs)
+from priordata_processing.Datasets.InterpolatedObservationalDataset import InterpolatedObservationalDataset
 from models.SimplePFN import SimplePFNRegressor
 
 # Import our training modules
-from simplepfn_trainer import SimplePFNTrainer
+from src.training.trainer import Trainer
 from training_utils import load_yaml_config, extract_config_values, get_device, determine_input_size
 
 # Import BarDistribution for probabilistic output
@@ -230,7 +228,7 @@ def main():
                     })
 
             print(f"   Building interpolated curriculum dataset (schedule={interp_name})...")
-            interp_factory = MakeInterpolatedPurelyObservationalDataset(
+            dataset = InterpolatedObservationalDataset(
                 scm_config_t0=scm_t0,
                 scm_config_t1=scm_t1,
                 preprocessing_config_t0=pre_t0,
@@ -240,16 +238,9 @@ def main():
                 interpolation_function=interp_name,
                 seed=42,
             )
-            print("   Creating curriculum dataset...")
-            dataset = interp_factory.create_dataset()
+            print(f"   Interpolated curriculum dataset created with {len(dataset)} samples")
         else:
-            print("   Creating dataset maker (classic)...")
-            dataset_maker = MakePurelyObservationalDataset(
-                scm_config=scm_config,
-                preprocessing_config=preprocessing_config,
-                dataset_config=dataset_config
-            )
-            print("   Creating dataset...")
+            print("   Creating observational dataset (classic)...")
             # Auto-compute dataset_size when configured as None for classic config too
             try:
                 max_steps = int(training_config.get('max_steps', 10))
@@ -284,7 +275,12 @@ def main():
                         'config/max_steps': max_steps,
                         'config/batch_size': batch_size_cfg,
                     })
-            dataset = dataset_maker.create_dataset(seed=42)
+            dataset = ObservationalDataset(
+                scm_config=scm_config,
+                preprocessing_config=preprocessing_config,
+                dataset_config=dataset_config,
+                seed=42,
+            )
         print(f"   Dataset created with {len(dataset)} samples")
 
         # Create DataLoader in main method
@@ -484,7 +480,7 @@ def main():
             run_name = config.get('experiment_name', 'simplepfn')
         
         # Initialize trainer
-        trainer = SimplePFNTrainer(
+        trainer = Trainer(
             model=model,
             dataloader=dataloader,
             learning_rate=training_config.get("learning_rate", 1e-3),
