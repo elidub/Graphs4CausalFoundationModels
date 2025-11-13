@@ -441,7 +441,7 @@ preprocessing_config_t0:
   remove_outliers:
     value: true
   outlier_quantile:
-    value: 0.99
+    value: 0.95
   yeo_johnson:
     value: false
   random_seed:
@@ -516,7 +516,7 @@ preprocessing_config_t1:
   remove_outliers:
     value: true
   outlier_quantile:
-    value: 0.99
+    value: 0.95
   yeo_johnson:
     value: false
   random_seed:
@@ -537,7 +537,7 @@ model_config:
   dropout:  # dropout probability
     value: 0.1
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
-    value: 1
+    value: 2
   num_features:
     value: 50  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
 
@@ -555,17 +555,17 @@ model_config:
   num_bars:  # number of bars (K). Higher values allow for more complex, fine-grained posteriors, but make training more difficult.
     value: 1000
   min_width:  # minimum width of each bar to avoid numerical issues
-    value: "1e-7"
+    value: "1e-6"
   scale_floor:  # for the tails, this ensures that the scale is never too small
-    value: "1e-4"
+    value: "1e-3"
   max_fit_items:  # maximum number of datasets to fit the BarDistribution initially.
     value: 10000000
   max_fit_batches:  # maximum number of batches to use when fitting the BarDistribution initially. This is usually not critical.
     value: 1000000
   log_prob_clip_min:  # clip minimum log probability to avoid numerical issues
-    value: -100000.0
+    value: -1000.00
   log_prob_clip_max: # clip maximum log probability to avoid numerical issues
-    value: 1000000.0
+    value: 1000.0
 
 # ===============================================================================
 # Training Configuration 
