@@ -135,7 +135,8 @@ class ObservationalDataset(Dataset):
             scm_seed = (seed * 31 + 17) % (2**32)
         self.scm_sampler = SCMSampler(scm_config, seed=scm_seed)
         
-        # Sample dataset parameters once (these are fixed for the whole dataset)
+        # Sample dataset parameters once to get the size
+        # (size is the only parameter that should be fixed for the whole dataset)
         generator = torch.Generator()
         if seed is not None:
             generator.manual_seed(seed)
@@ -147,38 +148,15 @@ class ObservationalDataset(Dataset):
             generator
         )
         
-        # Extract dataset parameters
+        # Extract only the dataset size (fixed for whole dataset)
         self.size = dataset_params["dataset_size"]
+        
+        # Store max values as attributes (these should be fixed)
         self.max_number_features = dataset_params["max_number_features"]
         self.max_number_train_samples = dataset_params["max_number_train_samples"]
         self.max_number_test_samples = dataset_params["max_number_test_samples"]
         
-        # Store sample count distributions
-        train_dist = dataset_params["number_train_samples_per_dataset"]
-        test_dist = dataset_params["number_test_samples_per_dataset"]
-        
-        # Convert fixed integers to distributions if needed
-        if isinstance(train_dist, int):
-            self.number_train_samples_per_dataset_distribution = FixedSampler(train_dist)
-        elif isinstance(train_dist, torch.distributions.Distribution):
-            self.number_train_samples_per_dataset_distribution = train_dist
-        else:
-            self.number_train_samples_per_dataset_distribution = train_dist
-            
-        if isinstance(test_dist, int):
-            self.number_test_samples_per_dataset_distribution = FixedSampler(test_dist)
-        elif isinstance(test_dist, torch.distributions.Distribution):
-            self.number_test_samples_per_dataset_distribution = test_dist
-        else:
-            self.number_test_samples_per_dataset_distribution = test_dist
-        
-        # Sample preprocessing parameters once (these are fixed for the whole dataset)
-        self.preprocessing_params = self._sample_parameters(
-            self.preprocessing_samplers,
-            self.EXPECTED_PREPROCESSING_HYPERPARAMETERS,
-            "preprocessing",
-            generator
-        )
+        # Don't store the distributions - they will be sampled per item in __getitem__
     
     def _build_samplers(self, config: Dict[str, Any], expected_params: Dict[str, Any], 
                        config_name: str) -> Dict[str, Any]:
@@ -284,33 +262,47 @@ class ObservationalDataset(Dataset):
         seed = self.seed + idx if self.seed is not None else idx
         torch.manual_seed(seed)
         
-        # Sample an SCM
-        scm = self.scm_sampler.sample(seed=seed)
+        # Create a generator for this specific item
+        item_generator = torch.Generator()
+        item_generator.manual_seed(seed)
+        
+        # Sample preprocessing parameters for this item
+        preprocessing_params = self._sample_parameters(
+            self.preprocessing_samplers,
+            self.EXPECTED_PREPROCESSING_HYPERPARAMETERS,
+            "preprocessing",
+            item_generator
+        )
+        
+        # Sample dataset parameters for this item (except size and max values which are fixed)
+        dataset_params = self._sample_parameters(
+            self.dataset_samplers,
+            self.EXPECTED_DATASET_HYPERPARAMETERS,
+            "dataset",
+            item_generator
+        )
+        
+        # Extract sample counts from dataset params
+        train_dist = dataset_params["number_train_samples_per_dataset"]
+        test_dist = dataset_params["number_test_samples_per_dataset"]
         
         # Sample train and test sample counts
-        if isinstance(self.number_train_samples_per_dataset_distribution, FixedSampler):
-            number_train_samples = self.number_train_samples_per_dataset_distribution.sample(torch.Generator().manual_seed(seed))
-        elif isinstance(self.number_train_samples_per_dataset_distribution, torch.distributions.Distribution):
-            number_train_samples = self.number_train_samples_per_dataset_distribution.sample()
+        if isinstance(train_dist, torch.distributions.Distribution):
+            number_train_samples = int(train_dist.sample().item())
+        elif isinstance(train_dist, int):
+            number_train_samples = train_dist
         else:
-            number_train_samples = self.number_train_samples_per_dataset_distribution.sample(torch.Generator().manual_seed(seed))
+            number_train_samples = int(train_dist.sample(item_generator) if hasattr(train_dist, 'sample') else train_dist)
         
-        if hasattr(number_train_samples, 'item'):
-            number_train_samples = int(number_train_samples.item())
+        if isinstance(test_dist, torch.distributions.Distribution):
+            number_test_samples = int(test_dist.sample().item())
+        elif isinstance(test_dist, int):
+            number_test_samples = test_dist
         else:
-            number_train_samples = int(number_train_samples)
+            number_test_samples = int(test_dist.sample(item_generator) if hasattr(test_dist, 'sample') else test_dist)
         
-        if isinstance(self.number_test_samples_per_dataset_distribution, FixedSampler):
-            number_test_samples = self.number_test_samples_per_dataset_distribution.sample(torch.Generator().manual_seed(seed + 1))
-        elif isinstance(self.number_test_samples_per_dataset_distribution, torch.distributions.Distribution):
-            number_test_samples = self.number_test_samples_per_dataset_distribution.sample()
-        else:
-            number_test_samples = self.number_test_samples_per_dataset_distribution.sample(torch.Generator().manual_seed(seed + 1))
-        
-        if hasattr(number_test_samples, 'item'):
-            number_test_samples = int(number_test_samples.item())
-        else:
-            number_test_samples = int(number_test_samples)
+        # Sample an SCM
+        scm = self.scm_sampler.sample(seed=seed)
         
         # Total samples needed
         total_samples = number_train_samples + number_test_samples
@@ -336,18 +328,18 @@ class ObservationalDataset(Dataset):
             max_n_train_samples=self.max_number_train_samples,
             n_test_samples=number_test_samples,
             max_n_test_samples=self.max_number_test_samples,
-            dropout_prob=self.preprocessing_params["dropout_prob"],
-            target_feature=self.preprocessing_params["target_feature"],
-            random_seed=self.preprocessing_params["random_seed"],
-            negative_one_one_scaling=self.preprocessing_params["negative_one_one_scaling"],
-            standardize=self.preprocessing_params["standardize"],
-            yeo_johnson=self.preprocessing_params["yeo_johnson"],
-            remove_outliers=self.preprocessing_params["remove_outliers"],
-            outlier_quantile=self.preprocessing_params["outlier_quantile"],
-            shuffle_samples=self.preprocessing_params["shuffle_data"],
+            dropout_prob=preprocessing_params["dropout_prob"],
+            target_feature=preprocessing_params["target_feature"],
+            random_seed=preprocessing_params["random_seed"],
+            negative_one_one_scaling=preprocessing_params["negative_one_one_scaling"],
+            standardize=preprocessing_params["standardize"],
+            yeo_johnson=preprocessing_params["yeo_johnson"],
+            remove_outliers=preprocessing_params["remove_outliers"],
+            outlier_quantile=preprocessing_params["outlier_quantile"],
+            shuffle_samples=preprocessing_params["shuffle_data"],
             shuffle_features=True,  # Default
-            y_clip_quantile=self.preprocessing_params.get("y_clip_quantile"),
-            eps=self.preprocessing_params.get("eps", 1e-8),
+            y_clip_quantile=preprocessing_params.get("y_clip_quantile"),
+            eps=preprocessing_params.get("eps", 1e-8),
             device=None,  # Default
             dtype=None,  # Default
         )

@@ -277,8 +277,27 @@ class SCMSampler:
         SCM
             A fully configured Structural Causal Model ready for sampling.
         """
-        # Set default values for missing parameters
-        params = self._apply_defaults(params)
+        # Add default node shapes if not specified (minimal defaults only for technical requirements)
+        if "mlp_node_shape" not in params:
+            params["mlp_node_shape"] = (1,)
+        if "xgb_node_shape" not in params:
+            params["xgb_node_shape"] = (1,)
+        
+        # Handle noise parameter None values based on random_additive_std mode
+        if params.get("random_additive_std"):
+            if "exo_std" not in params:
+                params["exo_std"] = None
+            if "endo_std" not in params:
+                params["endo_std"] = None
+        else:
+            if "exo_std_mean" not in params:
+                params["exo_std_mean"] = None
+            if "exo_std_std" not in params:
+                params["exo_std_std"] = None
+            if "endo_std_mean" not in params:
+                params["endo_std_mean"] = None
+            if "endo_std_std" not in params:
+                params["endo_std_std"] = None
         
         # Step 1: Create the causal DAG
         graph_sampler = GraphSampler(seed=params["graph_seed"])

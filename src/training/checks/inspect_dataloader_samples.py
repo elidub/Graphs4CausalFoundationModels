@@ -600,7 +600,7 @@ class DataloaderDatasetVisualizer:
         self.log("[INFO] Creating feature scatterplot matrix...")
         
         # Limit to first 6 features if too many for readability
-        max_features_for_plots = min(6, n_active_features)
+        max_features_for_plots = min(n_active_features, 6)
         selected_feature_names = active_feature_names[:max_features_for_plots]
         X_selected = X_train_filtered[:, :max_features_for_plots]
         
