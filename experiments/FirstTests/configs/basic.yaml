@@ -34,11 +34,11 @@ scm_config:
       choices:
       - 0.0
       - 0.1
-      - 0.2
+      - 0.1
       probabilities:
       - 0.9
       - 0.1
-      - 0.0
+      - 0.05
         #- 0.8
         #- 0.1
         #- 0.1
@@ -53,13 +53,13 @@ scm_config:
     distribution: "categorical"
     distribution_parameters:
       choices:
-        - 0
+        - 0.9
         - 1
         - 2
       probabilities:
         - 1.0
-        - 0.0
-        - 0.0
+        - 0.05
+        - 0.01
   mlp_hidden_dim:
     distribution: "categorical"
     distribution_parameters:
@@ -78,13 +78,13 @@ scm_config:
         - 0.8
         - 0.1
         - 0.05
-        - 0.05
-        - 0.05
-        - 0.001
-        - 0.001
-        - 0.001
-        - 0.001
-        - 0.001
+        - 0.04
+        - 0.03
+        - 0.02
+        - 0.01
+        - 0.009
+        - 0.008
+        - 0.007
 
   mlp_activation_mode:
     distribution: "categorical"
@@ -93,8 +93,8 @@ scm_config:
         - "pre"
         - "post"
       probabilities:
-        - 1.0
-        - 0.0
+        - 0.7
+        - 0.3
       
   xgb_node_shape:
     value: [1]
@@ -115,8 +115,8 @@ scm_config:
         - "pre"
         - "post"
       probabilities:
-        - 1.0
-        - 0.0
+        - 0.8
+        - 0.2
   xgb_node_shape:
     value: [1]
   xgb_n_training_samples:
@@ -194,15 +194,12 @@ dataset_config:
   number_train_samples_per_dataset:
     distribution: "uniform"
     distribution_parameters:
-      low: 499
+      low: 100
       high: 500
   max_number_test_samples:
     value: 500
   number_test_samples_per_dataset:
-    distribution: "uniform"
-    distribution_parameters:
-      low: 499
-      high: 500
+    value: 500
   max_number_features:
     value: 50
   seed:
@@ -305,7 +302,7 @@ training_config:
   weight_decay: # weight decay for optimizer, might not be needed
     value: 0.00001 
   max_steps:  #critial for determing training duration!
-    value: 3000
+    value: 10000
   max_epochs: # should always be 1
     value: 1
 
@@ -313,7 +310,7 @@ training_config:
   batch_size: # batch size
     value: 8
   accumulate_grad_batches:
-    value: 2
+    value: 4
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
     value: 64
 
@@ -351,13 +348,13 @@ training_config:
 
   # Model Checkpointing
   checkpoint_every_n_steps: # how often to save a model checkpoint
-    value: 500
+    value: 1000
 
   # Evaluation Configuration
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 500
+    value: 1000
   eval_batches: # number of batches to use for evaluation
     value: 100
   eval_dataset_size: # size of the evaluation dataset
