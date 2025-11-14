@@ -24,24 +24,26 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.metrics import mean_squared_error, r2_score
 
-src_dir = Path(__file__).parent.parent.parent
+src_dir = Path(__file__).parent.parent
 if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
 
-
+repo_root = Path(__file__).parent.parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 
 # Robust imports so this file runs whether called as a script or a module
 try:
-    # When run via `python -m src.benchmarking.run_benchmark` or sys.path already has repo root
-    from load_openml_benchmark import SimpleOpenMLLoader, DEFAULT_TABULAR_NUM_REG_TASKS
-except Exception:
-    # Fallback: import with package prefix
-    from src.benchmarking.load_openml_benchmark import SimpleOpenMLLoader, DEFAULT_TABULAR_NUM_REG_TASKS
+    from benchmarking.load_openml_benchmark import SimpleOpenMLLoader, DEFAULT_TABULAR_NUM_REG_TASKS
+except ImportError:
+    try:
+        from src.benchmarking.load_openml_benchmark import SimpleOpenMLLoader, DEFAULT_TABULAR_NUM_REG_TASKS
+    except ImportError:
+        from load_openml_benchmark import SimpleOpenMLLoader, DEFAULT_TABULAR_NUM_REG_TASKS
 
 try:
     from priordata_processing.Preprocessor import Preprocessor
-except Exception:
-    # Fallback: import with package prefix
+except ImportError:
     from src.priordata_processing.Preprocessor import Preprocessor
 
 
@@ -51,6 +53,36 @@ class Benchmark:
         data_dir: str = "data_cache",
         device: str = "cpu",
         verbose: bool = False,
+        # benchmark configuration
+        tasks: Optional[List[int]] = None,
+        max_tasks: int = 20,
+        # subsampling
+        n_features: int = 0,
+        max_n_features: int = 0,
+        n_train: int = 0,
+        max_n_train: int = 0,
+        n_test: int = 0,
+        max_n_test: int = 0,
+        prefer_numeric: bool = True,  # kept for compatibility, currently unused
+        only_numeric: bool = False,
+        # model / output config
+        config_path: Optional[str] = None,
+        output_csv: str = "benchmark_results.csv",
+        bootstrap_samples: int = 1000,
+        # SimplePFN ensemble parameters
+        n_estimators: int = 1,
+        norm_methods: Optional[List[str]] = None,
+        outlier_strategies: Optional[List[str]] = None,
+        # preprocessing configuration
+        negative_one_one_scaling: bool = True,
+        standardize: bool = True,
+        yeo_johnson: bool = False,
+        remove_outliers: bool = True,
+        outlier_quantile: float = 0.90,
+        shuffle_samples: bool = True,
+        shuffle_features: bool = True,
+        # logging
+        quiet: bool = False,
     ):
         # Allow override via environment variable
         env_data_dir = os.environ.get("DATA_CACHE_DIR")
@@ -63,6 +95,7 @@ class Benchmark:
                 print(f"[Benchmark] CWD: {os.getcwd()}")
             except Exception:
                 pass
+
         # Robust search for data_cache directory
         data_dir_path = Path(data_dir)
         if not data_dir_path.exists():
@@ -73,19 +106,55 @@ class Benchmark:
                 data_dir = str(data_dir_path)
         if not Path(data_dir).exists():
             print(f"[Benchmark] ERROR: data_cache directory not found at '{data_dir}'.")
-            print("  Searched in current directory and parent.\n"
-                  "  Please ensure data_cache.zip is unzipped in the working directory, "
-                  "or set DATA_CACHE_DIR environment variable.")
+            print(
+                "  Searched in current directory and parent.\n"
+                "  Please ensure data_cache.zip is unzipped in the working directory, "
+                "or set DATA_CACHE_DIR environment variable."
+            )
             raise FileNotFoundError(f"data_cache directory not found at '{data_dir}'")
         else:
             if verbose:
                 print(f"[Benchmark] Using data_cache directory at: {data_dir}")
+
         offline = os.environ.get("OPENML_OFFLINE") == "1" or os.environ.get("DATA_CACHE_ONLY") == "1"
         if verbose and offline:
             print("[Benchmark] OPENML_OFFLINE/DATA_CACHE_ONLY detected -> Loader offline mode enabled")
+
         self.loader = SimpleOpenMLLoader(data_dir=data_dir, verbose=verbose, offline=offline)
         self.device = device
         self.verbose = verbose
+
+        # store benchmark configuration
+        self.tasks = tasks
+        self.max_tasks = max_tasks
+
+        self.n_features = n_features
+        self.max_n_features = max_n_features
+        self.n_train = n_train
+        self.max_n_train = max_n_train
+        self.n_test = n_test
+        self.max_n_test = max_n_test
+        self.prefer_numeric = prefer_numeric
+        self.only_numeric = only_numeric
+
+        self.config_path = config_path
+        self.output_csv = output_csv
+        self.bootstrap_samples = bootstrap_samples
+
+        self.n_estimators = n_estimators
+        self.norm_methods = norm_methods
+        self.outlier_strategies = outlier_strategies
+
+        # store preprocessing configuration
+        self.negative_one_one_scaling = negative_one_one_scaling
+        self.standardize = standardize
+        self.yeo_johnson = yeo_johnson
+        self.remove_outliers = remove_outliers
+        self.outlier_quantile = outlier_quantile
+        self.shuffle_samples = shuffle_samples
+        self.shuffle_features = shuffle_features
+
+        self.quiet = quiet
 
     @staticmethod
     def to_numpy_arrays(d: dict):
@@ -118,14 +187,21 @@ class Benchmark:
         n_test: Optional[int] = None,
         max_n_test: Optional[int] = None,
         only_numeric: bool = False,
-        negative_one_one_scaling: bool = True,
-        standardize: bool = True,
-        yeo_johnson: bool = False,
-        remove_outliers: bool = True,
-        outlier_quantile: float = 0.90,
-        shuffle_samples: bool = True,
-        shuffle_features: bool = True,
     ) -> Dict[str, Any]:
+        # PRINT BENCHMARK PREPROCESSING PARAMETERS
+        if not self.quiet:
+            print(f"\n{'='*60}")
+            print(f"BENCHMARK PREPROCESSING PARAMETERS")
+            print(f"{'='*60}")
+            print(f"  negative_one_one_scaling: {self.negative_one_one_scaling}")
+            print(f"  standardize: {self.standardize}")
+            print(f"  yeo_johnson: {self.yeo_johnson}")
+            print(f"  remove_outliers: {self.remove_outliers}")
+            print(f"  outlier_quantile: {self.outlier_quantile}")
+            print(f"  shuffle_samples: {self.shuffle_samples}")
+            print(f"  shuffle_features: {self.shuffle_features}")
+            print(f"{'='*60}\n")
+        
         # Split X/y, simple encoding similar to previous loader
         y = df[target]
         X = df.drop(columns=[target])
@@ -156,10 +232,22 @@ class Benchmark:
         y_tensor = torch.from_numpy(y_np).unsqueeze(0)
         N, F = X_np.shape
 
-        # Determine requested sizes
-        req_n_features = min(n_features or F, F)
-        req_n_train = min(n_train or (N // 2), N)  # default 50/50
-        req_n_test = min(n_test or (N - req_n_train), N - req_n_train)
+        # Use what's available, capped by max limits if specified
+        # The Preprocessor will handle padding if we request more than available
+        if max_n_features:
+            req_n_features = min(n_features or max_n_features, max_n_features)
+        else:
+            req_n_features = n_features or F
+        
+        if max_n_train:
+            req_n_train = min(n_train or max_n_train, max_n_train)
+        else:
+            req_n_train = n_train or max(1, N // 2)
+        
+        if max_n_test:
+            req_n_test = min(n_test or max_n_test, max_n_test)
+        else:
+            req_n_test = n_test or max(1, N - req_n_train)
 
         pre = Preprocessor(
             n_features=req_n_features,
@@ -168,13 +256,13 @@ class Benchmark:
             max_n_train_samples=max_n_train or req_n_train,
             n_test_samples=req_n_test,
             max_n_test_samples=max_n_test or req_n_test,
-            negative_one_one_scaling=negative_one_one_scaling,
-            standardize=standardize,
-            yeo_johnson=yeo_johnson,
-            remove_outliers=remove_outliers,
-            outlier_quantile=outlier_quantile,
-            shuffle_samples=shuffle_samples,
-            shuffle_features=shuffle_features,
+            negative_one_one_scaling=self.negative_one_one_scaling,
+            standardize=self.standardize,
+            yeo_johnson=self.yeo_johnson,
+            remove_outliers=self.remove_outliers,
+            outlier_quantile=self.outlier_quantile,
+            shuffle_samples=self.shuffle_samples,
+            shuffle_features=self.shuffle_features,
         )
         result = pre.process(X_tensor, y_tensor)
         if result is None:
@@ -191,7 +279,9 @@ class Benchmark:
         if len(feature_names) >= out_F:
             feature_names_aligned = feature_names[:out_F]
         else:
-            feature_names_aligned = feature_names + [f"padded_feature_{i}" for i in range(len(feature_names), out_F)]
+            feature_names_aligned = feature_names + [
+                f"padded_feature_{i}" for i in range(len(feature_names), out_F)
+            ]
         return {
             "X_train": pd.DataFrame(X_train, columns=feature_names_aligned),
             "X_test": pd.DataFrame(X_test, columns=feature_names_aligned),
@@ -269,75 +359,73 @@ class Benchmark:
         high = float(np.nanpercentile(stats, 100 * (1 - alpha / 2)))
         return low, high
 
-
-
-    def run(
+    def _run_core(
         self,
-        tasks: Optional[List[int]] = None,
-        max_tasks: int = 20,
-        # subsampling
-        n_features: int = 0,
-        max_n_features: int = 0,
-        n_train: int = 0,
-        max_n_train: int = 0,
-        n_test: int = 0,
-        max_n_test: int = 0,
-        prefer_numeric: bool = True,
-        only_numeric: bool = False,
-        # model
-        config_path: Optional[str] = None,
-        checkpoint_path: Optional[str] = None,
-        output_csv: str = "benchmark_results.csv",
-        device: Optional[str] = None,
-        quiet: bool = False,
-        # new features
-        repeats: int = 1,
-        baseline_set: str = "basic",  # 'basic' or 'extended'
-        bootstrap_samples: int = 1000,
-        # SimplePFN ensemble parameters
-        n_estimators: int = 1,
-        norm_methods: Optional[List[str]] = None,
-        outlier_strategies: Optional[List[str]] = None,
+        tasks: List[int],
+        repeats: int,
+        baseline_set: str,
+        checkpoint_path: Optional[str],
     ) -> pd.DataFrame:
-        if tasks is None or len(tasks) == 0:
-            tasks = DEFAULT_TABULAR_NUM_REG_TASKS[: max_tasks]
         raw_map = self.loader.load_tasks_raw(tasks)
         # Offline fallback: if nothing could be resolved via tasks (e.g., no mapping and offline),
         # try scanning cached datasets directly and evaluate on those.
         if len(raw_map) == 0 and getattr(self.loader, "offline", False):
-            if not quiet:
+            if not self.quiet:
                 print("[Benchmark] No tasks resolved in offline mode; scanning cached datasets ...")
             cached = self.loader.list_cached_dataset_ids()
+            max_tasks = self.max_tasks
             if max_tasks and max_tasks > 0:
                 cached = cached[: int(max_tasks)]
             raw_map = self.loader.load_datasets_raw_by_cache(cached)
             # Construct pseudo-task list equal to dataset ids for iteration
             tasks = list(sorted(raw_map.keys()))
+
         results: List[Dict[str, Any]] = []
-        # choose baselines
         models = self._get_baseline_models(baseline_set)
+
         # lazy import of PFN wrapper
-        from src.models.SimplePFN_sklearn import SimplePFNSklearn
-        use_device = device or self.device
+        try:
+            from models.SimplePFN_sklearn import SimplePFNSklearn
+        except ImportError:
+            from src.models.SimplePFN_sklearn import SimplePFNSklearn
+
+        use_device = self.device
 
         for tid in tasks:
             if tid not in raw_map:
-                if not quiet:
+                if not self.quiet:
                     print(f"Skipping task {tid}: no raw data")
                 continue
             entry = raw_map[tid]
             df = entry["df"]
             target = entry["target_column"]
 
-            # Estimate whether repeated resampling is relevant
+            # Only skip if dataset is completely empty
             N_total = df.shape[0]
             F_total = df.drop(columns=[target]).shape[1]
-            wants_feat = (n_features and F_total > (n_features or 0)) or (max_n_features and F_total > (max_n_features or 0))
+            
+            if N_total == 0 or F_total == 0:
+                if not self.quiet:
+                    print(f"Skipping task {tid}: empty dataset (N={N_total}, F={F_total})")
+                continue
+            
+            # Log if dataset is smaller than requested, but still process it
+            if not self.quiet:
+                if (self.n_features and F_total < self.n_features) or \
+                   (self.n_train and N_total < self.n_train) or \
+                   (self.n_test and N_total < (self.n_train or 0) + (self.n_test or 0)):
+                    print(f"Task {tid}: Dataset smaller than requested ({N_total} samples, {F_total} features) - will use available data and pad")
+
+            # Estimate whether repeated resampling is relevant
+            wants_feat = (
+                (self.n_features and F_total > (self.n_features or 0))
+                or (self.max_n_features and F_total > (self.max_n_features or 0))
+            )
             wants_samp = (
-                (n_train and N_total > (n_train or 0))
-                or (n_test and N_total > ((n_train or 0) + (n_test or 0)))
-                or (max_n_train and N_total > (max_n_train or 0))
-                or (max_n_test and N_total > (max_n_test or 0))
+                (self.n_train and N_total > (self.n_train or 0))
+                or (self.n_test and N_total > ((self.n_train or 0) + (self.n_test or 0)))
+                or (self.max_n_train and N_total > (self.max_n_train or 0))
+                or (self.max_n_test and N_total > (self.max_n_test or 0))
             )
             n_repeats = max(1, int(repeats)) if (wants_feat or wants_samp) else 1
 
@@ -346,15 +434,13 @@ class Benchmark:
                     processed = self._preprocess_df(
                         df,
                         target,
-                        n_features=(n_features or None),
-                        max_n_features=(max_n_features or None),
-                        n_train=(n_train or None),
-                        max_n_train=(max_n_train or None),
-                        n_test=(n_test or None),
-                        max_n_test=(max_n_test or None),
-                        only_numeric=only_numeric,
-                        shuffle_samples=True,
-                        shuffle_features=True,
+                        n_features=(self.n_features or None),
+                        max_n_features=(self.max_n_features or None),
+                        n_train=(self.n_train or None),
+                        max_n_train=(self.max_n_train or None),
+                        n_test=(self.n_test or None),
+                        max_n_test=(self.max_n_test or None),
+                        only_numeric=self.only_numeric,
                     )
                     X_train, y_train, X_test, y_test = self.to_numpy_arrays(processed)
 
@@ -369,25 +455,25 @@ class Benchmark:
                     # PFN
                     mse_pfn = None
                     r2_pfn = None
-                    if config_path and checkpoint_path:
+                    if self.config_path and checkpoint_path:
                         try:
                             import yaml
-                            with open(config_path, "r") as f:
+                            with open(self.config_path, "r") as f:
                                 cfg = yaml.safe_load(f)
                             model_cfg = cfg.get("model_config", {}) if isinstance(cfg, dict) else {}
                             use_bar_distribution = model_cfg.get("use_bar_distribution", {}).get("value", False)
 
                             pfn = SimplePFNSklearn(
-                                config_path=config_path,
+                                config_path=self.config_path,
                                 checkpoint_path=checkpoint_path,
                                 device=use_device,
-                                verbose=not quiet,
-                                n_estimators=n_estimators,
-                                norm_methods=norm_methods,
-                                outlier_strategies=outlier_strategies,
+                                verbose=not self.quiet,
+                                n_estimators=self.n_estimators,
+                                norm_methods=self.norm_methods,
+                                outlier_strategies=self.outlier_strategies,
                             )
                             mkwargs = {
-                                "num_features": int(max_n_features or X_train.shape[1]),
+                                "num_features": int(self.max_n_features or X_train.shape[1]),
                             }
                             if not model_cfg.get("d_model"):
                                 mkwargs["d_model"] = 256
@@ -407,7 +493,6 @@ class Benchmark:
                                     raise ValueError("BarDistribution expected from config but not found in loaded model.")
                                 # Ensure BarDistribution is fitted before prediction (fit on the current split)
                                 try:
-                                    # Fit using this split only to avoid heavy loops; BarDistribution.fit expects iterable over batches
                                     pfn.fit_bar_distribution(
                                         X_train_data=X_train,
                                         y_train_data=y_train,
@@ -428,7 +513,7 @@ class Benchmark:
                             mse_pfn = float(mean_squared_error(y_test, y_pred_pfn))
                             r2_pfn = float(r2_score(y_test, y_pred_pfn))
                         except Exception as e:
-                            if not quiet:
+                            if not self.quiet:
                                 print(f"[Benchmark] PFN failed on task {tid} repeat {rep}: {e}")
                     if mse_pfn is not None:
                         metrics_row["mse_pfn"] = mse_pfn
@@ -476,28 +561,23 @@ class Benchmark:
                 df_out = pd.concat([df_out, pd.DataFrame([summary])], ignore_index=True)
 
             # Detailed per-model summaries with stats and bootstrap CIs
-            # Discover model names from columns
             model_names = sorted({col.split("_")[1] for col in df_out.columns if col.startswith("mse_")})
 
             detailed_rows: List[Dict[str, Any]] = []
             # Average ranks per task (aggregate repeats by mean per task)
-            # Build per-task mean metrics
             if "repeat_idx" in df_out.columns:
                 df_task = df_out.groupby(["task_id"]).mean(numeric_only=True).reset_index()
             else:
                 df_task = df_out.copy()
 
-            # Compute ranks per task for mse (lower is better) and r2 (higher is better)
             avg_ranks_mse: Dict[str, float] = {}
             avg_ranks_r2: Dict[str, float] = {}
             if not df_task.empty:
-                # For each task, get ranks and then average
                 ranks_mse_list = []
                 ranks_r2_list = []
                 for _, row in df_task.iterrows():
                     mse_vals = {m: row.get(f"mse_{m}", np.nan) for m in model_names}
                     r2_vals = {m: row.get(f"r2_{m}", np.nan) for m in model_names}
-                    # Rank ignoring NaNs
                     valid_mse = {m: v for m, v in mse_vals.items() if pd.notna(v)}
                     valid_r2 = {m: v for m, v in r2_vals.items() if pd.notna(v)}
                     if valid_mse:
@@ -509,14 +589,12 @@ class Benchmark:
                         ranks = {m: i + 1 for i, (m, _) in enumerate(order)}
                         ranks_r2_list.append(ranks)
                 if ranks_mse_list:
-                    # average ranks across tasks (fill missing with NaN then mean ignoring NaN)
                     df_ranks_mse = pd.DataFrame(ranks_mse_list)
                     avg_ranks_mse = df_ranks_mse.mean(skipna=True).to_dict()
                 if ranks_r2_list:
                     df_ranks_r2 = pd.DataFrame(ranks_r2_list)
                     avg_ranks_r2 = df_ranks_r2.mean(skipna=True).to_dict()
 
-            # For each model, compute stats on raw per-task-repeat rows
             for m in model_names:
                 mse_series = df_out[f"mse_{m}"] if f"mse_{m}" in df_out.columns else pd.Series(dtype=float)
                 r2_series = df_out[f"r2_{m}"] if f"r2_{m}" in df_out.columns else pd.Series(dtype=float)
@@ -533,9 +611,13 @@ class Benchmark:
                     "std": float(np.nanstd(mse_vals, ddof=1)) if np.sum(~np.isnan(mse_vals)) > 1 else np.nan,
                     "iqr": self._iqr(mse_vals),
                 }
-                ci_low, ci_high = self._bootstrap_ci(mse_vals, np.nanmean, n_boot=bootstrap_samples) if mse_vals.size else (np.nan, np.nan)
+                ci_low, ci_high = self._bootstrap_ci(
+                    mse_vals, np.nanmean, n_boot=self.bootstrap_samples
+                ) if mse_vals.size else (np.nan, np.nan)
                 row_mse["ci95_mean_low"], row_mse["ci95_mean_high"] = ci_low, ci_high
-                ci_low, ci_high = self._bootstrap_ci(mse_vals, np.nanmedian, n_boot=bootstrap_samples) if mse_vals.size else (np.nan, np.nan)
+                ci_low, ci_high = self._bootstrap_ci(
+                    mse_vals, np.nanmedian, n_boot=self.bootstrap_samples
+                ) if mse_vals.size else (np.nan, np.nan)
                 row_mse["ci95_median_low"], row_mse["ci95_median_high"] = ci_low, ci_high
                 row_mse["avg_rank_mse"] = float(avg_ranks_mse.get(m, np.nan))
                 row_mse["avg_rank_r2"] = float(avg_ranks_r2.get(m, np.nan))
@@ -551,9 +633,13 @@ class Benchmark:
                     "std": float(np.nanstd(r2_vals, ddof=1)) if np.sum(~np.isnan(r2_vals)) > 1 else np.nan,
                     "iqr": self._iqr(r2_vals),
                 }
-                ci_low, ci_high = self._bootstrap_ci(r2_vals, np.nanmean, n_boot=bootstrap_samples) if r2_vals.size else (np.nan, np.nan)
+                ci_low, ci_high = self._bootstrap_ci(
+                    r2_vals, np.nanmean, n_boot=self.bootstrap_samples
+                ) if r2_vals.size else (np.nan, np.nan)
                 row_r2["ci95_mean_low"], row_r2["ci95_mean_high"] = ci_low, ci_high
-                ci_low, ci_high = self._bootstrap_ci(r2_vals, np.nanmedian, n_boot=bootstrap_samples) if r2_vals.size else (np.nan, np.nan)
+                ci_low, ci_high = self._bootstrap_ci(
+                    r2_vals, np.nanmedian, n_boot=self.bootstrap_samples
+                ) if r2_vals.size else (np.nan, np.nan)
                 row_r2["ci95_median_low"], row_r2["ci95_median_high"] = ci_low, ci_high
                 row_r2["avg_rank_mse"] = float(avg_ranks_mse.get(m, np.nan))
                 row_r2["avg_rank_r2"] = float(avg_ranks_r2.get(m, np.nan))
@@ -563,53 +649,34 @@ class Benchmark:
                 df_out = pd.concat([df_out, pd.DataFrame(detailed_rows)], ignore_index=True)
 
         # Save
-        out_path = Path(output_csv)
+        out_path = Path(self.output_csv)
         process_id = os.getpid()
         if out_path.suffix:
             out_file = out_path.with_name(f"{out_path.stem}_pid{process_id}{out_path.suffix}")
         else:
-            out_file = Path(f"{output_csv}_pid{process_id}")
+            out_file = Path(f"{self.output_csv}_pid{process_id}")
         df_out.to_csv(out_file, index=False)
-        if not quiet:
+        if not self.quiet:
             print(f"Saved results to {out_file} (PID: {process_id})")
 
         return df_out
 
-    def run_simplified(
+    def run(
         self,
         fidelity: str = "low",
-        tasks: Optional[List[int]] = None,
-        # subsampling
-        n_features: int = 0,
-        max_n_features: int = 0,
-        n_train: int = 0,
-        max_n_train: int = 0,
-        n_test: int = 0,
-        max_n_test: int = 0,
-        prefer_numeric: bool = True,
-        only_numeric: bool = False,
-        # model
-        config_path: Optional[str] = None,
         checkpoint_path: Optional[str] = None,
-        output_csv: str = "benchmark_results.csv",
-        device: Optional[str] = None,
-        quiet: bool = False,
-        bootstrap_samples: int = 1000,
-        # SimplePFN ensemble parameters
-        n_estimators: int = 1,
-        norm_methods: Optional[List[str]] = None,
-        outlier_strategies: Optional[List[str]] = None,
     ) -> pd.DataFrame:
         """
-        Simplified benchmark entrypoint.
+        Public entrypoint.
 
-        Choose a fidelity level instead of manually setting repeats, baseline set, or max_tasks:
+        The benchmark is configured entirely via the constructor. This method
+        only selects a fidelity level and (optionally) a PFN checkpoint.
+
+        Fidelity levels:
         - "minimal": 1 task, basic baselines, 1 repeat
         - "low":     10 tasks, basic baselines, 1 repeat
         - "high":    all tasks, extended baselines, 5 repeats
-        - "very high" (or very_high): all tasks, extended baselines, 25 repeats
-
-        Other arguments mirror `run` to control subsampling and PFN usage.
+        - "very high" / "very_high": all tasks, extended baselines, 25 repeats
         """
         # Normalize fidelity key
         key = fidelity.strip().lower().replace("-", "_").replace(" ", "_")
@@ -636,40 +703,38 @@ class Benchmark:
             task_cap = None  # all
 
         # Resolve tasks list with cap if provided/available
-        if tasks is None or len(tasks) == 0:
+        if self.tasks is None or len(self.tasks) == 0:
             base_tasks = DEFAULT_TABULAR_NUM_REG_TASKS
         else:
-            base_tasks = tasks
+            base_tasks = self.tasks
 
+        # first respect max_tasks from configuration
+        if self.max_tasks is not None and self.max_tasks > 0:
+            base_tasks = base_tasks[: self.max_tasks]
+
+        # then cap further based on fidelity setting
         if task_cap is not None:
             tasks_use = base_tasks[: task_cap]
         else:
             tasks_use = base_tasks
 
-        # Delegate to the main runner with mapped settings
-        return self.run(
+        return self._run_core(
             tasks=tasks_use,
-            # subsampling
-            n_features=n_features,
-            max_n_features=max_n_features,
-            n_train=n_train,
-            max_n_train=max_n_train,
-            n_test=n_test,
-            max_n_test=max_n_test,
-            prefer_numeric=prefer_numeric,
-            only_numeric=only_numeric,
-            # model
-            config_path=config_path,
-            checkpoint_path=checkpoint_path,
-            output_csv=output_csv,
-            device=device,
-            quiet=quiet,
-            # mapped
             repeats=repeats,
             baseline_set=baseline_set,
-            bootstrap_samples=bootstrap_samples,
-            # SimplePFN ensemble parameters
-            n_estimators=n_estimators,
-            norm_methods=norm_methods,
-            outlier_strategies=outlier_strategies,
+            checkpoint_path=checkpoint_path,
+        )
+        base_tasks = base_tasks[: self.max_tasks]
+
+        # then cap further based on fidelity setting
+        if task_cap is not None:
+            tasks_use = base_tasks[: task_cap]
+        else:
+            tasks_use = base_tasks
+
+        return self._run_core(
+            tasks=tasks_use,
+            repeats=repeats,
+            baseline_set=baseline_set,
+            checkpoint_path=checkpoint_path,
         )

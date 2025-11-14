@@ -625,6 +625,9 @@ training_config:
   benchmark_offline:
     value: true
 
+  benchmark_n_estimators: # number of ensemble members for the PFN during benchmarking
+    value: 5
+
   # Model Selection Configuration
   model_selection_enabled: # whether to enable model selection for the best model
     value: true

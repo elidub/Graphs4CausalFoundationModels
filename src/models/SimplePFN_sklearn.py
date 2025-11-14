@@ -410,9 +410,7 @@ class SimplePFNSklearn:
                 "heads_samp": int(mcfg.get("heads_samp", {}).get("value", 8)),
                 "dropout": float(mcfg.get("dropout", {}).get("value", 0.0)),
                 "hidden_mult": int(mcfg.get("hidden_mult", {}).get("value", 4)),
-                # Respect feature positional encodings flag and rank from YAML config if present
-                "use_feature_positional": bool(mcfg.get("use_feature_positional", {}).get("value", False)),
-                "feature_pos_rank": int(mcfg.get("feature_pos_rank", {}).get("value", 16)),
+                # Note: Feature positional encodings are now always enabled in SimplePFNRegressor
             }
             
             # Set output_dim based on BarDistribution configuration

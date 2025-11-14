@@ -31,7 +31,7 @@ class Preprocessor:
         shuffle_samples: bool = True,
         shuffle_features: bool = True,
         eps: float = 1e-8,
-        y_clip_quantile: Optional[float] = None,  # if you ever want Y winsorization
+        y_clip_quantile: Optional[float] = None,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
@@ -39,11 +39,11 @@ class Preprocessor:
         Args
         ----
         n_features: Desired number of features in the dataset that are non-zero (i.e. not padding).
-                    If there are fewer features available, returns None and prints a warning.
+                    If there are fewer features available, uses all available and pads the rest.
         max_n_features: Maximum number of features to pad to.
-        n_train_samples: Desired number of training samples (non-zero). If fewer exist, returns None.
+        n_train_samples: Desired number of training samples (non-zero). If fewer exist, uses all available and pads.
         max_n_train_samples: Maximum number of training samples to pad to.
-        n_test_samples: Desired number of test samples (non-zero). If fewer exist, returns None.
+        n_test_samples: Desired number of test samples (non-zero). If fewer exist, uses all available and pads.
         max_n_test_samples: Maximum number of test samples to pad to.
         negative_one_one_scaling: Whether to scale features and targets to [-1, 1] using train stats.
         standardize: Whether to standardize features (zero mean, unit variance) using train stats.
@@ -96,26 +96,39 @@ class Preprocessor:
                 X_test:  [B, max_n_test_samples,  max_n_features]
                 Y_train: [B, max_n_train_samples]
                 Y_test:  [B, max_n_test_samples]
-        Or None if the dataset does not meet requested sizes.
+        Or None if the dataset is completely empty.
+        
+        If the dataset has fewer samples or features than requested, all available data
+        is used and the output is padded to the max sizes.
         """
         self._validate_inputs(X, Y)
 
         B, N, F = X.shape
+        
+        # Check for completely empty dataset
+        if N == 0 or F == 0:
+            return None
 
         # Optionally shuffle samples and features (same permutation per batch for features)
         X, Y = self._maybe_shuffle(X, Y)
 
-        # Select desired non-padded counts
-        X = X[:, :, :self.n_features]
-        # Split into train/test by samples
-        X_train = X[:, :self.n_train, :]
-        X_test = X[:, self.n_train:self.n_train + self.n_test, :]
-        Y_train = Y[:, :self.n_train]
-        Y_test = Y[:, self.n_train:self.n_train + self.n_test]
+        # Use what's available, capped by requested amounts
+        actual_features = min(self.n_features, F)
+        actual_train = min(self.n_train, N)
+        actual_test = min(self.n_test, N - actual_train)
+        
+        # Select available features and samples
+        X = X[:, :, :actual_features]
+        X_train = X[:, :actual_train, :]
+        X_test = X[:, actual_train:actual_train + actual_test, :]
+        Y_train = Y[:, :actual_train]
+        Y_test = Y[:, actual_train:actual_train + actual_test]
 
-        # Fit transforms on train and apply to both
-        X_train, X_test = self._fit_apply_feature_pipeline(X_train, X_test)
-        Y_train, Y_test = self._fit_apply_target_pipeline(Y_train, Y_test)
+        # Fit transforms on train and apply to both (only if we have data)
+        if X_train.shape[1] > 0 and X_train.shape[2] > 0:
+            X_train, X_test = self._fit_apply_feature_pipeline(X_train, X_test)
+        if Y_train.shape[1] > 0:
+            Y_train, Y_test = self._fit_apply_target_pipeline(Y_train, Y_test)
 
         # Pad to maxima
         X_train = self._pad_features_and_samples(X_train, self.max_n_train, self.max_n_features)

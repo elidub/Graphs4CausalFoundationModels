@@ -59,9 +59,7 @@ def main(args):
     _os.environ.setdefault("DATA_CACHE_ONLY", "1")
     if args.data_dir:
         _os.environ.setdefault("DATA_CACHE_DIR", str(args.data_dir))
-    bench = Benchmark(data_dir=args.data_dir, device=args.device, verbose=not args.quiet)
-
-    tasks = [int(t) for t in args.tasks.split(",")] if args.tasks else DEFAULT_TABULAR_NUM_REG_TASKS[: args.max_tasks]
+    
     # Resolve config and checkpoint with safe defaults
     cfg_path = args.config or str(repo_root / "experiments/FirstTests/configs/early_test2.yaml")
     ckpt = args.checkpoint
@@ -76,9 +74,18 @@ def main(args):
         print(f"Warning: checkpoint path not found: {ckpt}. PFN will be skipped.")
         ckpt = None
 
-    df = bench.run(
+    # Prepare task list
+    tasks = [int(t) for t in args.tasks.split(",")] if args.tasks else None
+
+    # Create Benchmark instance with ALL configuration
+    bench = Benchmark(
+        data_dir=args.data_dir,
+        device=args.device,
+        verbose=not args.quiet,
+        # benchmark configuration
         tasks=tasks,
         max_tasks=args.max_tasks,
+        # subsampling
         n_features=int(getattr(args, "n_features", 0) or 0),
         max_n_features=int(getattr(args, "max_n_features", 0) or 0),
         n_train=int(getattr(args, "n_train", 0) or 0),
@@ -87,18 +94,49 @@ def main(args):
         max_n_test=int(getattr(args, "max_n_test", 0) or 0),
         prefer_numeric=bool(getattr(args, "prefer_numeric", True)),
         only_numeric=bool(getattr(args, "only_numeric", False)),
+        # model / output config
         config_path=cfg_path,
-        checkpoint_path=ckpt,
         output_csv=args.output,
-        device=args.device,
-        quiet=args.quiet,
-        repeats=int(getattr(args, "repeats", 1) or 1),
-        baseline_set=str(getattr(args, "baseline_set", "basic") or "basic"),
         bootstrap_samples=int(getattr(args, "bootstrap_samples", 1000) or 1000),
         # SimplePFN ensemble parameters
         n_estimators=int(getattr(args, "n_estimators", 1) or 1),
         norm_methods=getattr(args, "norm_methods", None),
         outlier_strategies=getattr(args, "outlier_strategies", None),
+        # preprocessing configuration
+        negative_one_one_scaling=bool(getattr(args, "negative_one_one_scaling", True)),
+        standardize=bool(getattr(args, "standardize", True)),
+        yeo_johnson=bool(getattr(args, "yeo_johnson", False)),
+        remove_outliers=bool(getattr(args, "remove_outliers", True)),
+        outlier_quantile=float(getattr(args, "outlier_quantile", 0.90)),
+        shuffle_samples=bool(getattr(args, "shuffle_samples", True)),
+        shuffle_features=bool(getattr(args, "shuffle_features", True)),
+        # logging
+        quiet=args.quiet,
+    )
+
+    # Determine fidelity level from repeats/baseline_set or use a default
+    # Map args.repeats and args.baseline_set to a fidelity level
+    repeats = int(getattr(args, "repeats", 1) or 1)
+    baseline_set = str(getattr(args, "baseline_set", "basic") or "basic")
+    
+    # Infer fidelity from settings (reverse mapping)
+    if repeats == 1 and baseline_set == "basic":
+        if args.max_tasks == 1:
+            fidelity = "minimal"
+        else:
+            fidelity = "low"
+    elif repeats == 5 and baseline_set == "extended":
+        fidelity = "high"
+    elif repeats >= 25 and baseline_set == "extended":
+        fidelity = "very_high"
+    else:
+        # Default to low for unrecognized combinations
+        fidelity = "low"
+
+    # Run benchmark with simplified API
+    df = bench.run(
+        fidelity=fidelity,
+        checkpoint_path=ckpt,
     )
 
     # Print summary metrics robustly (ignore summary row if present, handle missing columns)
@@ -112,8 +150,8 @@ def main(args):
         mean_r2 = df_metrics[r2_cols].mean(numeric_only=True)
         print("\nMedian MSE:\n", median_mse)
         print("\nMean MSE:\n", mean_mse)
-        print("\nMedian R\u00b2:\n", median_r2)
-        print("\nMean R\u00b2:\n", mean_r2)
+        print("\nMedian R²:\n", median_r2)
+        print("\nMean R²:\n", mean_r2)
     else:
         print("\nNo per-task metric rows available to summarize (0 successful tasks or missing metric columns).")
 
@@ -149,7 +187,7 @@ if __name__ == "__main__":
     TASKS = ""  # comma-separated task ids, e.g. "361072,361073" or empty to use defaults
     MAX_TASKS = 30
     DATA_DIR = "data_cache"
-    CONFIG = str(repo_root / "experiments/FirstTests/configs/early_test2.yaml")
+    CONFIG = str(repo_root / "experiments/FirstTests/configs/basic.yaml")
     CHECKPOINT = "/Users/arikreuter/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16561948/final_model_with_bardist.pt"  # Leave empty to auto-detect or skip PFN
     DEVICE = "cpu"
     OUTPUT = "benchmark_results.csv"  # Process ID will be automatically added: benchmark_results_pid12345.csv
@@ -176,6 +214,15 @@ if __name__ == "__main__":
     N_ESTIMATORS = 10  # Number of ensemble members (1 = no ensemble)
     NORM_METHODS = ["none", "power", "quantile", "robust"]  # Normalization methods for ensemble
     OUTLIER_STRATEGIES = ["none", "moderate", "aggressive"]  # Outlier removal strategies
+    
+    # Preprocessing configuration
+    NEGATIVE_ONE_ONE_SCALING = True  # Scale data to [-1, 1] range
+    STANDARDIZE = True  # Standardize features (z-score normalization)
+    YEO_JOHNSON = False  # Apply Yeo-Johnson transformation
+    REMOVE_OUTLIERS = True  # Remove outliers based on quantile
+    OUTLIER_QUANTILE = 0.90  # Quantile threshold for outlier removal
+    SHUFFLE_SAMPLES = True  # Shuffle samples during preprocessing
+    SHUFFLE_FEATURES = True  # Shuffle features during preprocessing
 
     args = SimpleNamespace(
         tasks=TASKS,
@@ -203,6 +250,14 @@ if __name__ == "__main__":
         n_estimators=int(N_ESTIMATORS) if N_ESTIMATORS else 1,
         norm_methods=NORM_METHODS,
         outlier_strategies=OUTLIER_STRATEGIES,
+        # preprocessing configuration
+        negative_one_one_scaling=NEGATIVE_ONE_ONE_SCALING,
+        standardize=STANDARDIZE,
+        yeo_johnson=YEO_JOHNSON,
+        remove_outliers=REMOVE_OUTLIERS,
+        outlier_quantile=OUTLIER_QUANTILE,
+        shuffle_samples=SHUFFLE_SAMPLES,
+        shuffle_features=SHUFFLE_FEATURES,
     )
 
     main(args)

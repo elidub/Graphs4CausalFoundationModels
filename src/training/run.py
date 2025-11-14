@@ -44,6 +44,19 @@ except ImportError:
     WANDB_AVAILABLE = False
     raise ImportError("wandb library not found. Please install it or disable wandb logging in the config.")
 
+# Robust import for Benchmark class
+try:
+    from benchmarking.Benchmark import Benchmark
+except ImportError:
+    try:
+        from src.benchmarking.Benchmark import Benchmark
+    except ImportError:
+        # Fallback: add repo root to path
+        repo_root = Path(__file__).parent.parent.parent
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from src.benchmarking.Benchmark import Benchmark
+
 
 def _normalize_interp_name(s: str) -> str:
     if not isinstance(s, str) or not s:
@@ -422,63 +435,138 @@ def main():
         print(f"   Trainable parameters: {trainable_params:,}")
         print(f"   SimplePFN model created")
         
-        # Create trainer with the dataloader
-        print(f"\nTRAINER SETUP:")
-        
-        # Configure scheduler if enabled
-        scheduler_config = None
-        if "scheduler_type" in training_config:
-            scheduler_type = training_config.get("scheduler_type")
-            if scheduler_type == "linear_warmup_cosine_decay":
-                # Get scheduler parameters from config
-                warmup_ratio = training_config.get("warmup_ratio", 0.03)
-                
-                # Use explicit min_lr_ratio if provided, otherwise calculate from eta_min
-                min_lr_ratio = training_config.get("min_lr_ratio")
-                if min_lr_ratio is None and "eta_min" in training_config:
-                    eta_min = training_config.get("eta_min", 0.0)
-                    base_lr = training_config.get("learning_rate", 1e-3)
-                    if base_lr > 0:  # Avoid division by zero
-                        min_lr_ratio = eta_min / base_lr
-                
-                # Default if still not save
-                if min_lr_ratio is None:
-                    min_lr_ratio = 0.1
-                
-                scheduler_config = {
-                    "type": scheduler_type,
-                    "warmup_ratio": warmup_ratio,
-                    "min_lr_ratio": min_lr_ratio
-                }
-                
-                # Calculate actual warmup steps for display
-                max_steps = training_config.get("max_steps", 10)
-                warmup_steps = int(round(warmup_ratio * max_steps))
-                
-                print(f"   Scheduler: Linear warmup + cosine decay")
-                print(f"   Warmup ratio: {warmup_ratio:.2f} ({warmup_steps} steps)")
-                print(f"   Min LR ratio: {min_lr_ratio:.6f}")
-            else:
-                print(f"   Scheduler: None (constant learning rate)")
-        
-        # Get model saving configuration
+        # Extract training configuration parameters
+        scheduler_config = training_config.get("scheduler", {})
         save_dir = training_config.get("checkpoint_dir")
-        save_every = training_config.get("save_every", 0)  # 0 means no periodic saving
-        
-        # Get precision configuration
-        precision = training_config.get("precision", "32")  # "32", "16", or "bf16"
-        use_amp = precision in ["16", "16-mixed"]  # Enable mixed precision for float16
-        
-        # Get gradient clipping configuration
+        save_every = training_config.get("save_every", 0)
+        use_amp = training_config.get("use_amp", False)
         gradient_clip_val = training_config.get("gradient_clip_val", 0.0)
         
-        # Use the run name (derived from job ID or config) for model naming
-        run_name = None
-        if cluster_id:
-            run_name = f"simple_pfn_{cluster_id}"
-        else:
-            run_name = config.get('experiment_name', 'simplepfn')
+        # Extract ensemble parameters from training config (shared with benchmark)
+        norm_methods = training_config.get("norm_methods", None)
+        outlier_strategies = training_config.get("outlier_strategies", None)
         
+        # Extract preprocessing parameters from preprocessing_config (CRITICAL: must match training!)
+        # These MUST be the same for training and benchmark to ensure consistency
+        preproc_negative_one_one_scaling = extract_config_values(preprocessing_config.get("negative_one_one_scaling", {"value": True}))
+        if isinstance(preproc_negative_one_one_scaling, dict):
+            preproc_negative_one_one_scaling = preproc_negative_one_one_scaling.get("value", True)
+        
+        preproc_standardize = extract_config_values(preprocessing_config.get("standardize", {"value": True}))
+        if isinstance(preproc_standardize, dict):
+            preproc_standardize = preproc_standardize.get("value", True)
+        
+        preproc_yeo_johnson = extract_config_values(preprocessing_config.get("yeo_johnson", {"value": False}))
+        if isinstance(preproc_yeo_johnson, dict):
+            preproc_yeo_johnson = preproc_yeo_johnson.get("value", False)
+        
+        preproc_remove_outliers = extract_config_values(preprocessing_config.get("remove_outliers", {"value": True}))
+        if isinstance(preproc_remove_outliers, dict):
+            preproc_remove_outliers = preproc_remove_outliers.get("value", True)
+        
+        preproc_outlier_quantile = extract_config_values(preprocessing_config.get("outlier_quantile", {"value": 0.95}))
+        if isinstance(preproc_outlier_quantile, dict):
+            preproc_outlier_quantile = preproc_outlier_quantile.get("value", 0.95)
+        
+        # Shuffle parameters for benchmark (always true for reproducibility)
+        preproc_shuffle_samples = True
+        preproc_shuffle_features = True
+        
+        # PRINT TRAINING PREPROCESSING PARAMETERS
+        print(f"\n{'='*60}")
+        print(f"TRAINING PREPROCESSING PARAMETERS (from preprocessing_config)")
+        print(f"{'='*60}")
+        print(f"  negative_one_one_scaling: {preproc_negative_one_one_scaling}")
+        print(f"  standardize: {preproc_standardize}")
+        print(f"  yeo_johnson: {preproc_yeo_johnson}")
+        print(f"  remove_outliers: {preproc_remove_outliers}")
+        print(f"  outlier_quantile: {preproc_outlier_quantile}")
+        print(f"  shuffle_samples: {preproc_shuffle_samples}")
+        print(f"  shuffle_features: {preproc_shuffle_features}")
+        print(f"{'='*60}\n")
+        
+        # Optional: build a Benchmark instance for periodic and final evaluation
+        benchmark = None
+        benchmark_eval_fidelity = training_config.get("benchmark_eval_fidelity")
+        benchmark_final_fidelity = training_config.get("benchmark_final_fidelity")
+        if benchmark_eval_fidelity or benchmark_final_fidelity:
+            print(f"\nBENCHMARK SETUP:")
+            print(f"   Eval fidelity: {benchmark_eval_fidelity or 'disabled'}")
+            print(f"   Final fidelity: {benchmark_final_fidelity or 'disabled'}")
+            print(f"   CRITICAL: Using preprocessing_config values to match training!")
+            print(f"   - negative_one_one_scaling: {preproc_negative_one_one_scaling}")
+            print(f"   - standardize: {preproc_standardize}")
+            print(f"   - yeo_johnson: {preproc_yeo_johnson}")
+            print(f"   - remove_outliers: {preproc_remove_outliers}")
+            print(f"   - outlier_quantile: {preproc_outlier_quantile}")
+            
+            # Configure benchmark subsampling to match training data limits from dataset_config
+            # Extract from dataset_config (these define the actual training data size limits)
+            max_n_features_from_dataset = extract_config_values(dataset_config.get("max_number_features", {"value": num_features}))
+            if isinstance(max_n_features_from_dataset, dict):
+                max_n_features_from_dataset = max_n_features_from_dataset.get("value", num_features)
+            
+            max_n_train_from_dataset = extract_config_values(dataset_config.get("max_number_train_samples", {"value": 100}))
+            if isinstance(max_n_train_from_dataset, dict):
+                max_n_train_from_dataset = max_n_train_from_dataset.get("value", 100)
+            
+            max_n_test_from_dataset = extract_config_values(dataset_config.get("max_number_test_samples", {"value": 100}))
+            if isinstance(max_n_test_from_dataset, dict):
+                max_n_test_from_dataset = max_n_test_from_dataset.get("value", 100)
+            
+            # For benchmark, use the same max limits as training to ensure consistency
+            n_features_bm = int(max_n_features_from_dataset)
+            max_n_features_bm = int(max_n_features_from_dataset)
+            n_train_bm = int(max_n_train_from_dataset)
+            max_n_train_bm = int(max_n_train_from_dataset)
+            n_test_bm = int(max_n_test_from_dataset)
+            max_n_test_bm = int(max_n_test_from_dataset)
+            
+            print(f"   Benchmark data limits (from dataset_config):")
+            print(f"   - n_features / max_n_features: {n_features_bm}")
+            print(f"   - n_train / max_n_train: {n_train_bm}")
+            print(f"   - n_test / max_n_test: {n_test_bm}")
+
+            benchmark = Benchmark(
+                data_dir="data_cache",
+                device=device,
+                verbose=True,
+                # benchmark configuration
+                tasks=None,
+                max_tasks=training_config.get("benchmark_max_tasks", 20),
+                # subsampling (align with training config where possible)
+                n_features=int(n_features_bm) if n_features_bm else 0,
+                max_n_features=int(max_n_features_bm) if max_n_features_bm else 0,
+                n_train=int(n_train_bm) if n_train_bm else 0,
+                max_n_train=int(max_n_train_bm) if max_n_train_bm else 0,
+                n_test=int(n_test_bm) if n_test_bm else 0,
+                max_n_test=int(max_n_test_bm) if max_n_test_bm else 0,
+                prefer_numeric=True,
+                only_numeric=False,
+                # model / output config
+                config_path=args.config,
+                output_csv="training_benchmark_results.csv",
+                bootstrap_samples=int(training_config.get("benchmark_bootstrap_samples", 1000)),
+                # SimplePFN ensemble parameters (n_estimators is benchmark-specific, but norm/outlier use training config)
+                n_estimators=training_config.get("benchmark_n_estimators", 1),
+                norm_methods=norm_methods,  # Use same as training
+                outlier_strategies=outlier_strategies,  # Use same as training
+                # preprocessing configuration (CRITICAL: use preprocessing_config values!)
+                negative_one_one_scaling=preproc_negative_one_one_scaling,
+                standardize=preproc_standardize,
+                yeo_johnson=preproc_yeo_johnson,
+                remove_outliers=preproc_remove_outliers,
+                outlier_quantile=float(preproc_outlier_quantile),
+                shuffle_samples=preproc_shuffle_samples,
+                shuffle_features=preproc_shuffle_features,
+                # logging
+                quiet=False,
+            )
+            print(f"   Benchmark instance created with preprocessing matching training data!")
+            print(f"   Ensemble: n_estimators={training_config.get('benchmark_n_estimators', 1)}")
+            print(f"   Norm methods: {norm_methods}")
+            print(f"   Outlier strategies: {outlier_strategies}")
+
         # Initialize trainer
         trainer = Trainer(
             model=model,
@@ -502,8 +590,9 @@ def main():
             model_selection_mode=training_config.get("model_selection_mode", "min"),
             # Benchmark integration
             config_path=args.config,
-            benchmark_eval_fidelity=training_config.get("benchmark_eval_fidelity"),
-            benchmark_final_fidelity=training_config.get("benchmark_final_fidelity"),
+            benchmark_eval_fidelity=benchmark_eval_fidelity,
+            benchmark_final_fidelity=benchmark_final_fidelity,
+            benchmark=benchmark,
             # Mixed precision training
             use_amp=use_amp,
             gradient_clip_val=gradient_clip_val,

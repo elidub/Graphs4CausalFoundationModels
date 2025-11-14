@@ -45,6 +45,7 @@ class Trainer:
         config_path: Optional[str] = None,  # Path to YAML config for PFN wrapper
         benchmark_eval_fidelity: Optional[str] = None,  # Run benchmark at each eval with this fidelity (e.g., "minimal", "low", "high", "very high")
         benchmark_final_fidelity: Optional[str] = None,  # Run benchmark at end with this fidelity
+        benchmark: Optional[object] = None,  # Benchmark instance constructed by run.py
         # Mixed precision training
         use_amp: bool = False,  # Enable automatic mixed precision (float16)
         gradient_clip_val: float = 0.0,  # Gradient clipping value (0.0 to disable)
@@ -97,6 +98,7 @@ class Trainer:
         self.config_path = config_path
         self.benchmark_eval_fidelity = benchmark_eval_fidelity
         self.benchmark_final_fidelity = benchmark_final_fidelity
+        self.benchmark = benchmark  # store externally constructed Benchmark instance
         # Cached training shapes for aligning benchmark subsampling
         self._train_n_features = None
         self._train_n_train = None
@@ -1147,54 +1149,23 @@ class Trainer:
         self._run_benchmark_with_checkpoint(fidelity=fidelity, tag=tag, checkpoint_path=ckpt_path)
 
     def _run_benchmark_with_checkpoint(self, fidelity: str, tag: str, checkpoint_path: str) -> None:
-        """Run the OpenML benchmark with a specified checkpoint."""
-        # Ensure import paths are robust regardless of invocation context
-        try:
-            import sys as _sys
-            from pathlib import Path as _Path
-            _repo_root = _Path(__file__).resolve().parents[2]
-            _src_dir = _repo_root / "src"
-            if str(_repo_root) not in _sys.path:
-                _sys.path.insert(0, str(_repo_root))
-            if str(_src_dir) not in _sys.path:
-                _sys.path.insert(0, str(_src_dir))
-        except Exception:
-            pass
-
-        # Robust import for Benchmark
-        try:
-            from src.benchmarking.Benchmark import Benchmark as _Benchmark
-        except Exception:
-            from benchmarking.Benchmark import Benchmark as _Benchmark
-
-        bench = _Benchmark(data_dir="data_cache", device=self.device, verbose=True)
+        """Run the OpenML benchmark with a specified checkpoint using the injected Benchmark instance."""
+        if self.benchmark is None:
+            raise RuntimeError("Trainer.benchmark is None; please construct a Benchmark in run.py and pass it into Trainer.")
 
         # Determine subsampling to mirror training dimensions if available
         n_feat = self._train_n_features or 0
         n_tr = self._train_n_train or 0
         n_te = self._train_n_test or 0
 
-        # Output file inside the run directory
-        out_csv = os.path.join(self.run_save_dir or ".", f"benchmark_{tag}.csv")
-
-        # Use the training config path if known for model construction
-        cfg_path = self.config_path
+        # Ensure we have a run directory for outputs
+        out_dir = self.run_save_dir or "."
+        out_csv = os.path.join(out_dir, f"benchmark_{tag}.csv")
 
         print(f"[Trainer] Running benchmark ({fidelity}) -> {out_csv}")
-        df = bench.run_simplified(
+        df = self.benchmark.run(
             fidelity=fidelity,
-            # subsampling to align with training
-            n_features=int(n_feat),
-            max_n_features=int(n_feat) if n_feat else 0,
-            n_train=int(n_tr),
-            max_n_train=int(n_tr) if n_tr else 0,
-            n_test=int(n_te),
-            max_n_test=int(n_te) if n_te else 0,
-            config_path=cfg_path,
             checkpoint_path=checkpoint_path,
-            output_csv=out_csv,
-            device=self.device,
-            quiet=False,
         )
         # Print summary metrics similar to run_benchmark.py
         try:
