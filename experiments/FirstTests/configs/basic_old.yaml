@@ -38,7 +38,7 @@ scm_config:
       probabilities:
       - 0.9
       - 0.1
-      - 0.0
+      - 0.01
         #- 0.8
         #- 0.1
         #- 0.1
@@ -48,7 +48,7 @@ scm_config:
       low: 0
       high: 100000
   mlp_nonlins:
-    value: "mixed"
+    value: "tabicl"
   mlp_num_hidden_layers:
     distribution: "categorical"
     distribution_parameters:
@@ -57,9 +57,9 @@ scm_config:
         - 1
         - 2
       probabilities:
-        - 1.0
-        - 0.0
-        - 0.0
+        - 0.95
+        - 0.025
+        - 0.025
   mlp_hidden_dim:
     distribution: "categorical"
     distribution_parameters:
@@ -93,8 +93,8 @@ scm_config:
         - "pre"
         - "post"
       probabilities:
-        - 1.0
-        - 0.0
+        - 0.8
+        - 0.2
       
   xgb_node_shape:
     value: [1]
@@ -115,8 +115,8 @@ scm_config:
         - "pre"
         - "post"
       probabilities:
-        - 1.0
-        - 0.0
+        - 0.8
+        - 0.2
   xgb_node_shape:
     value: [1]
   xgb_n_training_samples:
@@ -263,7 +263,7 @@ preprocessing_config:
 
 model_config:
   d_model:
-    value: 256
+    value: 512
   depth: # number of layers
     value: 6
   heads_feat:  # number of attention heads for feature-wise attention
@@ -305,13 +305,13 @@ training_config:
   weight_decay: # weight decay for optimizer, might not be needed
     value: 0.00001 
   max_steps:  #critial for determing training duration!
-    value: 3000
+    value: 1000
   max_epochs: # should always be 1
     value: 1
 
   # Data Loading Parameters
   batch_size: # batch size
-    value: 8
+    value: 16
   accumulate_grad_batches:
     value: 2
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
@@ -351,13 +351,13 @@ training_config:
 
   # Model Checkpointing
   checkpoint_every_n_steps: # how often to save a model checkpoint
-    value: 500
+    value: 1000
 
   # Evaluation Configuration
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 500
+    value: 1000
   eval_batches: # number of batches to use for evaluation
     value: 100
   eval_dataset_size: # size of the evaluation dataset
