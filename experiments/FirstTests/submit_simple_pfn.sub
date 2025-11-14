@@ -14,7 +14,7 @@ environment = "HOME=/tmp/wandb_home WANDB_API_KEY=e5ba90a037256650557e4644545bd2
 request_gpus   = 1
 request_memory = 64GB
 request_cpus   = 64
-request_disk   = 16GB
+request_disk   = 128GB
 
 # Remove GPU requirements since we're using CPU
 requirements = (CUDAGlobalMemoryMb >= 70000)
