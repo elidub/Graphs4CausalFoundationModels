@@ -6,7 +6,7 @@ The overall goal here is to (a) sample the SCM itself and (b) sample data from t
 
 An SCM has three components: 
 
-- **A causal graph**, represented by a CausalDAG object in the file causal_prior/causal_graph/CausalDAG.py. (The CausalDAG is a relatively light wrapper of a networkx graph). Graphs can be sampled in causal_prior/causal_graph/GraphSampler.py. 
+- **A causal graph**, represented by a CausalDAG object in the file causal_prior/causal_graph/CausalDAG.py. (The CausalDAG is a relatively light wrapper of a networkx graph). 
 
 - **A dictionary of mechanisms** that defines for each node, how it's value computed as a function of its parents and a node-specific "endogenous" noise variable. Mechanisms are torch.nn.Module objects and need to inherit from BaseMechanism in causal_prior/mechanisms/BaseMechanism.py. Currently two types of mechanisms are used: MLPMechanisms and XGBoostMechanisms. The classes causal_prior/mechanisms/SampleMLPMechanism.py and causal_prior/mechanisms/SampleXGBoostMechanism.py implement them and, by instantiation, sample a specific mechanism. 
 
@@ -20,7 +20,7 @@ The easiest way to sample SCMs is using the **SCMSampler** class in causal_prior
 
 ```python
 from priors.causal_prior.scm.SCMSampler import SCMSampler
-from priors.causal_prior.ExampleConfigs.Basic_Configs import default_sampling_config
+from priors.causal_prior.ExampleConfigs.Basic_Configs import default_sampling_config # use a simple example config here
 
 # Create sampler with configuration
 sampler = SCMSampler(default_sampling_config, seed=42, verbose=True)
@@ -29,10 +29,10 @@ sampler = SCMSampler(default_sampling_config, seed=42, verbose=True)
 scm = sampler.sample()
 
 # Generate data from the SCM
-N_SAMPLES = 100
-scm.sample_exogenous(num_samples=N_SAMPLES)
-scm.sample_endogenous_noise(num_samples=N_SAMPLES)
-data = scm.propagate(num_samples=N_SAMPLES)
+N_SAMPLES = 100 #number datapoints to sample
+scm.sample_exogenous(num_samples=N_SAMPLES). #sample and fix exogenous noise
+scm.sample_endogenous_noise(num_samples=N_SAMPLES) # sample and fix endogenous noise
+data = scm.propagate(num_samples=N_SAMPLES). #propagate noise
 ```
 
 ## Data Generation from SCM
@@ -43,26 +43,4 @@ Once you have an SCM (from either method above), data can be sampled via:
 2. `scm.sample_exogenous(N_SAMPLES)` # sample the exogenous noise 
 3. `scm.sample_endogenous_noise(N_SAMPLES)` # sample the endogenous noise
 4. `r = scm.propagate(N_SAMPLES)` # propagate the samples through the SCM to obtain the data you want
-
-## Example Files
-
-- **causal_prior/scm/SCMSampler.py** - High-level SCM sampling interface (recommended for most use cases)
-- **causal_prior/scm/SimpleExampleSampling.py** - Simple example of manual SCM sampling
-- **causal_prior/scm/InspectSamplesConfig.py** - Example showing how to sample an SCM and investigate datasets
-
-## Quick Start
-
-For most users, the recommended approach is to use the SCMSampler:
-
-```python
-from priors.causal_prior.scm.SCMSampler import create_scm_sampler_from_config
-
-# Create sampler and generate SCM
-sampler = create_scm_sampler_from_config("default", seed=42)
-scm = sampler.sample()
-
-# Generate data
-scm.sample_exogenous(num_samples=100)
-scm.sample_endogenous_noise(num_samples=100)
-data = scm.propagate(num_samples=100)
-``` 
+ 
