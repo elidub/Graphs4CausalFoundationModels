@@ -526,11 +526,6 @@ model_config:
   num_features:
     value: 50  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
 
-  use_feature_positional:
-    value: true
-  feature_pos_rank:
-    value: 32
-
   # BarDistribution Configuration (used to model the output distribution)
   use_bar_distribution:
     value: true
