@@ -47,16 +47,25 @@ For X_train (B, N, L) and X_test (B, M, L), after *per-task feature normalizatio
 - Test labels:
     learned [MASK] vector.
 
-Normalization
--------------
-Before embedding, we normalize features per batch/task and per feature dimension:
+Normalization (Optional)
+-------------------------
+When normalize_features=True (default), before embedding we apply a two-step normalization 
+per batch/task and per feature dimension:
 
-  X_all = concat(X_train, X_test) along sample axis
-  mean_b,l = mean over samples
-  std_b,l  = std  over samples (clamped to >= 1e-6)
-  X_norm = (X_all - mean) / std
+  1) Uniform quantile transform based on the support set (X_train):
+     - Sort X_train along sample axis to get empirical quantiles
+     - Map each value in X_train and X_test to its quantile rank in [0, 1]
+     - This makes features more uniform and robust to outliers
+  
+  2) Standard normalization (mean/std) based on support set:
+     - Compute mean and std from quantile-transformed X_train
+     - Apply (X_quantile - mean) / std to both X_train and X_test
+     - std is clamped to >= 1e-6 for numerical stability
 
-and then split back into normalized X_train, X_test.
+This follows PFN preprocessing: quantile transform followed by standardization.
+
+When normalize_features=False, features are passed through as-is (useful if preprocessing 
+is done externally).
 
 Labels are *not* normalized inside the model (you can handle target scaling externally).
 """
@@ -189,7 +198,7 @@ class SimplePFNRegressor(nn.Module):
     """
     PFN-like regressor for tabular data with two-way attention and structured embeddings.
 
-    Always performs per-task, per-feature normalization of X_train/X_test internally.
+    Optionally performs per-task, per-feature normalization of X_train/X_test internally.
     """
     def __init__(
         self,
@@ -201,11 +210,13 @@ class SimplePFNRegressor(nn.Module):
         dropout: float = 0.0,
         output_dim: int = 1,
         hidden_mult: int = 4,
+        normalize_features: bool = True,
     ):
         super().__init__()
         self.num_features = num_features
         self.d_model = d_model
         self.output_dim = output_dim
+        self.normalize_features = normalize_features
 
         # === Embedding MLPs ===
         # Row-wise MLPs over feature dimension (R^L -> R^D)
@@ -281,26 +292,69 @@ class SimplePFNRegressor(nn.Module):
         X_test: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Normalize features per batch/task and per feature dimension.
+        Normalize features per batch/task and per feature dimension using:
+        1. Uniform quantile transform based on the support set (X_train)
+        2. Standard normalization (mean/std) based on the support set
+        
+        This follows the PFN preprocessing: quantile transform followed by standardization.
 
         Args:
-            X_train: (B, N, L)
-            X_test:  (B, M, L)
+            X_train: (B, N, L) - support set (training features)
+            X_test:  (B, M, L) - query set (test features)
 
         Returns:
             X_train_norm, X_test_norm with same shapes.
         """
         B, N, L = X_train.shape
         M = X_test.shape[1]
-        # Concatenate along sample axis: (B, N+M, L)
-        X_all = torch.cat([X_train, X_test], dim=1)
-        # Compute per-task, per-feature mean/std over samples
-        mean = X_all.mean(dim=1, keepdim=True)                       # (B, 1, L)
-        std  = X_all.std(dim=1, keepdim=True, unbiased=False)        # (B, 1, L)
-        std  = std.clamp_min(1e-6)
-        X_all_norm = (X_all - mean) / std                            # (B, N+M, L)
-        X_train_norm = X_all_norm[:, :N, :]
-        X_test_norm  = X_all_norm[:, N:, :]
+        
+        # Step 1: Uniform quantile transform based on X_train (support set)
+        # For each batch and feature, sort X_train to get empirical quantiles
+        X_train_sorted, _ = torch.sort(X_train, dim=1)  # (B, N, L)
+        
+        # Function to map values to quantiles [0, 1]
+        def quantile_transform(X, X_sorted):
+            """Map X to quantiles based on sorted support set X_sorted."""
+            # For each value in X, find its rank in X_sorted
+            # Use searchsorted to find insertion indices
+            B, S, L = X.shape
+            B_s, N, L_s = X_sorted.shape
+            assert B == B_s and L == L_s
+            
+            X_quantiles = torch.zeros_like(X)
+            for b in range(B):
+                for l in range(L):
+                    # Get sorted values for this batch and feature
+                    sorted_vals = X_sorted[b, :, l]  # (N,)
+                    vals = X[b, :, l]  # (S,)
+                    
+                    # Use searchsorted to find ranks (insertion points)
+                    # searchsorted finds where each val would be inserted to maintain order
+                    ranks = torch.searchsorted(sorted_vals.contiguous(), vals.contiguous())
+                    
+                    # Convert ranks to quantiles in [0, 1]
+                    # Add small epsilon to avoid division by zero when N=1
+                    quantiles = ranks.float() / max(N - 1, 1)
+                    quantiles = quantiles.clamp(0.0, 1.0)  # Ensure in [0, 1]
+                    
+                    X_quantiles[b, :, l] = quantiles
+            
+            return X_quantiles
+        
+        # Apply quantile transform to both train and test using X_train as reference
+        X_train_quantiles = quantile_transform(X_train, X_train_sorted)  # (B, N, L)
+        X_test_quantiles = quantile_transform(X_test, X_train_sorted)    # (B, M, L)
+        
+        # Step 2: Standard normalization (mean/std) on quantile-transformed features
+        # Compute mean/std from the support set (X_train_quantiles) only
+        mean = X_train_quantiles.mean(dim=1, keepdim=True)  # (B, 1, L)
+        std = X_train_quantiles.std(dim=1, keepdim=True, unbiased=False)  # (B, 1, L)
+        std = std.clamp_min(1e-6)
+        
+        # Normalize both train and test using support set statistics
+        X_train_norm = (X_train_quantiles - mean) / std  # (B, N, L)
+        X_test_norm = (X_test_quantiles - mean) / std    # (B, M, L)
+        
         return X_train_norm, X_test_norm
 
     def _embed_train_features(self, X_train: torch.Tensor) -> torch.Tensor:
@@ -376,8 +430,11 @@ class SimplePFNRegressor(nn.Module):
         M = X_test.shape[1]
         device = X_train.device
 
-        # === Normalize features (always) ===
-        X_train_norm, X_test_norm = self._normalize_features(X_train, X_test)
+        # === Normalize features (if enabled) ===
+        if self.normalize_features:
+            X_train_norm, X_test_norm = self._normalize_features(X_train, X_test)
+        else:
+            X_train_norm, X_test_norm = X_train, X_test
 
         # === Embed features ===
         feat_train = self._embed_train_features(X_train_norm)       # (B, N, L, D)
@@ -465,3 +522,18 @@ if __name__ == "__main__":
     out_bar = model_bar(Xtr, ytr, Xte)
     print("BarDistribution params shape:", out_bar["predictions"].shape)  # (B, M, 9)
     print("BarDistribution params sample:", out_bar["predictions"][0, 0, :])
+
+    # Test without normalization
+    print("\n=== Without Internal Normalization ===")
+    model_no_norm = SimplePFNRegressor(
+        num_features=num_feat,
+        d_model=128,
+        depth=2,
+        heads_feat=4,
+        heads_samp=4,
+        dropout=0.1,
+        normalize_features=False,
+    )
+    out_no_norm = model_no_norm(Xtr, ytr, Xte)
+    print("predictions shape (no norm):", out_no_norm["predictions"].shape)  # (B, M)
+    print("Note: Features passed through as-is (useful if externally preprocessed)")

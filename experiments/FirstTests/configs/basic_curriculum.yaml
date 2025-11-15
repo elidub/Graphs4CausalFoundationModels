@@ -581,6 +581,8 @@ model_config:
     value: 2
   num_features:
     value: 50  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
+  normalize_features:  # whether to apply quantile transform + standard normalization internally
+    value: true
 
   # BarDistribution Configuration (used to model the output distribution)
   use_bar_distribution:
