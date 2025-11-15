@@ -24,7 +24,7 @@ scm_config_t0:
     distribution: "beta"
     distribution_parameters:
       alpha: 2.0
-      beta: 10.0
+      beta: 8.0
   graph_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -35,13 +35,11 @@ scm_config_t0:
     distribution_parameters:
       choices:
       - 0.0
-        #- 0.0
       - 0.1
       - 0.2
-        #- 0.2
       probabilities:
-      - 1.0
-      - 0.0
+      - 0.99
+      - 0.01
       - 0.0
         #- 0.8
         #- 0.1
@@ -61,9 +59,9 @@ scm_config_t0:
         - 1
         - 2
       probabilities:
-        - 1.0
-        - 0.0
-        - 0.0
+        - 0.97
+        - 0.02
+        - 0.01
   mlp_hidden_dim:
     distribution: "categorical"
     distribution_parameters:
@@ -71,16 +69,24 @@ scm_config_t0:
         - 1
         - 2
         - 4
+        - 6
         - 8
+        - 10
         - 12
+        - 14
         - 16
+        - 32
       probabilities:
-        - 0.9
+        - 0.8
         - 0.1
-        - 0.0
-        - 0.0
-        - 0.0
-        - 0.0
+        - 0.05
+        - 0.04
+        - 0.03
+        - 0.02
+        - 0.01
+        - 0.009
+        - 0.008
+        - 0.007
 
   mlp_activation_mode:
     distribution: "categorical"
@@ -89,8 +95,8 @@ scm_config_t0:
         - "pre"
         - "post"
       probabilities:
-        - 1.0
-        - 0.0
+        - 0.99
+        - 0.01
       
   xgb_node_shape:
     value: [1]
@@ -116,10 +122,20 @@ scm_config_t0:
   xgb_node_shape:
     value: [1]
   xgb_n_training_samples:
-    distribution: "discrete_uniform"
+    distribution: "categorical"
     distribution_parameters:
-      low: 10
-      high: 500
+      choices:
+        - 10
+        - 50
+        - 100
+        - 200
+        - 500
+      probabilities:
+        - 0.1
+        - 0.1
+        - 0.4
+        - 0.2
+        - 0.1
   xgb_add_noise:
     distribution: "categorical"
     distribution_parameters:
@@ -127,8 +143,8 @@ scm_config_t0:
         - true
         - false
       probabilities:
-        - 1.0
-        - 0.0
+        - 0.5
+        - 0.5
   random_additive_std:
     value: true
   exo_std_distribution:
@@ -153,34 +169,30 @@ scm_config_t0:
     distribution: "lognormal"
     distribution_parameters:
       mean: 1.0
-      std: 1.0    
+      std: 1.0
   exo_std_std:
     distribution: "uniform"
     distribution_parameters:
       low: 0.1
-      high: 0.11
+      high: 0.2
   endo_std_mean:
     distribution: "lognormal"
     distribution_parameters:
       mean: -3.0
-      std: 0.2
-    #distribution: "uniform"
-    #distribution_parameters:
-    #  low: 0.1
-    #  high: 0.3
+      std: 0.3
   endo_std_std:
     distribution: "uniform"
     distribution_parameters:
       low: 0.1
-      high: 0.11
-
-  # Endogenous noise sparsity: start with mostly dense noise
+      high: 0.2
+  
+  # Endogenous noise sparsity: probability of zero noise
   endo_p_zero:
     distribution: "beta"
     distribution_parameters:
       alpha: 1.0
-      beta: 19.0  # Expected value ~0.05 (mostly dense at t0)
-
+      beta: 3.0  # Expected value ~
+  
   use_exogenous_mechanisms:
     value: true
   mechanism_generator_seed:
@@ -190,18 +202,17 @@ scm_config_t0:
       high: 100000
 
 
-# ===============================================================================
 scm_config_t1:
   num_nodes:
     distribution: "discrete_uniform"
     distribution_parameters:
       low: 3
-      high: 61
+      high: 51
   graph_edge_prob:
     distribution: "beta"
     distribution_parameters:
       alpha: 2.0
-      beta: 3.0
+      beta: 5.0
   graph_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -212,16 +223,12 @@ scm_config_t1:
     distribution_parameters:
       choices:
       - 0.0
-        #- 0.0
       - 0.1
       - 0.2
-      - 0.3
-        #- 0.2
       probabilities:
-      - 0.7
+      - 0.9
       - 0.1
-      - 0.1
-      - 0.1
+      - 0.01
         #- 0.8
         #- 0.1
         #- 0.1
@@ -236,13 +243,13 @@ scm_config_t1:
     distribution: "categorical"
     distribution_parameters:
       choices:
-        - 0
+        - 0.9
         - 1
         - 2
       probabilities:
-        - 0.8
+        - 0.875
         - 0.1
-        - 0.1
+        - 0.025
   mlp_hidden_dim:
     distribution: "categorical"
     distribution_parameters:
@@ -250,18 +257,24 @@ scm_config_t1:
         - 1
         - 2
         - 4
+        - 6
         - 8
+        - 10
         - 12
+        - 14
         - 16
-        - 32 
+        - 32
       probabilities:
-        - 0.4
-        - 0.3
-        - 0.2
+        - 0.8
         - 0.1
-        - 0.1
-        - 0.1
-        - 0.1
+        - 0.05
+        - 0.04
+        - 0.03
+        - 0.02
+        - 0.01
+        - 0.009
+        - 0.008
+        - 0.007
 
   mlp_activation_mode:
     distribution: "categorical"
@@ -270,8 +283,8 @@ scm_config_t1:
         - "pre"
         - "post"
       probabilities:
-        - 0.5
-        - 0.5
+        - 0.8
+        - 0.2
       
   xgb_node_shape:
     value: [1]
@@ -292,15 +305,25 @@ scm_config_t1:
         - "pre"
         - "post"
       probabilities:
-        - 0.5
-        - 0.5
+        - 0.8
+        - 0.2
   xgb_node_shape:
     value: [1]
   xgb_n_training_samples:
-    distribution: "discrete_uniform"
+    distribution: "categorical"
     distribution_parameters:
-      low: 10
-      high: 500
+      choices:
+        - 10
+        - 50
+        - 100
+        - 200
+        - 500
+      probabilities:
+        - 0.1
+        - 0.1
+        - 0.4
+        - 0.2
+        - 0.1
   xgb_add_noise:
     distribution: "categorical"
     distribution_parameters:
@@ -335,35 +358,28 @@ scm_config_t1:
     distribution_parameters:
       mean: 1.0
       std: 1.0
-      std: 1.0
   exo_std_std:
     distribution: "uniform"
     distribution_parameters:
       low: 0.1
-      high: 0.0
-      high: 0.3
+      high: 0.2
   endo_std_mean:
     distribution: "lognormal"
     distribution_parameters:
       mean: -3.0
-      std: 0.4
-    #distribution: "uniform"
-    #distribution_parameters:
-    #  low: 0.1
-    #  high: 0.3
+      std: 0.5
   endo_std_std:
     distribution: "uniform"
     distribution_parameters:
-      low: 0.1
-      high: 0.0
-      high: 0.4
+      low: 0.0
+      high: 0.3
   
-  # Endogenous noise sparsity: end with more sparse noise
+  # Endogenous noise sparsity: probability of zero noise
   endo_p_zero:
     distribution: "beta"
     distribution_parameters:
-      alpha: 2.0
-      beta: 5.0  # Expected value ~0.29 (more sparse at t1)
+      alpha: 1.0
+      beta: 3.0  # Expected value ~
   
   use_exogenous_mechanisms:
     value: true
@@ -374,16 +390,41 @@ scm_config_t1:
       high: 100000
 
 
-
 dataset_config_t0:
   dataset_size:
-    value: "None"
+    value: 100000000
   max_number_train_samples:
     value: 500
   number_train_samples_per_dataset:
     distribution: "uniform"
     distribution_parameters:
       low: 499
+      high: 500
+  max_number_test_samples:
+    value: 500
+  number_test_samples_per_dataset:
+    distribution: "uniform"
+    distribution_parameters:
+      low: 499
+      high: 500
+  max_number_features:
+    value: 50
+  seed:
+    distribution: "discrete_uniform"
+    distribution_parameters:
+      low: 0
+      high: 100000
+
+
+dataset_config_t1:
+  dataset_size:
+    value: 100000000
+  max_number_train_samples:
+    value: 500
+  number_train_samples_per_dataset:
+    distribution: "uniform"
+    distribution_parameters:
+      low: 100
       high: 500
   max_number_test_samples:
     value: 500
@@ -414,10 +455,10 @@ preprocessing_config_t0:
         - 0.5 
         - 0.6
       probabilities:
-      - 1.0
-      - 0.0
-      - 0.0
-      - 0.0
+      - 0.99
+      - 0.02
+      - 0.01
+      - 0.005
       - 0.0
       - 0.0
       - 0.0
@@ -435,7 +476,7 @@ preprocessing_config_t0:
   target_feature:
     value: null
   negative_one_one_scaling:
-    value: false
+    value: true
   standardize:
     value: true
   remove_outliers:
@@ -489,14 +530,14 @@ preprocessing_config_t1:
         - 0.5 
         - 0.6
       probabilities:
-      - 0.8
-      - 0.1
-      - 0.05
-      - 0.025
-      - 0.025
+      - 0.95
+      - 0.03
+      - 0.02
       - 0.01
-      - 0.01
-      - 0.01
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
         #- 0.8
         #- 0.1
         #- 0.1
@@ -510,7 +551,7 @@ preprocessing_config_t1:
   target_feature:
     value: null
   negative_one_one_scaling:
-    value: false
+    value: true
   standardize:
     value: true
   remove_outliers:
@@ -527,7 +568,7 @@ preprocessing_config_t1:
 
 model_config:
   d_model:
-    value: 512
+    value: 256
   depth: # number of layers
     value: 6
   heads_feat:  # number of attention heads for feature-wise attention
@@ -577,7 +618,7 @@ training_config:
   batch_size: # batch size
     value: 8
   accumulate_grad_batches:
-    value: 1
+    value: 4
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
     value: 64
 
