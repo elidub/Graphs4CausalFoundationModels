@@ -30,6 +30,7 @@ class MixedDistRandomStd(MixedDist):
         mixture_proportions: Sequence[float] = (0.25, 0.25, 0.25, 0.25),
         std2scale: Optional[dict[Type[dist.Distribution], Callable[[Tensor], Tensor]]] = None,
         student_t_df: float = 3.0,
+        p_zero: float = 0.0,
         device: torch.device | str = "cpu",
         dtype: torch.dtype = torch.float32,
         generator: Optional[torch.Generator] = None,
@@ -47,6 +48,8 @@ class MixedDistRandomStd(MixedDist):
             Mapping from distribution types to scale conversion functions.
         student_t_df : float
             Degrees of freedom for StudentT
+        p_zero : float
+            Probability of returning zero instead of sampling from the distribution (default: 0.0)
         device, dtype, generator : standard torch parameters
         """
         # Initialize MixedDist parent with torch.distributions classes
@@ -64,6 +67,11 @@ class MixedDistRandomStd(MixedDist):
         self.distributions = distributions
         self.std_dist = std_dist
         self.student_t_df = float(student_t_df)
+        self.p_zero = float(p_zero)
+        
+        # Validate p_zero
+        if not 0.0 <= self.p_zero <= 1.0:
+            raise ValueError(f"p_zero must be in [0, 1], got {p_zero}")
 
         # Vectorized std->scale converters; accept Tensor std and return Tensor scale
         if std2scale is None:
@@ -108,6 +116,10 @@ class MixedDistRandomStd(MixedDist):
     # ---- Distribution API overrides ----
     @torch.no_grad()
     def sample_one(self) -> Tensor:
+        # Check if we should return zero
+        if self.p_zero > 0.0 and torch.rand(1, device=self.device, dtype=self.dtype).item() < self.p_zero:
+            return torch.zeros((), device=self.device, dtype=self.dtype)
+        
         # draw std, choose component, build that component with the implied scale, sample one
         s = self.std_dist.sample_one().to(self.device, self.dtype)  # ()
         k = int(self._cat.sample().item())
@@ -143,6 +155,11 @@ class MixedDistRandomStd(MixedDist):
             scales_k = self.std2scale[dist_cls](s_k)           # (count,)
             comp_k = self._build_component_from_scales(dist_cls, scales_k)
             out[mask] = comp_k.sample()  # (count,)
+
+        # 4) Apply zero mask with probability p_zero
+        if self.p_zero > 0.0:
+            zero_mask = torch.rand(n, device=self.device, dtype=self.dtype) < self.p_zero
+            out[zero_mask] = 0.0
 
         return out
 
@@ -181,7 +198,7 @@ if __name__ == "__main__":
         dtype=torch.float32
     )
     
-    print("\n✓ Created MixedDistRandomStd")
+    print("\n✓ Created MixedDistRandomStd (p_zero=0.0)")
     
     # Sample and verify
     sample_one = mixed.sample_one()
@@ -192,6 +209,23 @@ if __name__ == "__main__":
     
     shape_samples = mixed.sample_shape((10, 5))
     print(f"  sample_shape((10,5)): shape={shape_samples.shape}, mean={shape_samples.mean().item():.4f}")
+    
+    # Test with p_zero > 0
+    print("\n✓ Testing with p_zero=0.3")
+    mixed_with_zeros = MixedDistRandomStd(
+        distributions=(dist.Normal, dist.Laplace, dist.StudentT, dist.Gumbel),
+        mixture_proportions=(0.25, 0.25, 0.25, 0.25),
+        std_dist=GammaMeanStd(mean=1.0, std=0.2),
+        p_zero=0.3,
+        device='cpu',
+        dtype=torch.float32
+    )
+    
+    samples_with_zeros = mixed_with_zeros.sample_n(10000)
+    zero_count = (samples_with_zeros == 0.0).sum().item()
+    zero_fraction = zero_count / 10000
+    print(f"  sample_n(10000): zero_fraction={zero_fraction:.3f} (expected ~0.30)")
+    print(f"  mean={samples_with_zeros.mean().item():.4f}, std={samples_with_zeros.std().item():.4f}")
     
     print("\n" + "="*60)
     print("TEST PASSED")

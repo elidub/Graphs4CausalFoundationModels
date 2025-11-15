@@ -25,6 +25,7 @@ class MixedDist(Distribution):
         mixture_proportions: Sequence[float] = (0.25, 0.25, 0.25, 0.25),
         std2scale: Optional[dict[Type[dist.Distribution], Callable[[float], float]]] = None,
         student_t_df: float = 3.0,
+        p_zero: float = 0.0,
         device: torch.device | str = "cpu",
         dtype: torch.dtype = torch.float32,
         generator: Optional[torch.Generator] = None,
@@ -42,6 +43,8 @@ class MixedDist(Distribution):
             Mapping {DistributionClass: std -> scale}. If None, sensible defaults are used.
         student_t_df : float
             Degrees of freedom for StudentT; default 3 ensures finite variance.
+        p_zero : float
+            Probability of returning zero instead of sampling from the distribution (default: 0.0)
         """
         super().__init__(device=device, dtype=dtype, generator=generator)
 
@@ -53,6 +56,11 @@ class MixedDist(Distribution):
         self.std = float(std)
         self.distributions = list(distributions)
         self.student_t_df = float(student_t_df)
+        self.p_zero = float(p_zero)
+        
+        # Validate p_zero
+        if not 0.0 <= self.p_zero <= 1.0:
+            raise ValueError(f"p_zero must be in [0, 1], got {p_zero}")
 
         # Normalize proportions
         w = torch.as_tensor(mixture_proportions, dtype=self.dtype, device=self.device)
@@ -114,6 +122,10 @@ class MixedDist(Distribution):
     # ---- ScalarDistribution API ----
     @torch.no_grad()
     def sample_one(self) -> Tensor:
+        # Check if we should return zero
+        if self.p_zero > 0.0 and torch.rand(1, device=self.device, dtype=self.dtype, generator=self.generator).item() < self.p_zero:
+            return torch.zeros((), device=self.device, dtype=self.dtype)
+        
         idx = int(self._cat.sample(generator=self.generator).item())
         return self._components[idx].sample(generator=self.generator).to(self.device, self.dtype)
 
@@ -136,6 +148,11 @@ class MixedDist(Distribution):
             count = int(mask.sum().item())
             if count > 0:
                 out[mask] = comp.sample((count,)).to(self.device, self.dtype)
+
+        # Apply zero mask with probability p_zero
+        if self.p_zero > 0.0:
+            zero_mask = torch.rand(n, device=self.device, dtype=self.dtype, generator=self.generator) < self.p_zero
+            out[zero_mask] = 0.0
 
         return out
 

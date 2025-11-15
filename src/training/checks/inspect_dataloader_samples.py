@@ -198,6 +198,14 @@ class DataloaderDatasetVisualizer:
         self.log(f"[INFO] Dataset size: {dataset_config.get('dataset_size', {}).get('value', 'unknown')}")
         self.log(f"[INFO] Max features: {dataset_config.get('max_number_features', {}).get('value', 'unknown')}")
         
+        # Log endogenous noise configuration
+        endo_std = scm_config.get('endo_std', {})
+        endo_p_zero = scm_config.get('endo_p_zero', {})
+        if endo_std:
+            self.log(f"[INFO] Endogenous noise std: {endo_std.get('value', endo_std.get('distribution', 'unknown'))}")
+        if endo_p_zero:
+            self.log(f"[INFO] Endogenous noise sparsity (p_zero): {endo_p_zero.get('value', endo_p_zero.get('distribution', 'unknown'))}")
+        
         # Create dataset directly (using new refactored ObservationalDataset)
         self.log(f"[INFO] Creating dataset with seed {self.seed}...")
         self.dataset = ObservationalDataset(
@@ -1695,7 +1703,7 @@ def main():
     N_BATCHES = 1
     
     # Number of datasets to visualize per batch
-    N_DATASETS_PER_BATCH = 100
+    N_DATASETS_PER_BATCH = 50
     
     # ResultsDataloaderSamples will be saved to organized folders (plots will NOT be displayed)
     # Format: checks/ResultsDataloaderSamples/run_YYYYMMDD_HHMMSS/batch_X/dataset_Y/

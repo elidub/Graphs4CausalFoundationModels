@@ -231,7 +231,7 @@ class BasicProcessing:
         variances = torch.var(data_tensor, dim=0, unbiased=False)  # (F,)
         
         # Filter out features with zero variance (using small epsilon for numerical stability)
-        eps = 1e-12
+        eps = 1e-5
         valid_mask = variances > eps
         valid_cols = [i for i, valid in enumerate(valid_mask) if valid]
         valid_features = [feature_indices[i] for i in valid_cols]
