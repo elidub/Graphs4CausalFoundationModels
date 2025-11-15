@@ -586,7 +586,7 @@ model_config:
   use_bar_distribution:
     value: true
   num_bars:  # number of bars (K). Higher values allow for more complex, fine-grained posteriors, but make training more difficult.
-    value: 1000
+    value: 10000
   min_width:  # minimum width of each bar to avoid numerical issues
     value: "1e-6"
   scale_floor:  # for the tails, this ensures that the scale is never too small
