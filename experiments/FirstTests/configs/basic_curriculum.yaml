@@ -581,6 +581,8 @@ model_config:
     value: 2
   num_features:
     value: 50  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
+  normalize_features:  # whether to apply quantile transform + standard normalization internally
+    value: true
 
   # BarDistribution Configuration (used to model the output distribution)
   use_bar_distribution:
@@ -644,6 +646,8 @@ training_config:
   # Hardware Configuration
   device:
     value: "cuda"
+  use_amp:  # Enable automatic mixed precision (float16) for faster training on GPU
+    value: true
   precision: # precision for training. 16 has not been tested yet.
     value: "16"
 

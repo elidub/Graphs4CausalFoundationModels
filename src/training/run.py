@@ -438,7 +438,8 @@ def main():
             heads_samp=model_config.get("heads_samp", 2),
             dropout=model_config.get("dropout", 0.1),
             hidden_mult=model_config.get("hidden_mult", 4),
-            output_dim=output_dim  # Use calculated output dimension
+            output_dim=output_dim,  # Use calculated output dimension
+            normalize_features=model_config.get("normalize_features", True),  # Apply normalization (default: True)
         )
         # Count parameters
         total_params = sum(p.numel() for p in model.parameters())
@@ -446,6 +447,17 @@ def main():
         print(f"   Total parameters: {total_params:,}")
         print(f"   Trainable parameters: {trainable_params:,}")
         print(f"   SimplePFN model created")
+        
+        # Print normalization configuration
+        normalize_enabled = model_config.get("normalize_features", True)
+        print(f"\nFEATURE NORMALIZATION:")
+        print(f"   Internal normalization: {'ENABLED' if normalize_enabled else 'DISABLED'}")
+        if normalize_enabled:
+            print(f"   Method: Quantile transform + Standard normalization")
+            print(f"   - Step 1: Uniform quantile transform (support set)")
+            print(f"   - Step 2: Mean/std normalization (support set)")
+        else:
+            print(f"   Features will be passed through as-is (ensure external preprocessing!)")
         
         # Extract training configuration parameters
         # Build scheduler config from individual keys in training_config
@@ -463,6 +475,16 @@ def main():
         save_every = training_config.get("save_every", 0)
         use_amp = training_config.get("use_amp", False)
         gradient_clip_val = training_config.get("gradient_clip_val", 0.0)
+        
+        # Print mixed precision training status
+        print(f"\nMIXED PRECISION TRAINING:")
+        if use_amp:
+            print(f"   Status: ENABLED (float16)")
+            print(f"   Expected speedup: 1.5-2x on modern GPUs (requires CUDA)")
+            print(f"   Memory usage: ~50% reduction")
+        else:
+            print(f"   Status: DISABLED (float32)")
+            print(f"   To enable: set use_amp: true in training_config")
         
         # Extract ensemble parameters from training config (shared with benchmark)
         norm_methods = training_config.get("norm_methods", None)

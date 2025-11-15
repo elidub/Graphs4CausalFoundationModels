@@ -1882,7 +1882,7 @@ def main():
     N_DATASETS_PER_BATCH = 50
 
     # Fixed curriculum time t in [0, 1]; when using curriculum configs, all samples will be drawn at this timepoint
-    FIXED_T = 0.0
+    FIXED_T = 1.0
     
     # ResultsDataloaderSamples will be saved to organized folders (plots will NOT be displayed)
     # Format: checks/ResultsDataloaderSamples/run_YYYYMMDD_HHMMSS/batch_X/dataset_Y/
