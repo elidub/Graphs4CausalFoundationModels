@@ -314,12 +314,12 @@ def main():
         print(f"\nDATALOADER SETUP:")
         print(f"   Batch size: {batch_size}")
         print(f"   Number of workers: {num_workers}")
-        print(f"   Shuffle: True")
+        print(f"   Shuffle: False")
         
         dataloader = DataLoader(
             dataset,
             batch_size=batch_size,
-            shuffle=True,
+            shuffle=False,
             num_workers=num_workers,
             persistent_workers=num_workers > 0  # Only use persistent workers when num_workers > 0
         )
