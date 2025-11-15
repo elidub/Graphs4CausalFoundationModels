@@ -149,6 +149,7 @@ class SCMSampler:
         "exo_std_std": (float, type(None)),
         "endo_std_mean": (float, type(None)),
         "endo_std_std": (float, type(None)),
+        "endo_p_zero": float,
         "use_exogenous_mechanisms": bool,
         "mechanism_generator_seed": int,
     }
@@ -377,8 +378,11 @@ class SCMSampler:
         
         if not params["random_additive_std"]:
             # Fixed standard deviation mode
+            # Get endogenous p_zero parameter (probability of zero noise)
+            endo_p_zero = params.get("endo_p_zero", 0.0)
+            
             exogenous_noise = {node: MixedDist(std=params["exo_std"]) for node in exogenous_variables}
-            endogenous_noise = {node: MixedDist(std=params["endo_std"]) for node in endogenous_variables}
+            endogenous_noise = {node: MixedDist(std=params["endo_std"], p_zero=endo_p_zero) for node in endogenous_variables}
         else:
             # Random standard deviation mode
             # Create std samplers based on distribution type
@@ -400,6 +404,9 @@ class SCMSampler:
             distributions = [dist.Normal, dist.Laplace, dist.StudentT]
             mixture_proportions = [1.0 / len(distributions)] * len(distributions)
             
+            # Get endogenous p_zero parameter (probability of zero noise)
+            endo_p_zero = params.get("endo_p_zero", 0.0)
+            
             # Create noise distributions
             exogenous_noise = {
                 node: MixedDistRandomStd(
@@ -413,7 +420,8 @@ class SCMSampler:
                 node: MixedDistRandomStd(
                     distributions=distributions,
                     std_dist=endo_std_dist,
-                    mixture_proportions=mixture_proportions
+                    mixture_proportions=mixture_proportions,
+                    p_zero=endo_p_zero
                 )
                 for node in endogenous_variables
             }

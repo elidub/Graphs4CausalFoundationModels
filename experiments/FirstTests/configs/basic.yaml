@@ -18,6 +18,7 @@ scm_config:
     distribution_parameters:
       low: 3
       high: 51
+      high: 51
   graph_edge_prob:
     distribution: "beta"
     distribution_parameters:
@@ -37,6 +38,7 @@ scm_config:
       - 0.2
       probabilities:
       - 0.9
+      - 0.9
       - 0.1
       - 0.01
         #- 0.8
@@ -54,12 +56,13 @@ scm_config:
     distribution_parameters:
       choices:
         - 0.9
+        - 0.9
         - 1
         - 2
       probabilities:
-        - 1.0
-        - 0.02
-        - 0.01
+        - 0.925
+        - 0.05
+        - 0.025
   mlp_hidden_dim:
     distribution: "categorical"
     distribution_parameters:
@@ -78,6 +81,13 @@ scm_config:
         - 0.8
         - 0.1
         - 0.05
+        - 0.04
+        - 0.03
+        - 0.02
+        - 0.01
+        - 0.009
+        - 0.008
+        - 0.007
         - 0.04
         - 0.03
         - 0.02
@@ -120,10 +130,20 @@ scm_config:
   xgb_node_shape:
     value: [1]
   xgb_n_training_samples:
-    distribution: "discrete_uniform"
+    distribution: "categorical"
     distribution_parameters:
-      low: 10
-      high: 500
+      choices:
+        - 10
+        - 50
+        - 100
+        - 200
+        - 500
+      probabilities:
+        - 0.1
+        - 0.1
+        - 0.4
+        - 0.2
+        - 0.1
   xgb_add_noise:
     distribution: "categorical"
     distribution_parameters:
@@ -167,17 +187,20 @@ scm_config:
     distribution: "lognormal"
     distribution_parameters:
       mean: -3.0
-      std: 0.2
-    #distribution: "uniform"
-    #distribution_parameters:
-    #  low: 0.1
-    #  high: 0.3
+      std: 0.5
   endo_std_std:
     distribution: "uniform"
     distribution_parameters:
-      low: 0.1
-      high: 0.2
-    value: true
+      low: 0.0
+      high: 0.3
+  
+  # Endogenous noise sparsity: probability of zero noise
+  endo_p_zero:
+    distribution: "beta"
+    distribution_parameters:
+      alpha: 1.0
+      beta: 3.0  # Expected value ~
+  
   use_exogenous_mechanisms:
     value: true
   mechanism_generator_seed:
@@ -225,7 +248,7 @@ preprocessing_config:
         - 0.5 
         - 0.6
       probabilities:
-      - 0.99
+      - 0.95
       - 0.02
       - 0.01
       - 0.005
@@ -305,7 +328,7 @@ training_config:
   weight_decay: # weight decay for optimizer, might not be needed
     value: 0.00001 
   max_steps:  #critial for determing training duration!
-    value: 10000
+    value: 3000
   max_epochs: # should always be 1
     value: 1
 

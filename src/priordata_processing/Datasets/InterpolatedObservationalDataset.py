@@ -44,7 +44,9 @@ class InterpolatedObservationalDataset(ObservationalDataset):
     Parameters
     ----------
     scm_config_t0, scm_config_t1 : Dict[str, Any]
-        SCM configurations for initial and final states
+        SCM configurations for initial and final states.
+        Supports all SCMSampler parameters including endo_p_zero for controlling
+        the probability of zero endogenous noise.
     preprocessing_config_t0, preprocessing_config_t1 : Dict[str, Any]
         Preprocessing configurations for initial and final states
     dataset_config_t0, dataset_config_t1 : Dict[str, Any]
@@ -53,6 +55,17 @@ class InterpolatedObservationalDataset(ObservationalDataset):
         Interpolation function: "linear", "sigmoid", "step", "constant"
     seed : Optional[int], default None
         Random seed for reproducibility
+        
+    Examples
+    --------
+    >>> # Curriculum from dense noise (p_zero=0.0) to sparse noise (p_zero=0.5)
+    >>> scm_config_t0 = {"endo_p_zero": {"value": 0.0}, ...}
+    >>> scm_config_t1 = {"endo_p_zero": {"value": 0.5}, ...}
+    >>> dataset = InterpolatedObservationalDataset(
+    ...     scm_config_t0, scm_config_t1,
+    ...     preprocessing_config_t0, preprocessing_config_t1,
+    ...     dataset_config_t0, dataset_config_t1
+    ... )
     """
     
     def __init__(

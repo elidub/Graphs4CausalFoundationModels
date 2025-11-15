@@ -173,6 +173,12 @@ class Trainer:
             'benchmark/r2_lr_median': float('nan'),
             'benchmark/r2_rf_median': float('nan'),
             'benchmark/r2_pfn_median': float('nan'),
+            'benchmark/mse_lr_mean': float('nan'),
+            'benchmark/mse_rf_mean': float('nan'),
+            'benchmark/mse_pfn_mean': float('nan'),
+            'benchmark/r2_lr_mean': float('nan'),
+            'benchmark/r2_rf_mean': float('nan'),
+            'benchmark/r2_pfn_mean': float('nan'),
         }
         # Seed per-set and overall eval metric placeholders so keys exist from step 1
         if self.eval_dataloaders is not None:
@@ -1161,6 +1167,9 @@ class Trainer:
         # Ensure we have a run directory for outputs
         out_dir = self.run_save_dir or "."
         out_csv = os.path.join(out_dir, f"benchmark_{tag}.csv")
+        
+        # Update benchmark output_csv to save in the same directory as model checkpoints
+        self.benchmark.output_csv = out_csv
 
         print(f"[Trainer] Running benchmark ({fidelity}) -> {out_csv}")
         df = self.benchmark.run(
@@ -1212,49 +1221,75 @@ class Trainer:
         # Optionally log a quick summary
         if hasattr(self, 'wandb_run') and self.wandb_run is not None:
             try:
-                # Log median metrics if present
+                # Log median and mean metrics if present
                 df_metrics = df[df["process_id"] != "summary"] if "process_id" in df.columns else df
                 log = {}
                 
-                # Extract median values for caching
+                # Extract median and mean values for caching
                 mse_lr_median = float('nan')
                 mse_rf_median = float('nan')
                 mse_pfn_median = float('nan')
                 r2_lr_median = float('nan')
                 r2_rf_median = float('nan')
                 r2_pfn_median = float('nan')
+                mse_lr_mean = float('nan')
+                mse_rf_mean = float('nan')
+                mse_pfn_mean = float('nan')
+                r2_lr_mean = float('nan')
+                r2_rf_mean = float('nan')
+                r2_pfn_mean = float('nan')
                 
+                # Log MSE metrics (both median and mean)
                 for k in ["mse_lr", "mse_rf", "mse_pfn"]:
                     if k in df_metrics.columns:
                         median_val = float(df_metrics[k].median(skipna=True))
+                        mean_val = float(df_metrics[k].mean(skipna=True))
                         log[f"benchmark/{tag}/{k}_median"] = median_val
+                        log[f"benchmark/{tag}/{k}_mean"] = mean_val
                         # Store in variables for cache update
                         if k == "mse_lr":
                             mse_lr_median = median_val
+                            mse_lr_mean = mean_val
                         elif k == "mse_rf":
                             mse_rf_median = median_val
+                            mse_rf_mean = mean_val
                         elif k == "mse_pfn":
                             mse_pfn_median = median_val
+                            mse_pfn_mean = mean_val
                             
+                # Log R2 metrics (both median and mean)
                 for k in ["r2_lr", "r2_rf", "r2_pfn"]:
                     if k in df_metrics.columns:
                         median_val = float(df_metrics[k].median(skipna=True))
+                        mean_val = float(df_metrics[k].mean(skipna=True))
                         log[f"benchmark/{tag}/{k}_median"] = median_val
+                        log[f"benchmark/{tag}/{k}_mean"] = mean_val
                         # Store in variables for cache update
                         if k == "r2_lr":
                             r2_lr_median = median_val
+                            r2_lr_mean = mean_val
                         elif k == "r2_rf":
                             r2_rf_median = median_val
+                            r2_rf_mean = mean_val
                         elif k == "r2_pfn":
                             r2_pfn_median = median_val
+                            r2_pfn_mean = mean_val
                 
-                # Update cached benchmark metrics for per-step logging
+                # Update cached benchmark metrics for per-step logging (median values)
                 self._latest_benchmark_metrics['benchmark/mse_lr_median'] = mse_lr_median
                 self._latest_benchmark_metrics['benchmark/mse_rf_median'] = mse_rf_median
                 self._latest_benchmark_metrics['benchmark/mse_pfn_median'] = mse_pfn_median
                 self._latest_benchmark_metrics['benchmark/r2_lr_median'] = r2_lr_median
                 self._latest_benchmark_metrics['benchmark/r2_rf_median'] = r2_rf_median
                 self._latest_benchmark_metrics['benchmark/r2_pfn_median'] = r2_pfn_median
+                
+                # Update cached benchmark metrics for per-step logging (mean values)
+                self._latest_benchmark_metrics['benchmark/mse_lr_mean'] = mse_lr_mean
+                self._latest_benchmark_metrics['benchmark/mse_rf_mean'] = mse_rf_mean
+                self._latest_benchmark_metrics['benchmark/mse_pfn_mean'] = mse_pfn_mean
+                self._latest_benchmark_metrics['benchmark/r2_lr_mean'] = r2_lr_mean
+                self._latest_benchmark_metrics['benchmark/r2_rf_mean'] = r2_rf_mean
+                self._latest_benchmark_metrics['benchmark/r2_pfn_mean'] = r2_pfn_mean
                 
                 if log:
                     self.wandb_run.log(log, step=self.global_step)

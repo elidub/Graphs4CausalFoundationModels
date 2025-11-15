@@ -256,6 +256,22 @@ class DataloaderDatasetVisualizer:
             ds_size0 = dataset_config_t0.get('dataset_size', {}).get('value', 'unknown')
             ds_size1 = dataset_config_t1.get('dataset_size', {}).get('value', 'unknown')
             self.log(f"[INFO] Dataset sizes t0/t1 (after auto-compute): {ds_size0}/{ds_size1}")
+            
+            # Log endogenous noise configuration for both t0 and t1
+            endo_std_t0 = scm_config_t0.get('endo_std', {})
+            endo_p_zero_t0 = scm_config_t0.get('endo_p_zero', {})
+            endo_std_t1 = scm_config_t1.get('endo_std', {})
+            endo_p_zero_t1 = scm_config_t1.get('endo_p_zero', {})
+            
+            if endo_std_t0 or endo_std_t1:
+                std_t0 = endo_std_t0.get('value', endo_std_t0.get('distribution', 'not set'))
+                std_t1 = endo_std_t1.get('value', endo_std_t1.get('distribution', 'not set'))
+                self.log(f"[INFO] Endogenous noise std: t0={std_t0}, t1={std_t1}")
+            
+            if endo_p_zero_t0 or endo_p_zero_t1:
+                p_zero_t0 = endo_p_zero_t0.get('value', endo_p_zero_t0.get('distribution', 'not set'))
+                p_zero_t1 = endo_p_zero_t1.get('value', endo_p_zero_t1.get('distribution', 'not set'))
+                self.log(f"[INFO] Endogenous noise sparsity (p_zero): t0={p_zero_t0}, t1={p_zero_t1}")
 
             self.log(f"[INFO] Creating interpolated dataset with seed {self.seed}…")
             self.dataset = InterpolatedObservationalDataset(
@@ -323,6 +339,14 @@ class DataloaderDatasetVisualizer:
             self.log(f"[INFO] SCM nodes: {scm_config.get('num_nodes', {}).get('value', 'unknown')}")
             self.log(f"[INFO] Dataset size (after auto-compute): {dataset_config.get('dataset_size', {}).get('value', 'unknown')}")
             self.log(f"[INFO] Max features: {dataset_config.get('max_number_features', {}).get('value', 'unknown')}")
+            
+            # Log endogenous noise configuration
+            endo_std = scm_config.get('endo_std', {})
+            endo_p_zero = scm_config.get('endo_p_zero', {})
+            if endo_std:
+                self.log(f"[INFO] Endogenous noise std: {endo_std.get('value', endo_std.get('distribution', 'unknown'))}")
+            if endo_p_zero:
+                self.log(f"[INFO] Endogenous noise sparsity (p_zero): {endo_p_zero.get('value', endo_p_zero.get('distribution', 'unknown'))}")
 
             self.log(f"[INFO] Creating observational dataset with seed {self.seed}…")
             self.dataset = ObservationalDataset(

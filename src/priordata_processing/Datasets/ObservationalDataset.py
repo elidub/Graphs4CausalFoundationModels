@@ -24,13 +24,27 @@ class ObservationalDataset(Dataset):
     Parameters
     ----------
     scm_config : Dict[str, Any]
-        Configuration for SCM hyperparameters (same format as SCMSampler)
+        Configuration for SCM hyperparameters (same format as SCMSampler).
+        Supports all SCMSampler parameters including:
+        - num_nodes, graph_edge_prob, graph_seed
+        - mechanism parameters (mlp_*, xgb_*)
+        - noise distribution parameters (exo_std_*, endo_std_*)
+        - endo_p_zero: probability of endogenous noise being exactly zero
     preprocessing_config : Dict[str, Any]
         Configuration for data preprocessing hyperparameters
     dataset_config : Dict[str, Any]
         Configuration for dataset parameters (size, max samples, etc.)
     seed : Optional[int], default None
         Random seed for reproducibility
+        
+    Examples
+    --------
+    >>> scm_config = {
+    ...     "num_nodes": {"value": 5},
+    ...     "endo_p_zero": {"value": 0.3},  # 30% of endogenous noise is zero
+    ...     # ... other parameters
+    ... }
+    >>> dataset = ObservationalDataset(scm_config, preprocessing_config, dataset_config)
     """
     
     # Expected preprocessing hyperparameters
