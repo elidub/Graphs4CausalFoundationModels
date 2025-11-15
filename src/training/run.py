@@ -164,6 +164,18 @@ def main():
                 )
                 print(f"   Wandb initialized successfully!")
                 print(f"   Run URL: {wandb_run.get_url()}")
+                
+                # Log the full raw config to wandb
+                print(f"\n   Logging full configuration to wandb...")
+                print(f"   " + "=" * 56)
+                print(f"   FULL CONFIG DICT (being logged to wandb):")
+                print(f"   " + "-" * 56)
+                config_str = json.dumps(config, indent=2, default=str)
+                for line in config_str.split('\n'):
+                    print(f"   {line}")
+                print(f"   " + "=" * 56)
+                wandb_run.config.update({"full_config": config}, allow_val_change=True)
+                print(f"   Full configuration logged to wandb successfully!\n")
             except Exception as e:
                 print(f"   Wandb initialization failed: {e}")
                 wandb_run = None
@@ -436,7 +448,17 @@ def main():
         print(f"   SimplePFN model created")
         
         # Extract training configuration parameters
-        scheduler_config = training_config.get("scheduler", {})
+        # Build scheduler config from individual keys in training_config
+        scheduler_config = {}
+        if training_config.get("scheduler_type"):
+            scheduler_config["type"] = training_config.get("scheduler_type")
+            scheduler_config["warmup_ratio"] = training_config.get("warmup_ratio", 0.03)
+            scheduler_config["min_lr_ratio"] = training_config.get("min_lr_ratio", 0.1)
+            print(f"\nSCHEDULER CONFIG:")
+            print(f"   Type: {scheduler_config['type']}")
+            print(f"   Warmup ratio: {scheduler_config['warmup_ratio']}")
+            print(f"   Min LR ratio: {scheduler_config['min_lr_ratio']}")
+        
         save_dir = training_config.get("checkpoint_dir")
         save_every = training_config.get("save_every", 0)
         use_amp = training_config.get("use_amp", False)
