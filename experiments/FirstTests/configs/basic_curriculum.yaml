@@ -568,7 +568,7 @@ preprocessing_config_t1:
 
 model_config:
   d_model:
-    value: 1024
+    value: 256
   depth: # number of layers
     value: 6
   heads_feat:  # number of attention heads for feature-wise attention
@@ -618,9 +618,9 @@ training_config:
 
   # Data Loading Parameters
   batch_size: # batch size
-    value: 2
+    value: 8
   accumulate_grad_batches:
-    value: 16
+    value: 4
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
     value: 64
 
