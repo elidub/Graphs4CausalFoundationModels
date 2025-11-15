@@ -476,6 +476,16 @@ def main():
         use_amp = training_config.get("use_amp", False)
         gradient_clip_val = training_config.get("gradient_clip_val", 0.0)
         
+        # Print mixed precision training status
+        print(f"\nMIXED PRECISION TRAINING:")
+        if use_amp:
+            print(f"   Status: ENABLED (float16)")
+            print(f"   Expected speedup: 1.5-2x on modern GPUs (requires CUDA)")
+            print(f"   Memory usage: ~50% reduction")
+        else:
+            print(f"   Status: DISABLED (float32)")
+            print(f"   To enable: set use_amp: true in training_config")
+        
         # Extract ensemble parameters from training config (shared with benchmark)
         norm_methods = training_config.get("norm_methods", None)
         outlier_strategies = training_config.get("outlier_strategies", None)

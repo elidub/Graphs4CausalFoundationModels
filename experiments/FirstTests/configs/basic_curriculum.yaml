@@ -646,6 +646,8 @@ training_config:
   # Hardware Configuration
   device:
     value: "cuda"
+  use_amp:  # Enable automatic mixed precision (float16) for faster training on GPU
+    value: true
   precision: # precision for training. 16 has not been tested yet.
     value: "16"
 
