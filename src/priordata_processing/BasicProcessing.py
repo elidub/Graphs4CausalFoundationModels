@@ -236,9 +236,6 @@ class BasicProcessing:
         valid_cols = [i for i, valid in enumerate(valid_mask) if valid]
         valid_features = [feature_indices[i] for i in valid_cols]
         
-        if len(valid_features) == 0:
-            raise ValueError("All features have zero variance - no valid target available")
-        
         # If user specified a target, check it's valid
         if self.target_feature is not None:
             if self.target_feature not in feature_indices:
@@ -253,8 +250,12 @@ class BasicProcessing:
                 )
             return self.target_feature
         
-        # Random selection from valid (non-zero variance) features
-        return random.choice(valid_features)
+        # Random selection: prefer valid (non-zero variance) features, but fall back to any if none available
+        if len(valid_features) > 0:
+            return random.choice(valid_features)
+        else:
+            # All features have zero variance - just pick randomly as fallback
+            return random.choice(feature_indices)
 
     def _apply_feature_dropout(self, remaining_cols: list, feature_indices: list) -> Tuple[list, list]:
         """Randomly drop (hide) some features (by column indices) excluding target.
