@@ -300,7 +300,7 @@ training_config:
 
   # Data Loading Parameters
   batch_size: # batch size
-    value: 8
+    value: 16
   accumulate_grad_batches:
     value: 1
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
@@ -327,6 +327,7 @@ training_config:
   # Hardware Configuration
   device:
     value: "cuda"
+  use_amp:  True
   precision: # precision for training. 16 has not been tested yet.
     value: "16"
   
@@ -345,15 +346,15 @@ training_config:
 
   # Model Checkpointing
   checkpoint_every_n_steps: # how often to save a model checkpoint
-    value: 500
+    value: 1000
 
   # Evaluation Configuration
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 500
+    value: 1000
   eval_batches: # number of batches to use for evaluation
-    value: 100
+    value: 200
   eval_dataset_size: # size of the evaluation dataset
     value: 1000000
 
