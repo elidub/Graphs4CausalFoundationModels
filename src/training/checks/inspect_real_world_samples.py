@@ -2030,8 +2030,8 @@ def main():
                        help="Path to YAML config file (relative to repo root)")
     parser.add_argument('--seed', type=int, default=42, help="Random seed")
     parser.add_argument('--n_batches', type=int, default=1, help="# of batches to sample")
-    parser.add_argument('--n_datasets_per_batch', type=int, default=20, help="# of datasets per batch to visualize")
-    parser.add_argument('--max_datasets', type=int, default=20, help="Max # of cached datasets to include")
+    parser.add_argument('--n_datasets_per_batch', type=int, default=200, help="# of datasets per batch to visualize")
+    parser.add_argument('--max_datasets', type=int, default=200, help="Max # of cached datasets to include")
     parser.add_argument('--task_ids', type=str, default='', 
                        help="Comma-separated OpenML task IDs to filter (leave empty to use DEFAULT_TABULAR_NUM_REG_TASKS)")
     parser.add_argument('--use_default_tasks', action='store_true',

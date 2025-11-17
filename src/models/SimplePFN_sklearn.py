@@ -605,71 +605,6 @@ class SimplePFNSklearn:
             if self.verbose:
                 print("[SimplePFNSklearn] BarDistribution was not fitted in the saved checkpoint")
 
-    def fit_bar_distribution(self, X_train_data, y_train_data, X_test_data, y_test_data, 
-                           max_batches: Optional[int] = None) -> "SimplePFNSklearn":
-        """
-        Fit the BarDistribution to data. This must be called before prediction if BarDistribution is enabled.
-        
-        Args:
-            X_train_data, y_train_data, X_test_data, y_test_data: Training and test data arrays
-                Can be lists of arrays (multiple datasets) or single arrays (single dataset)
-            max_batches: Maximum number of batches to use for fitting
-        """
-        if not self.use_bar_distribution or self.bar_distribution is None:
-            if self.verbose:
-                print("[SimplePFNSklearn] BarDistribution not enabled, skipping fit.")
-            return self
-            
-        # Convert data to proper format for BarDistribution fitting
-        if not isinstance(X_train_data, list):
-            X_train_data = [X_train_data]
-            y_train_data = [y_train_data] 
-            X_test_data = [X_test_data]
-            y_test_data = [y_test_data]
-            
-        # Create a simple iterator that yields (X_train, y_train, X_test, y_test) tuples
-        class SimpleDataIterator:
-            def __init__(self, X_tr_list, y_tr_list, X_te_list, y_te_list):
-                self.data = list(zip(X_tr_list, y_tr_list, X_te_list, y_te_list))
-                
-            def __iter__(self):
-                for X_tr, y_tr, X_te, y_te in self.data:
-                    # Convert to tensors and ensure proper shapes
-                    X_tr_tensor = torch.as_tensor(np.asarray(X_tr), dtype=torch.float32)
-                    y_tr_tensor = torch.as_tensor(np.asarray(y_tr), dtype=torch.float32)
-                    X_te_tensor = torch.as_tensor(np.asarray(X_te), dtype=torch.float32)
-                    y_te_tensor = torch.as_tensor(np.asarray(y_te), dtype=torch.float32)
-                    
-                    # Ensure batch dimensions
-                    if X_tr_tensor.ndim == 2:
-                        X_tr_tensor = X_tr_tensor.unsqueeze(0)
-                    if X_te_tensor.ndim == 2:
-                        X_te_tensor = X_te_tensor.unsqueeze(0)
-                    if y_tr_tensor.ndim == 1:
-                        y_tr_tensor = y_tr_tensor.unsqueeze(0)
-                    if y_te_tensor.ndim == 1:
-                        y_te_tensor = y_te_tensor.unsqueeze(0)
-                        
-                    # CRITICAL FIX: Ensure y tensors have the training-expected shape (B, N, 1)
-                    if y_tr_tensor.ndim == 2:
-                        y_tr_tensor = y_tr_tensor.unsqueeze(-1)  # (B, N) -> (B, N, 1)
-                    if y_te_tensor.ndim == 2:
-                        y_te_tensor = y_te_tensor.unsqueeze(-1)  # (B, M) -> (B, M, 1)
-                        
-                    yield (X_tr_tensor, y_tr_tensor, X_te_tensor, y_te_tensor)
-        
-        data_iter = SimpleDataIterator(X_train_data, y_train_data, X_test_data, y_test_data)
-        
-        if self.verbose:
-            print(f"[SimplePFNSklearn] Fitting BarDistribution with {len(X_train_data)} datasets...")
-            
-        self.bar_distribution.fit(data_iter, max_batches=max_batches)
-        
-        if self.verbose:
-            print("[SimplePFNSklearn] BarDistribution fitted successfully.")
-            
-        return self
-
     def fit(self, X: Any = None, y: Any = None, **kwargs) -> "SimplePFNSklearn":
         """Fit ensemble preprocessors if ensemble is enabled. Otherwise placeholder.
 
@@ -765,7 +700,8 @@ class SimplePFNSklearn:
             raise ValueError(f"prediction_type='{prediction_type}' requires BarDistribution to be enabled in config.")
         
         if self.use_bar_distribution and self.bar_distribution is None:
-            raise RuntimeError("BarDistribution enabled but not fitted. Call fit_bar_distribution() first.")
+            raise RuntimeError("BarDistribution enabled but not loaded from checkpoint. "
+                             "The model checkpoint must include fitted BarDistribution parameters.")
 
         # Convert to numpy if pandas
         if hasattr(X_train, "values"):
@@ -1020,18 +956,14 @@ if __name__ == "__main__":
     Xtr = _np.random.randn(10, num_features).astype(_np.float32)
     ytr = _np.random.randn(10).astype(_np.float32)
     Xte = _np.random.randn(3, num_features).astype(_np.float32)
-    yte_true = _np.random.randn(3).astype(_np.float32)  # For BarDistribution fitting
+    yte_true = _np.random.randn(3).astype(_np.float32)
 
-    # If BarDistribution is enabled, fit it first
+    # NOTE: BarDistribution is now a core property of the model checkpoint.
+    # It should be fitted ONCE during training and saved with the model.
+    # During inference, it is loaded from the checkpoint - never refitted!
+    
     if w.use_bar_distribution:
-        print("[SimplePFNSklearn] Fitting BarDistribution...")
-        # Create multiple synthetic datasets for fitting
-        train_datasets = [_np.random.randn(10, num_features).astype(_np.float32) for _ in range(5)]
-        train_targets = [_np.random.randn(10).astype(_np.float32) for _ in range(5)]
-        test_datasets = [_np.random.randn(5, num_features).astype(_np.float32) for _ in range(5)]
-        test_targets = [_np.random.randn(5).astype(_np.float32) for _ in range(5)]
-        
-        w.fit_bar_distribution(train_datasets, train_targets, test_datasets, test_targets, max_batches=5)
+        print("[SimplePFNSklearn] BarDistribution loaded from checkpoint")
         
         # Test different prediction types
         print("\n[SimplePFNSklearn] Testing different prediction types...")
@@ -1078,8 +1010,8 @@ if __name__ == "__main__":
     print("\n[SimplePFNSklearn] Making ensemble predictions...")
     
     if w_ensemble.use_bar_distribution:
-        # Need to fit BarDistribution first
-        w_ensemble.fit_bar_distribution(train_datasets, train_targets, test_datasets, test_targets, max_batches=5)
+        # BarDistribution is loaded from checkpoint - no refitting needed!
+        print("[SimplePFNSklearn] BarDistribution loaded from checkpoint for ensemble")
         
         # Test different aggregation methods
         mean_preds_ens = w_ensemble.predict(Xtr, ytr, Xte, prediction_type="mode", aggregate="mean")
