@@ -43,6 +43,13 @@ src_dir = Path(__file__).parent.parent.parent
 if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
 
+# Default Tabular numerical regression task IDs
+DEFAULT_TABULAR_NUM_REG_TASKS = [
+    361072, 361073, 361074, 361075, 361076, 361077, 361078, 361079, 361080,
+    361081, 361082, 361083, 361084, 361085, 361086, 361087, 361088,
+    361279, 361280, 361281
+]
+
 # Import required modules
 # NOTE: Synthetic dataset maker removed; this script now focuses solely on cached real-world data.
 try:
@@ -312,39 +319,42 @@ class DataloaderDatasetVisualizer:
         if not cache_dir.exists():
             raise FileNotFoundError("data_cache directory not found; cannot load real-world datasets")
 
-        # Gather dataset IDs either from explicit task IDs mapping or directory scan
-        all_dirs = [d for d in cache_dir.iterdir() if d.is_dir() and d.name.startswith('openml_')]
+        # Determine which datasets to load based on task IDs or directory scan
         dataset_ids = []
-        for d in all_dirs:
-            try:
-                dataset_ids.append(int(d.name.split('_', 1)[1]))
-            except Exception:
-                continue
-        dataset_ids = sorted(dataset_ids)
+        
         if self.task_ids:
-            # Filter by specified OpenML task IDs using mapping file
+            # User provided specific task IDs - use those
+            self.log(f"[INFO] Using user-specified task IDs: {self.task_ids}")
             mapping_path = cache_dir / 'task_to_dataset.json'
             if not mapping_path.exists():
-                self.log(f"[WARN] task_ids provided but mapping file missing: {mapping_path}")
-            else:
+                raise FileNotFoundError(f"task_ids provided but mapping file missing: {mapping_path}")
+            
+            mapping = json.load(open(mapping_path, 'r'))
+            task_to_dataset = {int(k): v.get('dataset_id') for k, v in mapping.items() if v.get('dataset_id') is not None}
+            
+            for tid in self.task_ids:
+                ds_id = task_to_dataset.get(tid)
+                if ds_id is not None:
+                    dataset_ids.append(int(ds_id))
+                    self.log(f"[INFO] Task {tid} -> Dataset {ds_id}")
+                else:
+                    self.log(f"[WARN] Task {tid} not found in mapping")
+            
+            dataset_ids = sorted(set(dataset_ids))
+        else:
+            # No task IDs provided - scan all available cached datasets
+            self.log(f"[INFO] No task IDs specified - scanning all cached datasets")
+            all_dirs = [d for d in cache_dir.iterdir() if d.is_dir() and d.name.startswith('openml_')]
+            for d in all_dirs:
                 try:
-                    mapping = json.load(open(mapping_path, 'r'))
-                    task_to_dataset = {int(k): v.get('dataset_id') for k, v in mapping.items() if v.get('dataset_id') is not None}
-                    filtered = []
-                    for tid in self.task_ids:
-                        ds_id = task_to_dataset.get(tid)
-                        if ds_id is not None:
-                            try:
-                                filtered.append(int(ds_id))
-                            except Exception:
-                                pass
-                    if filtered:
-                        dataset_ids = sorted(set(filtered))
-                except Exception as e:
-                    self.log(f"[WARN] Failed to parse mapping for task_ids filtering: {e}")
+                    dataset_ids.append(int(d.name.split('_', 1)[1]))
+                except Exception:
+                    continue
+            dataset_ids = sorted(dataset_ids)
+        
         if self.max_datasets and self.max_datasets > 0:
             dataset_ids = dataset_ids[: self.max_datasets]
-        self.log(f"[INFO] Found {len(dataset_ids)} cached datasets to process: {dataset_ids}")
+        self.log(f"[INFO] Will process {len(dataset_ids)} cached datasets: {dataset_ids}")
 
         rng = np.random.default_rng(self.seed)
         items = []
@@ -2020,9 +2030,12 @@ def main():
                        help="Path to YAML config file (relative to repo root)")
     parser.add_argument('--seed', type=int, default=42, help="Random seed")
     parser.add_argument('--n_batches', type=int, default=1, help="# of batches to sample")
-    parser.add_argument('--n_datasets_per_batch', type=int, default=100, help="# of datasets per batch to visualize")
-    parser.add_argument('--max_datasets', type=int, default=100, help="Max # of cached datasets to include")
-    parser.add_argument('--task_ids', type=str, default='', help="Comma-separated OpenML task IDs to filter (optional)")
+    parser.add_argument('--n_datasets_per_batch', type=int, default=20, help="# of datasets per batch to visualize")
+    parser.add_argument('--max_datasets', type=int, default=20, help="Max # of cached datasets to include")
+    parser.add_argument('--task_ids', type=str, default='', 
+                       help="Comma-separated OpenML task IDs to filter (leave empty to use DEFAULT_TABULAR_NUM_REG_TASKS)")
+    parser.add_argument('--use_default_tasks', action='store_true',
+                       help="Use DEFAULT_TABULAR_NUM_REG_TASKS instead of scanning all cached datasets")
     
     args = parser.parse_args()
 
@@ -2037,6 +2050,13 @@ def main():
     results_dir = Path(RESULTS_BASE_DIR) / f'run_{timestamp}'
     results_dir.mkdir(parents=True, exist_ok=True)
 
+    # Determine task IDs to use
+    task_ids_str = args.task_ids
+    if args.use_default_tasks and not task_ids_str:
+        # Use default task list
+        task_ids_str = ','.join(map(str, DEFAULT_TABULAR_NUM_REG_TASKS))
+        print(f"[INFO] Using DEFAULT_TABULAR_NUM_REG_TASKS: {len(DEFAULT_TABULAR_NUM_REG_TASKS)} tasks")
+
     print("=" * 60)
     print("      Dataset Analysis - File Output Mode")
     print("=" * 60)
@@ -2046,7 +2066,10 @@ def main():
     print(f"  N_BATCHES = {args.n_batches}")
     print(f"  N_DATASETS_PER_BATCH = {args.n_datasets_per_batch}")
     print(f"  MAX_DATASETS = {args.max_datasets}")
-    print(f"  TASK_IDS = {args.task_ids or '(none)'}")
+    if args.use_default_tasks:
+        print(f"  USING DEFAULT TASKS = True ({len(DEFAULT_TABULAR_NUM_REG_TASKS)} tasks)")
+    else:
+        print(f"  TASK_IDS = {task_ids_str or '(all cached datasets)'}")
     print(f"  RESULTS_DIR = {results_dir}")
     print()
     print("Preprocessing parameters will be read from the config file.")
@@ -2063,34 +2086,8 @@ def main():
         config_path=args.config,
         seed=args.seed,
         max_datasets=args.max_datasets,
-        task_ids=args.task_ids,
+        task_ids=task_ids_str,
     )
-
-    # Run visualization
-    visualizer.run_visualization(
-        n_batches=args.n_batches,
-        n_datasets_per_batch=args.n_datasets_per_batch,
-        results_base_dir=results_dir
-    )
-
-    print("=" * 60)
-    print("Analysis complete! Results are saved in:")
-    print(f"  {results_dir}")
-    print(f"  {results_dir}/summary/  <- Overall statistics summary and histograms")
-    print("=" * 60)
-
-    # Run visualization
-    visualizer.run_visualization(
-        n_batches=args.n_batches,
-        n_datasets_per_batch=args.n_datasets_per_batch,
-        results_base_dir=results_dir
-    )
-
-    print("=" * 60)
-    print("Analysis complete! Results are saved in:")
-    print(f"  {results_dir}")
-    print(f"  {results_dir}/summary/  <- Overall statistics summary and histograms")
-    print("=" * 60)
 
     # Run visualization
     visualizer.run_visualization(
