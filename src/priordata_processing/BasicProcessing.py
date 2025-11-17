@@ -207,7 +207,14 @@ class BasicProcessing:
 
     def _select_target_feature(self, feature_indices: list, data_tensor: torch.Tensor) -> int:
         """
-        Select target feature, excluding features with zero variance (trivial prediction tasks).
+        Select target feature with preference for high-variance features.
+        
+        Selection strategy:
+        - If user specified target_feature: use that (with zero-variance check)
+        - Otherwise:
+          - With probability 0.9: Select uniformly at random from features with variance > 0.8 quantile
+          - With probability 0.1: Select uniformly at random from features with sufficient variance (> 1e-5)
+          - If no features have sufficient variance: Select random feature
         
         Parameters
         ----------
@@ -225,7 +232,7 @@ class BasicProcessing:
         ------
         ValueError
             If provided target_feature is not in dataset, has zero variance,
-            or all features have zero variance
+            or all features have zero variance (when user-specified)
         """
         # Compute variance for each feature
         variances = torch.var(data_tensor, dim=0, unbiased=False)  # (F,)
@@ -250,12 +257,29 @@ class BasicProcessing:
                 )
             return self.target_feature
         
-        # Random selection: prefer valid (non-zero variance) features, but fall back to any if none available
-        if len(valid_features) > 0:
-            return random.choice(valid_features)
-        else:
-            # All features have zero variance - just pick randomly as fallback
+        # Random selection with variance-based preference
+        # Case 1: No features with sufficient variance - just pick randomly
+        if len(valid_features) == 0:
             return random.choice(feature_indices)
+        
+        # Case 2: Features with sufficient variance exist
+        # Extract variances for valid features only
+        valid_variances = variances[valid_cols]
+        
+        # Compute 0.8 quantile of variance distribution
+        variance_80_quantile = torch.quantile(valid_variances, 0.9).item()
+        
+        # Find features with variance above 0.8 quantile
+        high_variance_mask = valid_variances > variance_80_quantile
+        high_variance_cols = [valid_cols[i] for i, is_high in enumerate(high_variance_mask) if is_high]
+        high_variance_features = [feature_indices[i] for i in high_variance_cols]
+        
+        # With probability 0.9, select uniformly from high-variance features
+        # With probability 0.1, select uniformly from all valid features
+        if random.random() < 0.9 and len(high_variance_features) > 0:
+            return random.choice(high_variance_features)
+        else:
+            return random.choice(valid_features)
 
     def _apply_feature_dropout(self, remaining_cols: list, feature_indices: list) -> Tuple[list, list]:
         """Randomly drop (hide) some features (by column indices) excluding target.

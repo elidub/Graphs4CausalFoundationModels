@@ -22,7 +22,7 @@ scm_config:
     distribution: "beta"
     distribution_parameters:
       alpha: 2.0
-      beta: 5.0
+      beta: 8.0
   graph_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -36,16 +36,16 @@ scm_config:
       - 0.1
       - 0.2
       probabilities:
-      - 0.9
-      - 0.1
-      - 0.0
+      - 0.95
+      - 0.05
+      - 0.001
   mechanism_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
       low: 0
       high: 100000
   mlp_nonlins:
-    value: "tabicl"
+    value: "mixed"
   mlp_num_hidden_layers:
     distribution: "categorical"
     distribution_parameters:
@@ -54,9 +54,9 @@ scm_config:
         - 1
         - 2
       probabilities:
-        - 0.95
-        - 0.04
+        - 0.99
         - 0.01
+        - 0.005
   mlp_hidden_dim:
     distribution: "categorical"
     distribution_parameters:
@@ -90,8 +90,8 @@ scm_config:
         - "pre"
         - "post"
       probabilities:
-        - 0.9
-        - 0.1
+        - 0.99
+        - 0.01
       
   xgb_node_shape:
     value: [1]
@@ -112,8 +112,8 @@ scm_config:
         - "pre"
         - "post"
       probabilities:
-        - 0.9
-        - 0.1
+        - 0.99
+        - 0.01
   xgb_node_shape:
     value: [1]
   xgb_n_training_samples:
@@ -301,7 +301,7 @@ training_config:
   accumulate_grad_batches: # gradient accumulation (effective_batch_size = batch_size * accumulate_grad_batches * num_gpus)
     value: 2
   num_workers: # number of workers for data loading per GPU. Total workers = num_workers * num_gpus
-    value: 8
+    value: 64
 
   # Training Control
   early_stopping_patience: # patience for early stopping
@@ -325,9 +325,9 @@ training_config:
   device:
     value: "cuda"
   amp_enabled: # whether to use automatic mixed precision (AMP) for training
-    value: true
+    value: false
   precision: # precision for training. 16 has not been tested yet.
-    value: "16"
+    value: "32"
   
   # Distributed Training (Multi-GPU)
   # No explicit config needed - DDP is automatically enabled when using torchrun
@@ -364,7 +364,7 @@ training_config:
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 10
+    value: 1000
   eval_batches: # number of batches to use for evaluation
     value: 200
   eval_dataset_size: # size of the evaluation dataset

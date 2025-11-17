@@ -191,7 +191,7 @@ scm_config_t0:
     distribution: "beta"
     distribution_parameters:
       alpha: 1.0
-      beta: 3.0  # Expected value ~
+      beta: 3.0  # Expected value ~ 0.11
   
   use_exogenous_mechanisms:
     value: true
@@ -424,7 +424,7 @@ dataset_config_t1:
   number_train_samples_per_dataset:
     distribution: "uniform"
     distribution_parameters:
-      low: 100
+      low: 499
       high: 500
   max_number_test_samples:
     value: 500
@@ -455,10 +455,10 @@ preprocessing_config_t0:
         - 0.5 
         - 0.6
       probabilities:
-      - 0.99
-      - 0.02
-      - 0.01
-      - 0.005
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
       - 0.0
       - 0.0
       - 0.0
@@ -499,7 +499,7 @@ dataset_config_t1:
   number_train_samples_per_dataset:
     distribution: "uniform"
     distribution_parameters:
-      low: 100
+      low: 499
       high: 500
   max_number_test_samples:
     value: 500
@@ -598,9 +598,9 @@ model_config:
   max_fit_batches:  # maximum number of batches to use when fitting the BarDistribution initially. This is usually not critical.
     value: 1000000
   log_prob_clip_min:  # clip minimum log probability to avoid numerical issues
-    value: -1000.00
+    value: -100000.00
   log_prob_clip_max: # clip maximum log probability to avoid numerical issues
-    value: 1000.0
+    value: 100000.0
 
 # ===============================================================================
 # Training Configuration 
@@ -647,9 +647,9 @@ training_config:
   device:
     value: "cuda"
   use_amp:  # Enable automatic mixed precision (float16) for faster training on GPU
-    value: true
+    value: false
   precision: # precision for training. 16 has not been tested yet.
-    value: "16"
+    value: "32"
 
   # Experiment Organization
   experiment_name: # name of the experiment, used for logging 
@@ -661,13 +661,13 @@ training_config:
 
   # Model Checkpointing
   checkpoint_every_n_steps: # how often to save a model checkpoint
-    value: 1000
+    value: 500
 
   # Evaluation Configuration
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 1000
+    value: 500
   eval_batches: # number of batches to use for evaluation
     value: 200
   eval_dataset_size: # size of the evaluation dataset
