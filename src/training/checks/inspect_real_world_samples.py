@@ -25,6 +25,7 @@ from pathlib import Path
 from torch.utils.data import DataLoader, Dataset
 import warnings
 import argparse
+import yaml
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
@@ -42,6 +43,13 @@ src_dir = Path(__file__).parent.parent.parent
 if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
 
+# Default Tabular numerical regression task IDs
+DEFAULT_TABULAR_NUM_REG_TASKS = [
+    361072, 361073, 361074, 361075, 361076, 361077, 361078, 361079, 361080,
+    361081, 361082, 361083, 361084, 361085, 361086, 361087, 361088,
+    361279, 361280, 361281
+]
+
 # Import required modules
 # NOTE: Synthetic dataset maker removed; this script now focuses solely on cached real-world data.
 try:
@@ -57,30 +65,64 @@ except Exception:
 # =====================================================================================
 # Real-world (OpenML cached) dataset support
 # =====================================================================================
+
+def load_yaml_config(config_path: str):
+    """Load YAML configuration file."""
+    config_path = Path(config_path)
+    if not config_path.is_absolute():
+        # Get repository root path dynamically
+        file_path = Path(__file__)
+        repo_root = file_path.parent.parent.parent.parent
+        config_path = repo_root / config_path
+    
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    print(f"[OK] Loaded config from: {config_path}")
+    return config
+
+
+def extract_config_value(config_dict, key, default=None):
+    """Extract value from config dict (handles 'value' key or direct value)."""
+    if key not in config_dict:
+        return default
+    item = config_dict[key]
+    if isinstance(item, dict) and 'value' in item:
+        return item['value']
+    return item
+
+
 class RealWorldDataset(Dataset):
     """Torch Dataset wrapping preprocessed real-world tabular datasets into SimplePFN batch items.
 
-    Each item returns (X_train, y_train, X_test, y_test) tensors with shapes:
-        X_train: [n_train, n_features]
-        y_train: [n_train, 1]
-        X_test:  [n_test, n_features]
-        y_test:  [n_test]  (will be reshaped by collate to [n_test] then squeezed later)
-    DataLoader will stack them to shapes expected by existing visualization code:
-        X_train_batch: [batch_size, n_train, n_features]
+    Each item returns (X_train, y_train, X_test, y_test, metadata) where metadata contains
+    dataset_id and target column name.
     """
     def __init__(self, items):
-        self.items = items  # list of dicts with keys X_train, y_train, X_test, y_test
+        self.items = items  # list of dicts with keys X_train, y_train, X_test, y_test, dataset_id, target
 
     def __len__(self):
         return len(self.items)
 
     def __getitem__(self, idx):
         entry = self.items[idx]
+        # Return data tensors plus metadata dict
+        metadata = {
+            'dataset_id': entry['dataset_id'],
+            'target': entry['target'],
+            'n_features': entry['n_features'],
+            'n_train': entry['n_train'],
+            'n_test': entry['n_test'],
+        }
         return (
             entry['X_train'],
             entry['y_train'],
             entry['X_test'],
             entry['y_test'],
+            metadata,
         )
 
 
@@ -122,16 +164,65 @@ class DataloaderDatasetVisualizer:
         
         return trimmed, lower_bound, upper_bound
     
-    def __init__(self, seed: int = 42, max_datasets: int = 10, task_ids: str = ''):
-        """Initialize the real-world visualizer (YAML-free)."""
+    def __init__(
+        self, 
+        config_path: str,
+        seed: int = 42, 
+        max_datasets: int = 10, 
+        task_ids: str = '',
+    ):
+        """
+        Initialize the real-world visualizer.
+        
+        Args:
+            config_path: Path to YAML config file (e.g., 'experiments/FirstTests/configs/basic.yaml')
+            seed: Random seed for reproducibility
+            max_datasets: Maximum number of datasets to process
+            task_ids: Comma-separated OpenML task IDs to filter (optional)
+        """
         self.seed = seed
         self.dataset = None
         self.dataloader = None
-        self.current_output_file = None  # Current output file for logging
-        self.results_base_dir = None  # Base directory for all results
+        self.current_output_file = None
+        self.results_base_dir = None
         self.max_datasets = max_datasets
         self.task_ids = [int(t.strip()) for t in task_ids.split(',') if t.strip().isdigit()] if task_ids else []
         self._dataset_target_map = {}
+        
+        # Load config file
+        print(f"[INFO] Loading config from: {config_path}")
+        self.config = load_yaml_config(config_path)
+        self.config_path = config_path
+        
+        # Extract preprocessing parameters from config
+        preprocessing_config = self.config.get('preprocessing_config', {})
+        self.negative_one_one_scaling = extract_config_value(preprocessing_config, 'negative_one_one_scaling', True)
+        self.standardize = extract_config_value(preprocessing_config, 'standardize', True)
+        self.yeo_johnson = extract_config_value(preprocessing_config, 'yeo_johnson', False)
+        self.remove_outliers = extract_config_value(preprocessing_config, 'remove_outliers', True)
+        self.outlier_quantile = extract_config_value(preprocessing_config, 'outlier_quantile', 0.90)
+        self.shuffle_samples = extract_config_value(preprocessing_config, 'shuffle_data', True)
+        self.shuffle_features = True  # Not in config, use default
+        
+        # Extract dataset parameters from config
+        dataset_config = self.config.get('dataset_config', {})
+        self.max_n_train = extract_config_value(dataset_config, 'max_number_train_samples', None)
+        self.max_n_test = extract_config_value(dataset_config, 'max_number_test_samples', None)
+        
+        model_config = self.config.get('model_config', {})
+        self.max_n_features = extract_config_value(model_config, 'num_features', None)
+        
+        print(f"[INFO] Extracted from config:")
+        print(f"  max_n_features: {self.max_n_features}")
+        print(f"  max_n_train: {self.max_n_train}")
+        print(f"  max_n_test: {self.max_n_test}")
+        print(f"  negative_one_one_scaling: {self.negative_one_one_scaling}")
+        print(f"  standardize: {self.standardize}")
+        print(f"  yeo_johnson: {self.yeo_johnson}")
+        print(f"  remove_outliers: {self.remove_outliers}")
+        print(f"  outlier_quantile: {self.outlier_quantile}")
+        print(f"  shuffle_samples: {self.shuffle_samples}")
+        print(f"  shuffle_features: {self.shuffle_features}")
 
         # Dictionary to collect statistics across all datasets for summary
         self.all_stats = {
@@ -143,10 +234,10 @@ class DataloaderDatasetVisualizer:
             'rf_test_r2': [],
             'rf_train_mse': [],
             'rf_test_mse': [],
-            'linear_half_data_test_mse': [],  # For learnability metrics
-            'rf_half_data_test_mse': [],      # For learnability metrics
-            'linear_learnability': [],        # Ratio of full data MSE to half data MSE
-            'rf_learnability': [],            # Ratio of full data MSE to half data MSE
+            'linear_half_data_test_mse': [],
+            'rf_half_data_test_mse': [],
+            'linear_learnability': [],
+            'rf_learnability': [],
             'target_ranges': [],
             'feature_counts': [],
             'train_sample_counts': [],
@@ -166,13 +257,20 @@ class DataloaderDatasetVisualizer:
         print(message)
         
     def load_config(self):
-        """Initialize placeholder config labels for logging (no YAML)."""
-        self.log("\n[INFO] Real-world mode: YAML config not used.")
-        self.config = {
-            'dataset_config': {},
-            'experiment_name': 'real_world_inspection',
-            'description': 'Inspection of cached real-world OpenML datasets.'
-        }
+        """Log configuration information (config already loaded in __init__)."""
+        self.log("\n[INFO] Configuration loaded from YAML file.")
+        self.log(f"[INFO] Config path: {self.config_path}")
+        self.log(f"[INFO] Experiment: {self.config.get('experiment_name', 'unnamed')}")
+        self.log(f"[INFO] Description: {self.config.get('description', 'no description')}")
+        
+        # Write the complete YAML config to the log file
+        self.log("\n" + "="*80)
+        self.log("                    COMPLETE YAML CONFIGURATION")
+        self.log("="*80)
+        # Convert config back to YAML format for pretty printing
+        config_yaml = yaml.dump(self.config, default_flow_style=False, sort_keys=False)
+        self.log(config_yaml)
+        self.log("="*80 + "\n")
         
     def create_dataset_and_dataloader(self, n_datasets_per_batch=None):
         """Create a dataloader over cached real-world OpenML datasets in data_cache."""
@@ -202,44 +300,61 @@ class DataloaderDatasetVisualizer:
         Each dataset becomes one item; batching allows reuse of existing visualization code.
         """
         self.log("\n[INFO] Creating real-world dataset dataloader from cached OpenML datasets...")
+        
+        # Log preprocessing parameters (matching Benchmark class)
+        self.log(f"\n{'='*60}")
+        self.log(f"PREPROCESSING PARAMETERS (matching Benchmark class)")
+        self.log(f"{'='*60}")
+        self.log(f"  negative_one_one_scaling: {self.negative_one_one_scaling}")
+        self.log(f"  standardize: {self.standardize}")
+        self.log(f"  yeo_johnson: {self.yeo_johnson}")
+        self.log(f"  remove_outliers: {self.remove_outliers}")
+        self.log(f"  outlier_quantile: {self.outlier_quantile}")
+        self.log(f"  shuffle_samples: {self.shuffle_samples}")
+        self.log(f"  shuffle_features: {self.shuffle_features}")
+        self.log(f"{'='*60}\n")
+        
         self._load_task_mapping()
         cache_dir = Path('data_cache')
         if not cache_dir.exists():
             raise FileNotFoundError("data_cache directory not found; cannot load real-world datasets")
 
-        # Gather dataset IDs either from explicit task IDs mapping or directory scan
-        all_dirs = [d for d in cache_dir.iterdir() if d.is_dir() and d.name.startswith('openml_')]
+        # Determine which datasets to load based on task IDs or directory scan
         dataset_ids = []
-        for d in all_dirs:
-            try:
-                dataset_ids.append(int(d.name.split('_', 1)[1]))
-            except Exception:
-                continue
-        dataset_ids = sorted(dataset_ids)
+        
         if self.task_ids:
-            # Filter by specified OpenML task IDs using mapping file
+            # User provided specific task IDs - use those
+            self.log(f"[INFO] Using user-specified task IDs: {self.task_ids}")
             mapping_path = cache_dir / 'task_to_dataset.json'
             if not mapping_path.exists():
-                self.log(f"[WARN] task_ids provided but mapping file missing: {mapping_path}")
-            else:
+                raise FileNotFoundError(f"task_ids provided but mapping file missing: {mapping_path}")
+            
+            mapping = json.load(open(mapping_path, 'r'))
+            task_to_dataset = {int(k): v.get('dataset_id') for k, v in mapping.items() if v.get('dataset_id') is not None}
+            
+            for tid in self.task_ids:
+                ds_id = task_to_dataset.get(tid)
+                if ds_id is not None:
+                    dataset_ids.append(int(ds_id))
+                    self.log(f"[INFO] Task {tid} -> Dataset {ds_id}")
+                else:
+                    self.log(f"[WARN] Task {tid} not found in mapping")
+            
+            dataset_ids = sorted(set(dataset_ids))
+        else:
+            # No task IDs provided - scan all available cached datasets
+            self.log(f"[INFO] No task IDs specified - scanning all cached datasets")
+            all_dirs = [d for d in cache_dir.iterdir() if d.is_dir() and d.name.startswith('openml_')]
+            for d in all_dirs:
                 try:
-                    mapping = json.load(open(mapping_path, 'r'))
-                    task_to_dataset = {int(k): v.get('dataset_id') for k, v in mapping.items() if v.get('dataset_id') is not None}
-                    filtered = []
-                    for tid in self.task_ids:
-                        ds_id = task_to_dataset.get(tid)
-                        if ds_id is not None:
-                            try:
-                                filtered.append(int(ds_id))
-                            except Exception:
-                                pass
-                    if filtered:
-                        dataset_ids = sorted(set(filtered))
-                except Exception as e:
-                    self.log(f"[WARN] Failed to parse mapping for task_ids filtering: {e}")
+                    dataset_ids.append(int(d.name.split('_', 1)[1]))
+                except Exception:
+                    continue
+            dataset_ids = sorted(dataset_ids)
+        
         if self.max_datasets and self.max_datasets > 0:
             dataset_ids = dataset_ids[: self.max_datasets]
-        self.log(f"[INFO] Found {len(dataset_ids)} cached datasets to process: {dataset_ids}")
+        self.log(f"[INFO] Will process {len(dataset_ids)} cached datasets: {dataset_ids}")
 
         rng = np.random.default_rng(self.seed)
         items = []
@@ -256,52 +371,79 @@ class DataloaderDatasetVisualizer:
             target = self._dataset_target_map.get(ds_id, df.columns[-1])
             if target not in df.columns:
                 target = df.columns[-1]
-            # Preprocess and subsample EXACTLY like benchmarking pipeline
+            
+            # Preprocess EXACTLY like Benchmark._preprocess_df
             if Preprocessor is None:
                 raise ImportError("Preprocessor not found. Ensure src is on PYTHONPATH and priordata_processing/Preprocessor.py exists.")
-            # Split X/y with encoding and imputation mirroring Benchmark._preprocess_df
+            
+            # Split X/y with encoding and imputation - EXACTLY matching Benchmark code
             y_series = df[target]
             X_df = df.drop(columns=[target])
             num_cols = X_df.select_dtypes(include=["number"]).columns.tolist()
             cat_cols = X_df.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+            
+            # Handle categorical columns exactly like Benchmark
             if cat_cols:
                 from sklearn.preprocessing import LabelEncoder
                 for col in cat_cols:
                     le = LabelEncoder()
-                    X_df[col] = X_df[col].astype(str).fillna("missing")
+                    X_df[col] = X_df[col].fillna("missing")
                     X_df[col] = le.fit_transform(X_df[col])
+            
+            # Impute numeric columns exactly like Benchmark
             for col in X_df.columns:
                 if X_df[col].isna().any():
                     X_df[col] = X_df[col].fillna(X_df[col].mean())
+            
             feature_names = X_df.columns.tolist()
             X_np = X_df.to_numpy().astype(np.float32)
             y_np = y_series.to_numpy().astype(np.float32)
             N, F = X_np.shape
+            
             if N < 10:
                 self.log(f"[WARN] Dataset {ds_id} too small (N={N}), skipping")
                 continue
-            # Defaults aligned with Benchmark: 50/50 split, keep all features unless specified
-            req_n_features = F
-            req_n_train = max(5, min(N // 2, N))
-            req_n_test = max(1, min(N - req_n_train, N - req_n_train))
+            
+            # Use config parameters for dimensions, or fall back to dataset size
+            # This matches the Benchmark class behavior
+            if self.max_n_features:
+                req_n_features = min(F, self.max_n_features)
+            else:
+                req_n_features = F
+            
+            if self.max_n_train:
+                req_n_train = min(N // 2, self.max_n_train)
+            else:
+                req_n_train = max(5, N // 2)
+            
+            if self.max_n_test:
+                req_n_test = min(N - req_n_train, self.max_n_test)
+            else:
+                req_n_test = max(1, N - req_n_train)
+            
+            self.log(f"[INFO] Dataset {ds_id} dimensions: N={N}, F={F}")
+            self.log(f"[INFO]   Requested: n_features={req_n_features}, n_train={req_n_train}, n_test={req_n_test}")
+            
             # Build tensors with batch dim for Preprocessor
             import torch
             X_tensor = torch.from_numpy(X_np).unsqueeze(0)
             y_tensor = torch.from_numpy(y_np).unsqueeze(0)
+            
+            # Use Preprocessor with same parameters as Benchmark class
             pre = Preprocessor(
                 n_features=req_n_features,
-                max_n_features=req_n_features,
+                max_n_features=self.max_n_features or req_n_features,
                 n_train_samples=req_n_train,
-                max_n_train_samples=req_n_train,
+                max_n_train_samples=self.max_n_train or req_n_train,
                 n_test_samples=req_n_test,
-                max_n_test_samples=req_n_test,
-                negative_one_one_scaling=True,
-                standardize=True,
-                yeo_johnson=False,
-                remove_outliers=True,
-                outlier_quantile=0.90,
-                shuffle_samples=True,
-                shuffle_features=True,
+                max_n_test_samples=self.max_n_test or req_n_test,
+                negative_one_one_scaling=self.negative_one_one_scaling,
+                standardize=self.standardize,
+                yeo_johnson=self.yeo_johnson,
+                remove_outliers=self.remove_outliers,
+                outlier_quantile=self.outlier_quantile,
+                shuffle_samples=self.shuffle_samples,
+                shuffle_features=self.shuffle_features,
             )
             result = pre.process(X_tensor, y_tensor)
             if result is None:
@@ -337,18 +479,16 @@ class DataloaderDatasetVisualizer:
         batch_size = n_datasets_per_batch or min(4, len(items))
         self.log(f"[INFO] Building DataLoader with batch_size={batch_size}")
         self.dataset = RealWorldDataset(items)
-        # Default collate will attempt to stack tensors across datasets, but our datasets have
-        # variable numbers of samples and features. Provide a custom collate_fn that keeps
-        # per-dataset tensors separate, returning lists (or tuples) so downstream code can
-        # iterate each dataset independently without requiring uniform shapes.
+        # Custom collate function to handle variable shapes and metadata
         def _collate_variable(batch):
-            # batch is a list of items: (X_train, y_train, X_test, y_test)
-            X_train_list, y_train_list, X_test_list, y_test_list = zip(*batch)
+            # batch is a list of items: (X_train, y_train, X_test, y_test, metadata)
+            X_train_list, y_train_list, X_test_list, y_test_list, metadata_list = zip(*batch)
             return (
                 list(X_train_list),
                 list(y_train_list),
                 list(X_test_list),
                 list(y_test_list),
+                list(metadata_list),  # Include metadata
             )
         self.dataloader = DataLoader(
             self.dataset,
@@ -367,32 +507,33 @@ class DataloaderDatasetVisualizer:
             batch: Batch from dataloader
             
         Returns:
-            List of (X_train, y_train, X_test, y_test) tuples for each dataset in the batch
+            List of (X_train, y_train, X_test, y_test, metadata) tuples for each dataset in the batch
         """
         datasets = []
         
-        if isinstance(batch, (list, tuple)) and len(batch) == 4:
-            # Real-world variable-shape collate format: lists of tensors
-            X_train_list, y_train_list, X_test_list, y_test_list = batch
+        if isinstance(batch, (list, tuple)) and len(batch) == 5:
+            # Real-world variable-shape collate format with metadata: lists of tensors + metadata
+            X_train_list, y_train_list, X_test_list, y_test_list, metadata_list = batch
             batch_size = len(X_train_list)
-            self.log("[INFO] Variable-shape batch format detected (list-based):")
+            self.log("[INFO] Variable-shape batch format detected (list-based with metadata):")
             self.log(f"[INFO]   Batch size: {batch_size}")
             for i in range(batch_size):
                 X_train_i = X_train_list[i].detach().cpu().numpy()
                 y_train_i = y_train_list[i].detach().cpu().numpy()
                 X_test_i = X_test_list[i].detach().cpu().numpy()
                 y_test_i = y_test_list[i].detach().cpu().numpy()
+                metadata_i = metadata_list[i]
                 if len(y_train_i.shape) > 1 and y_train_i.shape[1] == 1:
                     y_train_i = y_train_i.squeeze(1)
                 if len(y_test_i.shape) > 1 and y_test_i.shape[1] == 1:
                     y_test_i = y_test_i.squeeze(1)
-                datasets.append((X_train_i, y_train_i, X_test_i, y_test_i))
+                datasets.append((X_train_i, y_train_i, X_test_i, y_test_i, metadata_i))
         else:
             self.log(f"[WARN] Unexpected batch container/type: {type(batch)} (len={getattr(batch,'__len__',lambda: 'n/a')()})")
             
         return datasets
     
-    def visualize_dataset(self, X_train, y_train, X_test, y_test, dataset_idx, batch_idx, save_dir=None):
+    def visualize_dataset(self, X_train, y_train, X_test, y_test, dataset_idx, batch_idx, save_dir=None, openml_id=None, target_name=None):
         """
         Visualize a single tabular dataset with scatterplots and correlation heatmap.
         All output is saved to files - nothing is displayed.
@@ -405,17 +546,28 @@ class DataloaderDatasetVisualizer:
             dataset_idx: Index of dataset within batch
             batch_idx: Index of batch
             save_dir: Directory to save plots and analysis
+            openml_id: OpenML dataset ID (optional)
+            target_name: Name of target column (optional)
         """
         n_train_samples, n_features = X_train.shape
         n_test_samples = X_test.shape[0]
         
-        self.log(f"[INFO] Visualizing dataset {dataset_idx} from batch {batch_idx}")
+        # Create header with OpenML ID if available
+        if openml_id:
+            self.log(f"[INFO] Visualizing OpenML Dataset {openml_id} (dataset {dataset_idx} from batch {batch_idx})")
+            if target_name:
+                self.log(f"[INFO] Target column: {target_name}")
+        else:
+            self.log(f"[INFO] Visualizing dataset {dataset_idx} from batch {batch_idx}")
         
         # ============================================================================
         # COMPREHENSIVE DIMENSION ANALYSIS
         # ============================================================================
         self.log("="*80)
-        self.log("                         DIMENSION ANALYSIS")
+        if openml_id:
+            self.log(f"                 DIMENSION ANALYSIS - OpenML Dataset {openml_id}")
+        else:
+            self.log("                         DIMENSION ANALYSIS")
         self.log("="*80)
         
         # Original shapes from dataloader (including padding)
@@ -1223,10 +1375,14 @@ class DataloaderDatasetVisualizer:
                 self.log(f"[INFO] Visualizing first {n_to_visualize} datasets...")
                 
                 for dataset_idx in range(n_to_visualize):
-                    X_train, y_train, X_test, y_test = datasets[dataset_idx]
+                    X_train, y_train, X_test, y_test, metadata = datasets[dataset_idx]
                     
-                    # Create dataset directory
-                    dataset_dir = batch_dir / f"dataset_{dataset_idx + 1}"
+                    # Extract OpenML dataset ID from metadata
+                    openml_id = metadata.get('dataset_id', 'unknown')
+                    target_name = metadata.get('target', 'unknown')
+                    
+                    # Create dataset directory with OpenML ID in name
+                    dataset_dir = batch_dir / f"dataset_{dataset_idx + 1}_openml_{openml_id}"
                     dataset_dir.mkdir(parents=True, exist_ok=True)
                     
                     # Create dataset log file
@@ -1234,12 +1390,15 @@ class DataloaderDatasetVisualizer:
                     with open(dataset_log_path, 'w', encoding='utf-8') as dataset_log:
                         self.current_output_file = dataset_log
                         
-                        self.log(f"\n--- Dataset {dataset_idx + 1} ---")
+                        self.log(f"\n--- Dataset {dataset_idx + 1} (OpenML ID: {openml_id}) ---")
+                        self.log(f"[INFO] Target column: {target_name}")
                         self.visualize_dataset(
                             X_train, y_train, X_test, y_test,
                             dataset_idx=dataset_idx + 1, 
                             batch_idx=batch_idx + 1,
-                            save_dir=dataset_dir
+                            save_dir=dataset_dir,
+                            openml_id=openml_id,
+                            target_name=target_name,
                         )
                 
                 batch_count += 1
@@ -1829,16 +1988,92 @@ def main():
     print("=" * 60)
     print("      Dataset Analysis - File Output Mode")
     print("=" * 60)
+def main():
+    """Main entry point for real-world dataset visualization from data_cache."""
+    parser = argparse.ArgumentParser(description="Inspect and visualize cached real-world tabular datasets.")
+    parser.add_argument('--seed', type=int, default=42, help="Random seed")
+    parser.add_argument('--n_batches', type=int, default=1, help="# of batches to sample")
+    parser.add_argument('--n_datasets_per_batch', type=int, default=16, help="# of datasets per batch to visualize")
+    parser.add_argument('--max_datasets', type=int, default=32, help="Max # of cached datasets to include")
+    parser.add_argument('--task_ids', type=str, default='', help="Comma-separated OpenML task IDs to filter (optional)")
+    
+    # Preprocessing parameters (matching Benchmark class defaults)
+    parser.add_argument('--negative_one_one_scaling', type=bool, default=True, help="Apply [-1, 1] scaling")
+    parser.add_argument('--standardize', type=bool, default=True, help="Apply standardization")
+    parser.add_argument('--yeo_johnson', type=bool, default=False, help="Apply Yeo-Johnson transform")
+    parser.add_argument('--remove_outliers', type=bool, default=True, help="Remove outliers")
+    parser.add_argument('--outlier_quantile', type=float, default=0.90, help="Outlier quantile threshold")
+    parser.add_argument('--shuffle_samples', type=bool, default=True, help="Shuffle samples")
+    parser.add_argument('--shuffle_features', type=bool, default=True, help="Shuffle features")
+    
+    args = parser.parse_args()
+
+    if 'priors' in str(Path(__file__)):
+        base_dir = 'src/priors/training/checks'
+    else:
+        base_dir = 'src/training/checks'
+    RESULTS_BASE_DIR = f"{base_dir}/ResultsRealWorldSamples"
+
+    # Create timestamped results directory
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    results_dir = Path(RESULTS_BASE_DIR) / f'run_{timestamp}'
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    print("=" * 60)
+    print("      Dataset Analysis - File Output Mode")
+    print("=" * 60)
+def main():
+    """Main entry point for real-world dataset visualization from data_cache."""
+    parser = argparse.ArgumentParser(description="Inspect and visualize cached real-world tabular datasets.")
+    parser.add_argument('--config', type=str, 
+                       default='experiments/FirstTests/configs/basic.yaml',
+                       help="Path to YAML config file (relative to repo root)")
+    parser.add_argument('--seed', type=int, default=42, help="Random seed")
+    parser.add_argument('--n_batches', type=int, default=1, help="# of batches to sample")
+    parser.add_argument('--n_datasets_per_batch', type=int, default=200, help="# of datasets per batch to visualize")
+    parser.add_argument('--max_datasets', type=int, default=200, help="Max # of cached datasets to include")
+    parser.add_argument('--task_ids', type=str, default='', 
+                       help="Comma-separated OpenML task IDs to filter (leave empty to use DEFAULT_TABULAR_NUM_REG_TASKS)")
+    parser.add_argument('--use_default_tasks', action='store_true',
+                       help="Use DEFAULT_TABULAR_NUM_REG_TASKS instead of scanning all cached datasets")
+    
+    args = parser.parse_args()
+
+    if 'priors' in str(Path(__file__)):
+        base_dir = 'src/priors/training/checks'
+    else:
+        base_dir = 'src/training/checks'
+    RESULTS_BASE_DIR = f"{base_dir}/ResultsRealWorldSamples"
+
+    # Create timestamped results directory
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    results_dir = Path(RESULTS_BASE_DIR) / f'run_{timestamp}'
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    # Determine task IDs to use
+    task_ids_str = args.task_ids
+    if args.use_default_tasks and not task_ids_str:
+        # Use default task list
+        task_ids_str = ','.join(map(str, DEFAULT_TABULAR_NUM_REG_TASKS))
+        print(f"[INFO] Using DEFAULT_TABULAR_NUM_REG_TASKS: {len(DEFAULT_TABULAR_NUM_REG_TASKS)} tasks")
+
+    print("=" * 60)
+    print("      Dataset Analysis - File Output Mode")
+    print("=" * 60)
     print("Configuration:")
+    print(f"  CONFIG_PATH = {args.config}")
     print(f"  SEED = {args.seed}")
     print(f"  N_BATCHES = {args.n_batches}")
     print(f"  N_DATASETS_PER_BATCH = {args.n_datasets_per_batch}")
     print(f"  MAX_DATASETS = {args.max_datasets}")
-    print(f"  TASK_IDS = {args.task_ids or '(none)'}")
+    if args.use_default_tasks:
+        print(f"  USING DEFAULT TASKS = True ({len(DEFAULT_TABULAR_NUM_REG_TASKS)} tasks)")
+    else:
+        print(f"  TASK_IDS = {task_ids_str or '(all cached datasets)'}")
     print(f"  RESULTS_DIR = {results_dir}")
-
-    # Debug information (synthetic only)
-    # No YAML debug info needed (real-only)
+    print()
+    print("Preprocessing parameters will be read from the config file.")
+    print("Dataset dimensions (max_n_features, max_n_train, max_n_test) will also be read from config.")
 
     print()
     print("Output will be saved to organized folders. Plots will NOT be displayed.")
@@ -1846,11 +2081,12 @@ def main():
     print("An overall summary with statistics and histograms will be created in the summary/ folder.")
     print("=" * 60)
 
-    # Create visualizer
+    # Create visualizer with config path - it will read all parameters from config
     visualizer = DataloaderDatasetVisualizer(
+        config_path=args.config,
         seed=args.seed,
         max_datasets=args.max_datasets,
-        task_ids=args.task_ids,
+        task_ids=task_ids_str,
     )
 
     # Run visualization
