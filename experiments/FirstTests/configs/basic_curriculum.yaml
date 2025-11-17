@@ -622,7 +622,7 @@ training_config:
   accumulate_grad_batches:
     value: 4
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
-    value: 128
+    value: 64
 
 
   # Training Control
