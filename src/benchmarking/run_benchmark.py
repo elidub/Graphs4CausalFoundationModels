@@ -188,7 +188,7 @@ if __name__ == "__main__":
     MAX_TASKS = 30
     DATA_DIR = "data_cache"
     CONFIG = str(repo_root / "experiments/FirstTests/configs/basic.yaml")
-    CHECKPOINT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16624966.0/benchmark_eval_step7000.pt"  # Leave empty to auto-detect or skip PFN
+    CHECKPOINT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16624966.0/final_model_with_bardist.pt"  # Leave empty to auto-detect or skip PFN
     DEVICE = "cpu"
     OUTPUT = "benchmark_results.csv"  # Process ID will be automatically added: benchmark_results_pid12345.csv
     NO_TARGET_ENCODING = True
@@ -207,11 +207,11 @@ if __name__ == "__main__":
     PREFER_NUMERIC = False
     ONLY_NUMERIC = False
     REPEATS = 1
-    BASELINE_SET = "basic"  # 'basic' or 'extended'
+    BASELINE_SET = "extended"  # 'basic' or 'extended'
     BOOTSTRAP_SAMPLES = 10000
     
     # SimplePFN Ensemble parameters
-    N_ESTIMATORS = 3  # Number of ensemble members (1 = no ensemble)
+    N_ESTIMATORS = 1  # Number of ensemble members (1 = no ensemble)
     NORM_METHODS = ["none"]  # Normalization methods
     #OUTLIER_STRATEGIES = ["none", "moderate", "aggressive"]  # Outlier removal strategies
     OUTLIER_STRATEGIES = ["none"]
@@ -221,7 +221,7 @@ if __name__ == "__main__":
     STANDARDIZE = True  # Standardize features (z-score normalization)
     YEO_JOHNSON = False  # Apply Yeo-Johnson transformation
     REMOVE_OUTLIERS = False  # Remove outliers based on quantile
-    OUTLIER_QUANTILE = 0.95  # Quantile threshold for outlier removal
+    OUTLIER_QUANTILE = 0.99  # Quantile threshold for outlier removal
     SHUFFLE_SAMPLES = True  # Shuffle samples during preprocessing
     SHUFFLE_FEATURES = True  # Shuffle features during preprocessing
 
