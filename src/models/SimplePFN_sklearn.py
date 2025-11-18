@@ -10,7 +10,7 @@ import torch
 import numpy as np
 import re
 from pathlib import Path
-from sklearn.preprocessing import StandardScaler, PowerTransformer, QuantileTransformer, RobustScaler
+# Removed sklearn preprocessing imports - using identity preprocessing only
 
 # Robust import: try package-style, then relative, then add repo root to sys.path
 try:
@@ -30,107 +30,49 @@ except Exception:
 
 class SimplePreprocessor:
     """
-    Simple preprocessing pipeline for tabular data based on TabICL's approach.
+    Simple preprocessing pipeline for tabular data.
     
-    Applies scaling, normalization, and outlier handling with diverse strategies.
+    Simplified version that only supports identity transformation (no preprocessing).
+    Maintains the same interface for compatibility.
     """
     
-    def __init__(self, normalization_method: str = "power", outlier_strategy: str = "moderate",
+    def __init__(self, normalization_method: str = "none", outlier_strategy: str = "none",
                  random_state: Optional[int] = None):
         """
         Args:
-            normalization_method: 'power', 'quantile', 'robust', or 'none'
-            outlier_strategy: Outlier handling strategy
-                - 'none': No outlier removal (threshold = infinity)
-                - 'conservative': Remove extreme outliers (threshold = 6.0 std)
-                - 'moderate': Remove moderate outliers (threshold = 4.0 std)
-                - 'aggressive': Remove more outliers (threshold = 2.5 std)
-            random_state: Random seed for reproducibility
+            normalization_method: Only 'none' is supported (for compatibility)
+            outlier_strategy: Only 'none' is supported (for compatibility)
+            random_state: Random seed for reproducibility (kept for compatibility)
         """
+        if normalization_method != "none":
+            raise ValueError(f"Only normalization_method='none' is supported, got '{normalization_method}'")
+        if outlier_strategy != "none":
+            raise ValueError(f"Only outlier_strategy='none' is supported, got '{outlier_strategy}'")
+            
         self.normalization_method = normalization_method
         self.outlier_strategy = outlier_strategy
         self.random_state = random_state
         self.fitted = False
         
-        # Map outlier strategy to threshold
-        self.outlier_thresholds = {
-            'none': float('inf'),
-            'conservative': 6.0,
-            'moderate': 4.0,
-            'aggressive': 2.5
-        }
-        self.outlier_threshold = self.outlier_thresholds.get(outlier_strategy, 4.0)
-        
     def fit(self, X, y=None):
-        """Fit the preprocessing pipeline on training data."""
+        """Fit the preprocessing pipeline on training data (identity transform - no-op)."""
         X = np.asarray(X, dtype=np.float32)
         
-        # 1. Standard scaling
-        self.scaler_ = StandardScaler()
-        X_scaled = self.scaler_.fit_transform(X)
-        
-        # 2. Normalization
-        if self.normalization_method != "none":
-            if self.normalization_method == "power":
-                self.normalizer_ = PowerTransformer(method="yeo-johnson", standardize=True)
-            elif self.normalization_method == "quantile":
-                self.normalizer_ = QuantileTransformer(output_distribution="normal", random_state=self.random_state)
-            elif self.normalization_method == "robust":
-                self.normalizer_ = RobustScaler(unit_variance=True)
-            else:
-                raise ValueError(f"Unknown normalization method: {self.normalization_method}")
-            
-            self.X_min_ = np.min(X_scaled, axis=0, keepdims=True)
-            self.X_max_ = np.max(X_scaled, axis=0, keepdims=True)
-            X_normalized = self.normalizer_.fit_transform(X_scaled)
-        else:
-            self.normalizer_ = None
-            X_normalized = X_scaled
-        
-        # 3. Outlier handling - compute bounds
-        if self.outlier_threshold != float('inf'):
-            self.outlier_mean_ = np.mean(X_normalized, axis=0)
-            self.outlier_std_ = np.std(X_normalized, axis=0, ddof=1 if X.shape[0] > 1 else 0)
-            self.outlier_std_ = np.maximum(self.outlier_std_, 1e-6)
-            
-            self.outlier_lower_ = self.outlier_mean_ - self.outlier_threshold * self.outlier_std_
-            self.outlier_upper_ = self.outlier_mean_ + self.outlier_threshold * self.outlier_std_
-            
-            # Store transformed training data with outlier clipping
-            self.X_transformed_ = np.clip(X_normalized, self.outlier_lower_, self.outlier_upper_)
-        else:
-            # No outlier removal
-            self.outlier_lower_ = None
-            self.outlier_upper_ = None
-            self.X_transformed_ = X_normalized
+        # Identity preprocessing - just store a copy for consistency
+        self.X_transformed_ = X.copy()
         
         self.fitted = True
         return self
     
     def transform(self, X):
-        """Transform data using fitted preprocessor."""
+        """Transform data using fitted preprocessor (identity transform - returns copy)."""
         if not self.fitted:
             raise RuntimeError("Preprocessor not fitted. Call fit() first.")
         
         X = np.asarray(X, dtype=np.float32)
         
-        # Standard scaling
-        X = self.scaler_.transform(X)
-        
-        # Normalization
-        if self.normalizer_ is not None:
-            try:
-                X = self.normalizer_.transform(X)
-            except ValueError:
-                # Clip to training range and retry
-                X = np.clip(X, self.X_min_, self.X_max_)
-                X = self.normalizer_.transform(X)
-        
-        # Outlier clipping (if applicable)
-        if self.outlier_lower_ is not None and self.outlier_upper_ is not None:
-            X = np.clip(X, self.outlier_lower_, self.outlier_upper_)
-        
-        return X
+        # Identity transformation - return as-is
+        return X.copy()
 
 
 class FeatureShuffler:
@@ -179,12 +121,10 @@ class FeatureShuffler:
 
 class EnsemblePreprocessor:
     """
-    Create ensemble variants through diverse preprocessing, similar to TabICL.
+    Create ensemble variants through feature permutations.
     
-    Generates multiple data variants by:
-    1. Applying different normalization methods
-    2. Varying outlier removal strategies
-    3. Permuting feature orders
+    Simplified version that only applies feature shuffling (no normalization/outlier removal).
+    Maintains the same interface for compatibility.
     """
     
     def __init__(self, n_estimators: int = 1, 
@@ -195,13 +135,22 @@ class EnsemblePreprocessor:
         """
         Args:
             n_estimators: Number of ensemble variants to create
-            norm_methods: Normalization methods to use ('none', 'power', 'quantile', 'robust')
-                         If None, uses ['none', 'power', 'quantile']
-            outlier_strategies: Outlier handling strategies ('none', 'conservative', 'moderate', 'aggressive')
-                               If None, uses ['none', 'moderate', 'aggressive']
+            norm_methods: Only 'none' is supported (for compatibility)
+            outlier_strategies: Only 'none' is supported (for compatibility)
             feat_shuffle_method: Feature permutation method ('none', 'random', 'shift')
             random_state: Random seed
         """
+        # Validate that only "none" is used for norm_methods and outlier_strategies
+        if norm_methods is not None:
+            methods = [norm_methods] if isinstance(norm_methods, str) else norm_methods
+            if any(m != "none" for m in methods):
+                raise ValueError(f"Only norm_methods='none' is supported, got {methods}")
+        
+        if outlier_strategies is not None:
+            strategies = [outlier_strategies] if isinstance(outlier_strategies, str) else outlier_strategies
+            if any(s != "none" for s in strategies):
+                raise ValueError(f"Only outlier_strategies='none' is supported, got {strategies}")
+        
         self.n_estimators = n_estimators
         self.norm_methods = norm_methods
         self.outlier_strategies = outlier_strategies
@@ -211,7 +160,7 @@ class EnsemblePreprocessor:
         
     def fit(self, X_train, y_train=None):
         """
-        Fit ensemble preprocessors on training data.
+        Fit ensemble preprocessors on training data (simplified - only feature shuffling).
         
         Args:
             X_train: Training features (N, F)
@@ -219,54 +168,30 @@ class EnsemblePreprocessor:
         """
         X_train = np.asarray(X_train, dtype=np.float32)
         
-        # Default normalization methods
-        if self.norm_methods is None:
-            self.norm_methods_ = ["none", "power", "quantile"]
-        elif isinstance(self.norm_methods, str):
-            self.norm_methods_ = [self.norm_methods]
-        else:
-            self.norm_methods_ = self.norm_methods
-        
-        # Default outlier strategies
-        if self.outlier_strategies is None:
-            self.outlier_strategies_ = ["none", "moderate", "aggressive"]
-        elif isinstance(self.outlier_strategies, str):
-            self.outlier_strategies_ = [self.outlier_strategies]
-        else:
-            self.outlier_strategies_ = self.outlier_strategies
+        # Only "none" is supported for normalization and outlier strategies
+        self.norm_methods_ = ["none"]
+        self.outlier_strategies_ = ["none"]
         
         self.n_features_ = X_train.shape[1]
         
-        # Generate ensemble configurations
-        rng = random.Random(self.random_state)
-        
-        # Create feature shuffle patterns
+        # Generate ensemble configurations (only feature shuffling)
         shuffler = FeatureShuffler(self.n_features_, self.feat_shuffle_method, self.random_state)
         shuffle_patterns = shuffler.generate(self.n_estimators)
         
-        # Combine normalization methods, outlier strategies, and shuffle patterns
-        all_configs = list(itertools.product(self.norm_methods_, self.outlier_strategies_, shuffle_patterns))
-        rng.shuffle(all_configs)
-        selected_configs = all_configs[:self.n_estimators]
-        
-        # Organize by (norm_method, outlier_strategy) pair
+        # Store shuffle patterns (no actual preprocessing needed since we use identity)
         self.ensemble_configs_ = OrderedDict()
-        for norm_method, outlier_strategy, shuffle_pattern in selected_configs:
-            key = (norm_method, outlier_strategy)
-            if key not in self.ensemble_configs_:
-                self.ensemble_configs_[key] = []
-            self.ensemble_configs_[key].append(shuffle_pattern)
+        key = ("none", "none")  # Only one preprocessing variant
+        self.ensemble_configs_[key] = shuffle_patterns
         
-        # Fit preprocessors for each (normalization, outlier) combination
+        # Create a single identity preprocessor
         self.preprocessors_ = {}
-        for (norm_method, outlier_strategy) in self.ensemble_configs_:
-            preprocessor = SimplePreprocessor(
-                normalization_method=norm_method,
-                outlier_strategy=outlier_strategy,
-                random_state=self.random_state
-            )
-            preprocessor.fit(X_train)
-            self.preprocessors_[(norm_method, outlier_strategy)] = preprocessor
+        preprocessor = SimplePreprocessor(
+            normalization_method="none",
+            outlier_strategy="none",
+            random_state=self.random_state
+        )
+        preprocessor.fit(X_train)
+        self.preprocessors_[key] = preprocessor
         
         self.fitted = True
         return self
@@ -321,40 +246,31 @@ class SimplePFNSklearn:
       wrapper.load()
       preds = wrapper.predict(X_train, y_train, X_test, prediction_type="mode")
       
-      # Ensemble usage (similar to TabICL)
+      # Ensemble usage (feature shuffling only)
       wrapper = SimplePFNSklearn(config_path="path/to/config.yaml", checkpoint_path="model.pt",
-                                 n_estimators=5, norm_methods=["none", "power"])
+                                 n_estimators=5)
       wrapper.load()
       wrapper.fit(X_train, y_train)  # Fits ensemble preprocessors
       preds = wrapper.predict(X_train, y_train, X_test, prediction_type="mode", aggregate="mean")
 
     Parameters:
-      n_estimators: Number of ensemble members (default: 4)
-      norm_methods: Normalization methods for ensemble ('none', 'power', 'quantile', 'robust')
-                    Default: ['none', 'power', 'quantile', 'robust']
-      outlier_strategies: Outlier removal strategies ('none', 'conservative', 'moderate', 'aggressive')
-                         Default: ['none', 'moderate', 'aggressive']
-                         - 'none': No outlier removal
-                         - 'conservative': Remove extreme outliers (6.0 std)
-                         - 'moderate': Remove moderate outliers (4.0 std)
-                         - 'aggressive': Remove more outliers (2.5 std)
+      n_estimators: Number of ensemble members (default: 10)
+      norm_methods: Only 'none' is supported (for compatibility)
+      outlier_strategies: Only 'none' is supported (for compatibility)
       feat_shuffle_method: Feature permutation method ('none', 'random', 'shift')
       
     Ensemble Diversity:
-      The ensemble creates diverse preprocessing variants by combining:
-      1. Multiple normalization methods (power transform, quantile transform, robust scaling, or none)
-      2. Different outlier removal strategies (none, conservative, moderate, aggressive)
-      3. Feature permutations (random shuffling or circular shifts)
-      
-      This results in n_estimators different views of the data, which are processed in a single
+      The ensemble creates diverse variants through feature permutations only.
+      This results in n_estimators different feature orderings of the data, which are processed in a single
       batched forward pass for efficiency, then aggregated (mean/median) or returned individually.
       
     Notes:
-    - With n_estimators > 1, the model creates diverse preprocessing variants
+    - With n_estimators > 1, the model creates diverse feature permutation variants
     - All ensemble variants are processed in a SINGLE batched forward pass (efficient!)
     - Ensemble predictions are aggregated using mean, median, or returned as array
     - When BarDistribution is enabled, ensemble works with all prediction types
     - Input shapes are automatically converted to match training format
+    - Normalization and outlier handling have been removed (only identity preprocessing)
     """
 
     def __init__(
@@ -364,8 +280,8 @@ class SimplePFNSklearn:
         device: Optional[str] = "cpu",
         verbose: bool = False,
         n_estimators: int = 10,
-        norm_methods: Optional[Union[str, List[str]]] = ["none", "power", "quantile", "robust"],
-        outlier_strategies: Optional[Union[str, List[str]]] = ["none", "moderate", "aggressive"],
+        norm_methods: Optional[Union[str, List[str]]] = None,
+        outlier_strategies: Optional[Union[str, List[str]]] = None,
         feat_shuffle_method: str = "random",
         random_state: Optional[int] = None,
     ):
