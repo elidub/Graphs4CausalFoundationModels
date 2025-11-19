@@ -207,12 +207,12 @@ scm_config_t1:
     distribution: "discrete_uniform"
     distribution_parameters:
       low: 3
-      high: 51
+      high: 62 #possibility for up to ten unobserved variables
   graph_edge_prob:
     distribution: "beta"
     distribution_parameters:
       alpha: 2.0
-      beta: 5.0
+      beta: 3.0
   graph_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -225,10 +225,12 @@ scm_config_t1:
       - 0.0
       - 0.1
       - 0.2
+      - 0.3
       probabilities:
       - 0.9
       - 0.1
       - 0.01
+      - 0.001
         #- 0.8
         #- 0.1
         #- 0.1
@@ -246,10 +248,12 @@ scm_config_t1:
         - 0.9
         - 1
         - 2
+        - 3
       probabilities:
         - 0.875
         - 0.1
         - 0.025
+        - 0.01
   mlp_hidden_dim:
     distribution: "categorical"
     distribution_parameters:
@@ -265,16 +269,16 @@ scm_config_t1:
         - 16
         - 32
       probabilities:
-        - 0.8
+        - 0.7
+        - 0.2
         - 0.1
         - 0.05
         - 0.04
         - 0.03
         - 0.02
         - 0.01
-        - 0.009
-        - 0.008
-        - 0.007
+        - 0.01
+        - 0.01
 
   mlp_activation_mode:
     distribution: "categorical"
@@ -283,8 +287,8 @@ scm_config_t1:
         - "pre"
         - "post"
       probabilities:
-        - 0.8
-        - 0.2
+        - 0.5
+        - 0.5
       
   xgb_node_shape:
     value: [1]
@@ -305,8 +309,8 @@ scm_config_t1:
         - "pre"
         - "post"
       probabilities:
-        - 0.8
-        - 0.2
+        - 0.5
+        - 0.5
   xgb_node_shape:
     value: [1]
   xgb_n_training_samples:
@@ -321,9 +325,9 @@ scm_config_t1:
       probabilities:
         - 0.1
         - 0.1
+        - 0.3
         - 0.4
-        - 0.2
-        - 0.1
+        - 0.5
   xgb_add_noise:
     distribution: "categorical"
     distribution_parameters:
@@ -362,24 +366,24 @@ scm_config_t1:
     distribution: "uniform"
     distribution_parameters:
       low: 0.1
-      high: 0.2
+      high: 0.4
   endo_std_mean:
     distribution: "lognormal"
     distribution_parameters:
       mean: -3.0
-      std: 0.5
+      std: 0.6
   endo_std_std:
     distribution: "uniform"
     distribution_parameters:
       low: 0.0
-      high: 0.3
+      high: 0.5
   
   # Endogenous noise sparsity: probability of zero noise
   endo_p_zero:
     distribution: "beta"
     distribution_parameters:
       alpha: 1.0
-      beta: 3.0  # Expected value ~
+      beta: 2.0  # Expected value ~
   
   use_exogenous_mechanisms:
     value: true
@@ -482,7 +486,7 @@ preprocessing_config_t0:
   remove_outliers:
     value: true
   outlier_quantile:
-    value: 0.95
+    value: 0.99
   yeo_johnson:
     value: false
   random_seed:
@@ -531,11 +535,11 @@ preprocessing_config_t1:
         - 0.6
       probabilities:
       - 0.95
+      - 0.05
+      - 0.04
       - 0.03
       - 0.02
       - 0.01
-      - 0.0
-      - 0.0
       - 0.0
       - 0.0
         #- 0.8
@@ -557,7 +561,7 @@ preprocessing_config_t1:
   remove_outliers:
     value: true
   outlier_quantile:
-    value: 0.95
+    value: 0.99
   yeo_johnson:
     value: false
   random_seed:
@@ -612,7 +616,7 @@ training_config:
   weight_decay: # weight decay for optimizer, might not be needed
     value: 0.00001 
   max_steps:  #critial for determing training duration!
-    value: 10000
+    value: 50000
   max_epochs: # should always be 1
     value: 1
 
@@ -661,13 +665,13 @@ training_config:
 
   # Model Checkpointing
   checkpoint_every_n_steps: # how often to save a model checkpoint
-    value: 500
+    value: 1000
 
   # Evaluation Configuration
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 500
+    value: 1000
   eval_batches: # number of batches to use for evaluation
     value: 200
   eval_dataset_size: # size of the evaluation dataset
