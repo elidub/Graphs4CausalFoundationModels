@@ -17,7 +17,7 @@ request_cpus   = 70
 request_disk   = 128GB
 
 # Remove GPU requirements since we're using CPU
-requirements = (CUDAGlobalMemoryMb >= 70000)
+requirements = (regexp("H100", GPUs_DeviceName) && CUDAGlobalMemoryMb >= 75000)
 
 
 # Force HTCondor to use RSS (resident set size) instead of virtual memory
