@@ -188,7 +188,7 @@ if __name__ == "__main__":
     MAX_TASKS = 30
     DATA_DIR = "data_cache"
     CONFIG = str(repo_root / "experiments/FirstTests/configs/basic.yaml")
-    CHECKPOINT = "/Users/arikreuter/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16561948/final_model_with_bardist.pt"  # Leave empty to auto-detect or skip PFN
+    CHECKPOINT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16624966.0/final_model_with_bardist.pt"  # Leave empty to auto-detect or skip PFN
     DEVICE = "cpu"
     OUTPUT = "benchmark_results.csv"  # Process ID will be automatically added: benchmark_results_pid12345.csv
     NO_TARGET_ENCODING = True
@@ -198,29 +198,30 @@ if __name__ == "__main__":
     from types import SimpleNamespace
 
     # Subsampling env vars (optional) - read from ALL_CAPS environment variables so submit files can set them
-    N_FEATURES = 19
-    MAX_N_FEATURES = 19
-    N_TRAIN = 100
-    MAX_N_TRAIN = 100
-    N_TEST = 100
-    MAX_N_TEST = 100
+    N_FEATURES = 50
+    MAX_N_FEATURES = 50
+    N_TRAIN = 10_000
+    MAX_N_TRAIN = 10_000
+    N_TEST = 10_000
+    MAX_N_TEST = 10_000
     PREFER_NUMERIC = False
     ONLY_NUMERIC = False
-    REPEATS = 20
-    BASELINE_SET = "basic"  # 'basic' or 'extended'
+    REPEATS = 5
+    BASELINE_SET = "extended"  # 'basic' or 'extended'
     BOOTSTRAP_SAMPLES = 10000
     
     # SimplePFN Ensemble parameters
-    N_ESTIMATORS = 10  # Number of ensemble members (1 = no ensemble)
-    NORM_METHODS = ["none", "power", "quantile", "robust"]  # Normalization methods for ensemble
-    OUTLIER_STRATEGIES = ["none", "moderate", "aggressive"]  # Outlier removal strategies
+    N_ESTIMATORS = 1  # Number of ensemble members (1 = no ensemble)
+    NORM_METHODS = ["none"]  # Normalization methods
+    #OUTLIER_STRATEGIES = ["none", "moderate", "aggressive"]  # Outlier removal strategies
+    OUTLIER_STRATEGIES = ["none"]
     
     # Preprocessing configuration
     NEGATIVE_ONE_ONE_SCALING = True  # Scale data to [-1, 1] range
     STANDARDIZE = True  # Standardize features (z-score normalization)
     YEO_JOHNSON = False  # Apply Yeo-Johnson transformation
-    REMOVE_OUTLIERS = True  # Remove outliers based on quantile
-    OUTLIER_QUANTILE = 0.90  # Quantile threshold for outlier removal
+    REMOVE_OUTLIERS = False  # Remove outliers based on quantile
+    OUTLIER_QUANTILE = 0.99  # Quantile threshold for outlier removal
     SHUFFLE_SAMPLES = True  # Shuffle samples during preprocessing
     SHUFFLE_FEATURES = True  # Shuffle features during preprocessing
 
