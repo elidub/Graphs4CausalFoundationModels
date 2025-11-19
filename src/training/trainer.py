@@ -977,16 +977,30 @@ class Trainer:
             # Perform optimizer step at the end of the accumulation window or if this will reach max steps
             should_step = (micro_count % self.accumulate_grad_batches == 0)
             if should_step:
-                # Gradient clipping and optimizer step
+                # Unscale gradients if using AMP
                 if self.use_amp:
-                    if self.gradient_clip_val > 0:
-                        self.scaler.unscale_(self.optimizer)
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_val)
+                    self.scaler.unscale_(self.optimizer)
+                
+                # Compute gradient norm BEFORE clipping
+                grad_norm_before = torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(), 
+                    float('inf')  # Don't clip, just compute norm
+                )
+                
+                # Apply gradient clipping if enabled
+                if self.gradient_clip_val > 0:
+                    grad_norm_after = torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), 
+                        self.gradient_clip_val
+                    )
+                else:
+                    grad_norm_after = grad_norm_before  # No clipping applied
+                
+                # Optimizer step
+                if self.use_amp:
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
                 else:
-                    if self.gradient_clip_val > 0:
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_val)
                     self.optimizer.step()
 
                 # Scheduler step after optimizer step
@@ -1016,6 +1030,8 @@ class Trainer:
                         'train/batch_size': X_train.shape[0],
                         'train/global_step': self.global_step,
                         'train/learning_rate': current_lr,
+                        'train/grad_norm_before_clip': float(grad_norm_before),
+                        'train/grad_norm_after_clip': float(grad_norm_after),
                     }
                     log_dict['train/schedule'] = self.schedule_name
                     log_dict.update(self._latest_schedule_info)
