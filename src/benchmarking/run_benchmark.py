@@ -200,13 +200,13 @@ if __name__ == "__main__":
     # Subsampling env vars (optional) - read from ALL_CAPS environment variables so submit files can set them
     N_FEATURES = 50
     MAX_N_FEATURES = 50
-    N_TRAIN = 500
-    MAX_N_TRAIN = 500
-    N_TEST = 500
-    MAX_N_TEST = 500
+    N_TRAIN = 10_000
+    MAX_N_TRAIN = 10_000
+    N_TEST = 10_000
+    MAX_N_TEST = 10_000
     PREFER_NUMERIC = False
     ONLY_NUMERIC = False
-    REPEATS = 1
+    REPEATS = 5
     BASELINE_SET = "extended"  # 'basic' or 'extended'
     BOOTSTRAP_SAMPLES = 10000
     
