@@ -4,7 +4,7 @@ output     = logs/simple_pfn_$(ClusterId).$(ProcId).out
 error      = logs/simple_pfn_$(ClusterId).$(ProcId).err
 log        = logs/simple_pfn_$(ClusterId).$(ProcId).log
 
-transfer_input_files = ../../src, ../../pyproject.toml, ../../requirements.txt, ../../setup.py, ../../../venv.zip, run_script.sh, configs/basic_curriculum.yaml, ../../data_cache.zip
+transfer_input_files = ../../src, ../../pyproject.toml, ../../requirements.txt, ../../setup.py, ../../../venv.zip, run_script.sh, configs/basic.yaml, ../../data_cache.zip
 should_transfer_files = Yes
 when_to_transfer_output = ON_EXIT
 

@@ -12,6 +12,7 @@
 experiment_name: "early_test2"
 description: "First pipeline test. debug scale with fixed seeds for reproducibility"
 
+
 scm_config:
   num_nodes:
     distribution: "discrete_uniform"
@@ -22,7 +23,7 @@ scm_config:
     distribution: "beta"
     distribution_parameters:
       alpha: 2.0
-      beta: 8.0
+      beta: 5.0
   graph_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -36,27 +37,30 @@ scm_config:
       - 0.1
       - 0.2
       probabilities:
-      - 0.95
-      - 0.05
-      - 0.001
+      - 0.9
+      - 0.1
+      - 0.01
+        #- 0.8
+        #- 0.1
+        #- 0.1
   mechanism_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
       low: 0
       high: 100000
   mlp_nonlins:
-    value: "mixed"
+    value: "tabicl"
   mlp_num_hidden_layers:
     distribution: "categorical"
     distribution_parameters:
       choices:
-        - 0
+        - 0.9
         - 1
         - 2
       probabilities:
-        - 0.99
-        - 0.01
-        - 0.005
+        - 0.875
+        - 0.1
+        - 0.025
   mlp_hidden_dim:
     distribution: "categorical"
     distribution_parameters:
@@ -75,13 +79,13 @@ scm_config:
         - 0.8
         - 0.1
         - 0.05
-        - 0.05
-        - 0.05
-        - 0.001
-        - 0.001
-        - 0.001
-        - 0.001
-        - 0.001
+        - 0.04
+        - 0.03
+        - 0.02
+        - 0.01
+        - 0.009
+        - 0.008
+        - 0.007
 
   mlp_activation_mode:
     distribution: "categorical"
@@ -90,8 +94,8 @@ scm_config:
         - "pre"
         - "post"
       probabilities:
-        - 0.99
-        - 0.01
+        - 0.8
+        - 0.2
       
   xgb_node_shape:
     value: [1]
@@ -112,15 +116,25 @@ scm_config:
         - "pre"
         - "post"
       probabilities:
-        - 0.99
-        - 0.01
+        - 0.8
+        - 0.2
   xgb_node_shape:
     value: [1]
   xgb_n_training_samples:
-    distribution: "discrete_uniform"
+    distribution: "categorical"
     distribution_parameters:
-      low: 10
-      high: 500
+      choices:
+        - 10
+        - 50
+        - 100
+        - 200
+        - 500
+      probabilities:
+        - 0.1
+        - 0.1
+        - 0.4
+        - 0.2
+        - 0.1
   xgb_add_noise:
     distribution: "categorical"
     distribution_parameters:
@@ -164,13 +178,20 @@ scm_config:
     distribution: "lognormal"
     distribution_parameters:
       mean: -3.0
-      std: 0.2
+      std: 0.5
   endo_std_std:
     distribution: "uniform"
     distribution_parameters:
-      low: 0.1
-      high: 0.2
-    value: true
+      low: 0.0
+      high: 0.3
+  
+  # Endogenous noise sparsity: probability of zero noise
+  endo_p_zero:
+    distribution: "beta"
+    distribution_parameters:
+      alpha: 1.0
+      beta: 3.0  # Expected value ~
+  
   use_exogenous_mechanisms:
     value: true
   mechanism_generator_seed:
@@ -218,15 +239,22 @@ preprocessing_config:
         - 0.5 
         - 0.6
       probabilities:
-      - 0.9
-      - 0.05
-      - 0.025
-      - 0.025
+      - 0.95
+      - 0.03
+      - 0.02
+      - 0.01
       - 0.0
       - 0.0
       - 0.0
       - 0.0
-
+        #- 0.8
+        #- 0.1
+        #- 0.1
+        #- 0.05
+        #- 0.05
+        #- 0.05
+        #- 0.01
+        #- 0.01
   shuffle_data:
     value: true
   target_feature:
@@ -247,6 +275,7 @@ preprocessing_config:
       low: 0
       high: 100000
 
+
 model_config:
   d_model:
     value: 256
@@ -261,7 +290,9 @@ model_config:
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
     value: 2
   num_features:
-    value: 50
+    value: 50  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
+  normalize_features:  # whether to apply quantile transform + standard normalization internally
+    value: true
 
   # BarDistribution Configuration (used to model the output distribution)
   use_bar_distribution:
@@ -269,15 +300,15 @@ model_config:
   num_bars:  # number of bars (K). Higher values allow for more complex, fine-grained posteriors, but make training more difficult.
     value: 1000
   min_width:  # minimum width of each bar to avoid numerical issues
-    value: "1e-7"
+    value: "1e-6"
   scale_floor:  # for the tails, this ensures that the scale is never too small
-    value: "1e-4"
+    value: "1e-3"
   max_fit_items:  # maximum number of datasets to fit the BarDistribution initially.
     value: 10000000
   max_fit_batches:  # maximum number of batches to use when fitting the BarDistribution initially. This is usually not critical.
     value: 1000000
   log_prob_clip_min:  # clip minimum log probability to avoid numerical issues
-    value: -100000.0
+    value: -100000.00
   log_prob_clip_max: # clip maximum log probability to avoid numerical issues
     value: 100000.0
 
@@ -296,12 +327,13 @@ training_config:
     value: 1
 
   # Data Loading Parameters
-  batch_size: # batch size per GPU (will be multiplied by number of GPUs in DDP mode)
+  batch_size: # batch size
     value: 8
-  accumulate_grad_batches: # gradient accumulation (effective_batch_size = batch_size * accumulate_grad_batches * num_gpus)
-    value: 2
-  num_workers: # number of workers for data loading per GPU. Total workers = num_workers * num_gpus
+  accumulate_grad_batches:
+    value: 4
+  num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
     value: 64
+
 
   # Training Control
   early_stopping_patience: # patience for early stopping
@@ -319,34 +351,15 @@ training_config:
   checkpoint_dir:
     value: "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints"
   save_every: # save a checkpoint every n steps
-    value: 500
+    value: 1000
 
   # Hardware Configuration
   device:
     value: "cuda"
-  amp_enabled: # whether to use automatic mixed precision (AMP) for training
+  use_amp:  # Enable automatic mixed precision (float16) for faster training on GPU
     value: false
   precision: # precision for training. 16 has not been tested yet.
     value: "32"
-  
-  # Distributed Training (Multi-GPU)
-  # No explicit config needed - DDP is automatically enabled when using torchrun
-  # 
-  # Single GPU (no DDP):
-  #   python src/training/run.py --config path/to/config.yaml
-  # 
-  # Multi-GPU on same machine:
-  #   torchrun --nproc_per_node=4 src/training/run.py --config path/to/config.yaml
-  #
-  # Multi-node training:
-  #   torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=MASTER_IP --master_port=29500 src/training/run.py --config path/to/config.yaml
-  #
-  # Effective batch size with DDP:
-  #   total_batch_size = batch_size * accumulate_grad_batches * num_gpus
-  #   Example: 8 * 2 * 4 = 64 (with 4 GPUs)
-  #
-  # Note: Each GPU gets batch_size samples. With 4 GPUs and batch_size=8, 
-  #       each GPU processes 8 samples, totaling 32 samples per step before accumulation.
 
   # Experiment Organization
   experiment_name: # name of the experiment, used for logging 
@@ -358,13 +371,13 @@ training_config:
 
   # Model Checkpointing
   checkpoint_every_n_steps: # how often to save a model checkpoint
-    value: 1000
+    value: 500
 
   # Evaluation Configuration
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 1000
+    value: 500
   eval_batches: # number of batches to use for evaluation
     value: 200
   eval_dataset_size: # size of the evaluation dataset
@@ -381,6 +394,7 @@ training_config:
   # Use only cached OpenML data and never download during benchmarking
   benchmark_offline:
     value: true
+
   benchmark_n_estimators: # number of ensemble members for the PFN during benchmarking
     value: 1
 
