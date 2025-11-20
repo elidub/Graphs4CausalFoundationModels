@@ -247,7 +247,44 @@ class BarDistribution(PosteriorPredictive):
         self.base_s_right = torch.tensor(base_s_right, device=self.device, dtype=self.dtype)
         # Refresh constants
         self._ensure_consts(self.device, self.dtype)
+        
+        # Compute loss with constant (uniform) prediction on fitting data
+        self._compute_constant_prediction_loss(y_all)
+        
         return self
+
+    def _compute_constant_prediction_loss(self, y_all: Tensor) -> None:
+        """
+        Compute and print the negative log-likelihood on fitting data using a 
+        constant (uniform) prediction across all bars.
+        
+        This creates a "baseline" prediction where:
+        - All bar logits are equal (uniform probability across bars and tails)
+        - Tail scales use the base scales without modification
+        
+        Args:
+            y_all: All y values used for fitting (already filtered for finite values)
+        """
+        K = self.num_bars
+        n_samples = y_all.shape[0]
+        
+        # Create constant prediction: uniform logits, zero raw scale adjustments
+        # Shape: (1, n_samples, K+4)
+        # First K+2 are logits (will be uniformly distributed after softmax)
+        # Last 2 are tail scale raw params (0 means use base scales)
+        const_pred = torch.zeros(1, n_samples, K + 4, device=self.device, dtype=self.dtype)
+        
+        # Move y_all to correct device/dtype
+        y_batch = y_all.to(device=self.device, dtype=self.dtype).unsqueeze(0)  # (1, n_samples)
+        
+        # Compute average log probability
+        avg_log_prob = self.average_log_prob(const_pred, y_batch)  # (1,)
+        loss = -avg_log_prob.item()
+        
+        print(f"\n[BarDistribution] Constant prediction baseline on fitting data:")
+        print(f"   Number of samples: {n_samples}")
+        print(f"   Negative log-likelihood (loss): {loss:.6f}")
+        print(f"   Average log-probability: {avg_log_prob.item():.6f}")
 
     # ------------------------------ Interface ------------------------------
 
