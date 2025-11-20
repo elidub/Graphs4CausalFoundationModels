@@ -1879,7 +1879,7 @@ def main():
     N_BATCHES = 1
     
     # Number of datasets to visualize per batch
-    N_DATASETS_PER_BATCH = 200
+    N_DATASETS_PER_BATCH = 100
 
     # Fixed curriculum time t in [0, 1]; when using curriculum configs, all samples will be drawn at this timepoint
     FIXED_T = 1.0

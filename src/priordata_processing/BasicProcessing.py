@@ -238,7 +238,7 @@ class BasicProcessing:
         variances = torch.var(data_tensor, dim=0, unbiased=False)  # (F,)
         
         # Filter out features with zero variance (using small epsilon for numerical stability)
-        eps = 1e-5
+        eps = 1e-3
         valid_mask = variances > eps
         valid_cols = [i for i, valid in enumerate(valid_mask) if valid]
         valid_features = [feature_indices[i] for i in valid_cols]
@@ -267,7 +267,7 @@ class BasicProcessing:
         valid_variances = variances[valid_cols]
         
         # Compute 0.8 quantile of variance distribution
-        variance_80_quantile = torch.quantile(valid_variances, 0.9).item()
+        variance_80_quantile = torch.quantile(valid_variances, 0.95).item()
         
         # Find features with variance above 0.8 quantile
         high_variance_mask = valid_variances > variance_80_quantile
@@ -276,7 +276,7 @@ class BasicProcessing:
         
         # With probability 0.9, select uniformly from high-variance features
         # With probability 0.1, select uniformly from all valid features
-        if random.random() < 0.9 and len(high_variance_features) > 0:
+        if random.random() < 0.95 and len(high_variance_features) > 0:
             return random.choice(high_variance_features)
         else:
             return random.choice(valid_features)
