@@ -52,8 +52,11 @@ class InterpolatedObservationalDataset(ObservationalDataset):
     dataset_config_t0, dataset_config_t1 : Dict[str, Any]
         Dataset configurations for initial and final states
     interpolation_function : str, default "sigmoid"
-        Interpolation function: "linear", "sigmoid", "step", "constant", "immediate"
+        Interpolation function: "linear", "sigmoid", "step", "constant", "immediate", 
+        "always_t0", "always_t1"
         - "immediate" or "immediate_jump": α(t<0.001) = 0, α(t>=0.001) = 1
+        - "always_t0" or "fixed_t0": α(t) = 0 for all t (always use t0 config)
+        - "always_t1" or "fixed_t1": α(t) = 1 for all t (always use t1 config)
     seed : Optional[int], default None
         Random seed for reproducibility
         
@@ -172,7 +175,15 @@ class InterpolatedObservationalDataset(ObservationalDataset):
         
         if s == "immediate" or s == "immediate_jump":
             # Jump to 1 only after t >= 0.001
-            return 0.0 if t < 0.001 else 1.0
+            return 1.0
+        
+        if s == "always_t0" or s == "fixed_t0":
+            # Always use t0 configuration
+            return 0.0
+        
+        if s == "always_t1" or s == "fixed_t1":
+            # Always use t1 configuration
+            return 1.0
         
         if s.startswith("constant"):
             p = 1.0

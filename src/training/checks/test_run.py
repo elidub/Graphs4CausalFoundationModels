@@ -42,7 +42,7 @@ def load_and_modify_existing_config(config_path):
     config['training_config']['device'] = {'value': 'cpu'}  # Force CPU usage
     config['training_config']['num_workers'] = {'value': 0}  # Avoid multiprocessing issues
 
-    config['model_config']['max_fit_batches'] = {'value': 10}
+    config['model_config']['max_fit_items'] = {'value': 10000}
     config['training_config']['benchmark_final_fidelity'] = {'value': "low"}
     config['training_config']['benchmark_final_fidelity'] = {'value': "low"}
     config['training_config']['eval_batches'] = {'value': 5}  # Fewer eval batches
