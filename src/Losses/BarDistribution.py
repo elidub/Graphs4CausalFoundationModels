@@ -265,29 +265,45 @@ class BarDistribution(PosteriorPredictive):
         - All bar logits are equal (uniform probability across bars and tails)
         - Tail scales use the base scales without modification
         
+        Processes data in batches and averages the results.
+        
         Args:
             y_all: All y values used for fitting (already filtered for finite values)
         """
         K = self.num_bars
         n_samples = y_all.shape[0]
         
-        # Create constant prediction: uniform logits, zero raw scale adjustments
-        # Shape: (1, n_samples, K+4)
-        # First K+2 are logits (will be uniformly distributed after softmax)
-        # Last 2 are tail scale raw params (0 means use base scales)
-        const_pred = torch.zeros(1, n_samples, K + 4, device=self.device, dtype=self.dtype)
+        # Process in batches to avoid memory issues
+        batch_size = 1000
+        log_probs = []
         
-        # Move y_all to correct device/dtype
-        y_batch = y_all.to(device=self.device, dtype=self.dtype).unsqueeze(0)  # (1, n_samples)
+        for i in range(0, n_samples, batch_size):
+            end_idx = min(i + batch_size, n_samples)
+            y_chunk = y_all[i:end_idx]
+            chunk_size = y_chunk.shape[0]
+            
+            # Create constant prediction for this batch
+            # Shape: (1, chunk_size, K+4)
+            # First K+2 are logits (will be uniformly distributed after softmax)
+            # Last 2 are tail scale raw params (0 means use base scales)
+            const_pred = torch.zeros(1, chunk_size, K + 4, device=self.device, dtype=self.dtype)
+            
+            # Move y_chunk to correct device/dtype
+            y_batch = y_chunk.to(device=self.device, dtype=self.dtype).unsqueeze(0)  # (1, chunk_size)
+            
+            # Compute average log probability for this batch
+            batch_avg_log_prob = self.average_log_prob(const_pred, y_batch)  # (1,)
+            log_probs.append(batch_avg_log_prob.item())
         
-        # Compute average log probability
-        avg_log_prob = self.average_log_prob(const_pred, y_batch)  # (1,)
-        loss = -avg_log_prob.item()
+        # Average across all batches
+        avg_log_prob = sum(log_probs) / len(log_probs)
+        loss = -avg_log_prob
         
         print(f"\n[BarDistribution] Constant prediction baseline on fitting data:")
         print(f"   Number of samples: {n_samples}")
+        print(f"   Number of batches: {len(log_probs)}")
         print(f"   Negative log-likelihood (loss): {loss:.6f}")
-        print(f"   Average log-probability: {avg_log_prob.item():.6f}")
+        print(f"   Average log-probability: {avg_log_prob:.6f}")
 
     # ------------------------------ Interface ------------------------------
 
