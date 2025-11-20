@@ -185,6 +185,9 @@ class BarDistribution(PosteriorPredictive):
         y_all = y_all[torch.isfinite(y_all)]
         if y_all.numel() == 0:
             raise ValueError("All y are non-finite in fit().")
+        
+        # Print number of datapoints used for fitting
+        print(f"[BarDistribution] Fitting with {y_all.numel()} datapoints from {batch_count} batches")
 
         y_min, y_max = torch.min(y_all), torch.max(y_all)
         if not (torch.isfinite(y_min) and torch.isfinite(y_max)):
