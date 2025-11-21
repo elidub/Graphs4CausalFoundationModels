@@ -222,7 +222,7 @@ dataset_config:
       low: 0
       high: 100000
 
-preprocessing_config_t1:
+preprocessing_config:
   dropout_prob:
     distribution: "categorical"
     distribution_parameters:
