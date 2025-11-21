@@ -70,4 +70,4 @@ fi
 
 # Run SimplePFN training with config
 cd src/training
-python3 run.py --config "../../basic_curriculum.yaml"
+python3 run.py --config "../../basic.yaml"

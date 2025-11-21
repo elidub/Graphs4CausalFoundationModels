@@ -44,7 +44,7 @@ class BarDistribution(PosteriorPredictive):
         max_fit_items: Optional[int] = None,
         log_prob_clip_min: float = -50.0,
         log_prob_clip_max: float = 50.0,
-        use_simple_equidistant_fit: bool = False,  # Use equidistant bars instead of quantile-based
+        use_simple_equidistant_fit: bool = True,  # Use equidistant bars instead of quantile-based
     ):
         if num_bars < 1:
             raise ValueError("num_bars must be >= 1")
