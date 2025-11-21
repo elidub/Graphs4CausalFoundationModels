@@ -44,6 +44,7 @@ class BarDistribution(PosteriorPredictive):
         max_fit_items: Optional[int] = None,
         log_prob_clip_min: float = -50.0,
         log_prob_clip_max: float = 50.0,
+        use_simple_equidistant_fit: bool = False,  # Use equidistant bars instead of quantile-based
     ):
         if num_bars < 1:
             raise ValueError("num_bars must be >= 1")
@@ -53,6 +54,7 @@ class BarDistribution(PosteriorPredictive):
         self.max_fit_items = max_fit_items
         self.log_prob_clip_min = float(log_prob_clip_min)
         self.log_prob_clip_max = float(log_prob_clip_max)
+        self.use_simple_equidistant_fit = bool(use_simple_equidistant_fit)
 
         self.device = device if device is not None else torch.device("cpu")
         self.dtype = dtype if dtype is not None else torch.float32
@@ -203,40 +205,58 @@ class BarDistribution(PosteriorPredictive):
 
         K = self.num_bars
 
-        # Quantile-based centers; robust monotonic enforcement
-        probs = torch.linspace(0.0, 1.0, steps=K + 1, dtype=torch.float64)
-        mids = (probs[:-1] + probs[1:]) * 0.5
-        try:
-            centers = torch.quantile(y_all, mids, method="linear")
-        except TypeError:
-            centers = torch.quantile(y_all, mids, interpolation="linear")
-
-        # Strictly increasing centers (epsilon grows with K and span)
-        eps = max(1e-12, 1e-9 * K) * float(y_max - y_min)
-        eps = torch.tensor(eps, dtype=torch.float64)
-        for i in range(K - 1):
-            if centers[i + 1] <= centers[i]:
-                centers[i + 1] = centers[i] + eps
-
-        edges = torch.empty(K + 1, dtype=torch.float64)
-        if K == 1:
-            # Use IQR for width, fall back to small width if degenerate
-            q25, q75 = torch.quantile(y_all, torch.tensor([0.25, 0.75], dtype=torch.float64))
-            width = float(max(q75 - q25, self.min_width))
-            edges[0] = centers[0] - 0.5 * width
-            edges[1] = centers[0] + 0.5 * width
+        if self.use_simple_equidistant_fit:
+            # Simple equidistant fitting: evenly spaced bars across the data range
+            print(f"[BarDistribution] Using simple equidistant fitting method")
+            
+            # Create K+1 evenly spaced edges from y_min to y_max
+            edges = torch.linspace(float(y_min), float(y_max), steps=K + 1, dtype=torch.float64)
+            
+            # Centers are midpoints of edges
+            centers = 0.5 * (edges[:-1] + edges[1:])
+            
+            # All widths are equal
+            widths = torch.diff(edges)
+            # Ensure minimum width
+            widths = torch.clamp(widths, min=self.min_width)
+            # Reconstruct edges from clamped widths to guarantee consistency
+            edges = torch.cat([edges[:1], edges[:1] + torch.cumsum(widths, dim=0)], dim=0)
         else:
-            edges[1:-1] = 0.5 * (centers[:-1] + centers[1:])
-            # Extrapolate outer edges
-            edges[0] = centers[0] - 0.5 * float(centers[1] - centers[0])
-            edges[-1] = centers[-1] + 0.5 * float(centers[-1] - centers[-2])
+            # Original quantile-based centers; robust monotonic enforcement
+            print(f"[BarDistribution] Using quantile-based fitting method")
+            probs = torch.linspace(0.0, 1.0, steps=K + 1, dtype=torch.float64)
+            mids = (probs[:-1] + probs[1:]) * 0.5
+            try:
+                centers = torch.quantile(y_all, mids, method="linear")
+            except TypeError:
+                centers = torch.quantile(y_all, mids, interpolation="linear")
 
-        # Ensure strict monotonic edges and minimum widths
-        edges = torch.clip(edges, min=float(y_min) - 10.0 * span, max=float(y_max) + 10.0 * span)
-        widths = torch.diff(edges)
-        widths = torch.clamp(widths, min=self.min_width)
-        # Reconstruct edges from clamped widths to guarantee increasing edges
-        edges = torch.cat([edges[:1], edges[:1] + torch.cumsum(widths, dim=0)], dim=0)
+            # Strictly increasing centers (epsilon grows with K and span)
+            eps = max(1e-12, 1e-9 * K) * float(y_max - y_min)
+            eps = torch.tensor(eps, dtype=torch.float64)
+            for i in range(K - 1):
+                if centers[i + 1] <= centers[i]:
+                    centers[i + 1] = centers[i] + eps
+
+            edges = torch.empty(K + 1, dtype=torch.float64)
+            if K == 1:
+                # Use IQR for width, fall back to small width if degenerate
+                q25, q75 = torch.quantile(y_all, torch.tensor([0.25, 0.75], dtype=torch.float64))
+                width = float(max(q75 - q25, self.min_width))
+                edges[0] = centers[0] - 0.5 * width
+                edges[1] = centers[0] + 0.5 * width
+            else:
+                edges[1:-1] = 0.5 * (centers[:-1] + centers[1:])
+                # Extrapolate outer edges
+                edges[0] = centers[0] - 0.5 * float(centers[1] - centers[0])
+                edges[-1] = centers[-1] + 0.5 * float(centers[-1] - centers[-2])
+
+            # Ensure strict monotonic edges and minimum widths
+            edges = torch.clip(edges, min=float(y_min) - 10.0 * span, max=float(y_max) + 10.0 * span)
+            widths = torch.diff(edges)
+            widths = torch.clamp(widths, min=self.min_width)
+            # Reconstruct edges from clamped widths to guarantee increasing edges
+            edges = torch.cat([edges[:1], edges[:1] + torch.cumsum(widths, dim=0)], dim=0)
 
         # Tail base scales ~ near-edge widths (clamped)
         base_s_left = float(max(widths[0].item(), self.min_width))
