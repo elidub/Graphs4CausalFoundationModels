@@ -175,7 +175,7 @@ class InterpolatedObservationalDataset(ObservationalDataset):
         
         if s == "immediate" or s == "immediate_jump":
             # Jump to 1 only after t >= 0.001
-            return 1.0
+            return 0.0 if t < 0.01 else 1.0
         
         if s == "always_t0" or s == "fixed_t0":
             # Always use t0 configuration

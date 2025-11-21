@@ -12,7 +12,7 @@
 experiment_name: "early_test2"
 description: "First pipeline test. debug scale with fixed seeds for reproducibility"
 
-interpolation_function: "always_t1" # sigmoid schedule with 10% head/tail clamp
+interpolation_function: "immediate" # sigmoid schedule with 10% head/tail clamp
 
 scm_config_t0:
   num_nodes:
@@ -598,9 +598,9 @@ model_config:
   scale_floor:  # for the tails, this ensures that the scale is never too small
     value: "1e-3"
   max_fit_items:  # maximum number of datasets to fit the BarDistribution initially.
-    value: 10000000
+    value: 1000
   max_fit_batches:  # maximum number of batches to use when fitting the BarDistribution initially. This is usually not critical.
-    value: 1000000
+    value: 1000
   log_prob_clip_min:  # clip minimum log probability to avoid numerical issues
     value: -100000.00
   log_prob_clip_max: # clip maximum log probability to avoid numerical issues
@@ -616,7 +616,7 @@ training_config:
   weight_decay: # weight decay for optimizer, might not be needed
     value: 0.00001 
   max_steps:  #critial for determing training duration!
-    value: 50000
+    value: 10000
   max_epochs: # should always be 1
     value: 1
 
