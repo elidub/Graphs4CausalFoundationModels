@@ -21,10 +21,26 @@ except Exception:
     openml = None
 
 # Default Tabular numerical regression task IDs (from the user's list)
+#DEFAULT_TABULAR_NUM_REG_TASKS = [
+#    361072, 361073, 361074, 361075, 361076, 361077, 361078, 361079, 361080,
+#    361081, 361082, 361083, 361084, 361085, 361086, 361087, 361088,
+#    361279, 361280, 361281
+#]
+
 DEFAULT_TABULAR_NUM_REG_TASKS = [
-    361072, 361073, 361074, 361075, 361076, 361077, 361078, 361079, 361080,
-    361081, 361082, 361083, 361084, 361085, 361086, 361087, 361088,
-    361279, 361280, 361281
+    363612,  # airfoil_self_noise (1,503 samples, 6 features)
+    363615,  # Another-Dataset-on-used-Fiat-500 (1,538 samples, 8 features)
+    363625,  # concrete_compressive_strength (1,030 samples, 9 features)
+    363631,  # diamonds (53,940 samples, 10 features)
+    363672,  # Food_Delivery_Time (45,451 samples, 10 features)
+    363675,  # healthcare_insurance_expenses (1,338 samples, 7 features)
+    363678,  # houses (20,640 samples, 9 features)
+    363686,  # miami_housing (13,776 samples, 16 features)
+    363693,  # physiochemical_protein (45,730 samples, 10 features)
+    363697,  # QSAR-TID-11 (5,742 samples, 1,025 features)
+    363698,  # QSAR_fish_toxicity (907 samples, 7 features)
+    363705,  # superconductivity (21,263 samples, 82 features)
+    363708,  # wine_quality (6,497 samples, 13 features)
 ]
 
 
@@ -204,8 +220,15 @@ class SimpleOpenMLLoader:
                     print(f"[SimpleOpenMLLoader] Task {tid} -> dataset {dataset_id}, target='{target_name}'")
                 loaded = self.download_dataset(dataset_id, target_name)
                 results[int(tid)] = loaded
+                if self.verbose:
+                    print(f"[SimpleOpenMLLoader] ✓ Successfully loaded task {tid} (dataset {dataset_id})")
             except Exception as e:
-                print(f"[SimpleOpenMLLoader] Error loading task {tid}: {e}")
+                import traceback
+                print(f"[SimpleOpenMLLoader] ✗ ERROR loading task {tid}: {e}")
+                print(f"[SimpleOpenMLLoader] Traceback:\n{traceback.format_exc()}")
+        
+        if self.verbose:
+            print(f"\n[SimpleOpenMLLoader] Load summary: {len(results)}/{len(task_ids)} tasks loaded successfully")
         return results
 
     # Note: subsampling and preprocessing moved to Benchmark class.

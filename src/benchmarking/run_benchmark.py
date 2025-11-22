@@ -114,28 +114,9 @@ def main(args):
         quiet=args.quiet,
     )
 
-    # Determine fidelity level from repeats/baseline_set or use a default
-    # Map args.repeats and args.baseline_set to a fidelity level
-    repeats = int(getattr(args, "repeats", 1) or 1)
-    baseline_set = str(getattr(args, "baseline_set", "basic") or "basic")
-    
-    # Infer fidelity from settings (reverse mapping)
-    if repeats == 1 and baseline_set == "basic":
-        if args.max_tasks == 1:
-            fidelity = "minimal"
-        else:
-            fidelity = "low"
-    elif repeats == 5 and baseline_set == "extended":
-        fidelity = "high"
-    elif repeats >= 25 and baseline_set == "extended":
-        fidelity = "very_high"
-    else:
-        # Default to low for unrecognized combinations
-        fidelity = "low"
-
-    # Run benchmark with simplified API
+    # Run benchmark with user-specified fidelity
     df = bench.run(
-        fidelity=fidelity,
+        fidelity=args.fidelity,
         checkpoint_path=ckpt,
     )
 
@@ -200,14 +181,13 @@ if __name__ == "__main__":
     # Subsampling env vars (optional) - read from ALL_CAPS environment variables so submit files can set them
     N_FEATURES = 50
     MAX_N_FEATURES = 50
-    N_TRAIN = 10_000
-    MAX_N_TRAIN = 10_000
-    N_TEST = 10_000
-    MAX_N_TEST = 10_000
+    N_TRAIN = 1000
+    MAX_N_TRAIN = 1000
+    N_TEST = 1000
+    MAX_N_TEST = 1000
     PREFER_NUMERIC = False
     ONLY_NUMERIC = False
-    REPEATS = 5
-    BASELINE_SET = "extended"  # 'basic' or 'extended'
+    FIDELITY = "low"  # Options: "minimal", "low", "high", "very_high"
     BOOTSTRAP_SAMPLES = 10000
     
     # SimplePFN Ensemble parameters
@@ -244,8 +224,7 @@ if __name__ == "__main__":
         only_numeric=ONLY_NUMERIC,
         max_n_train=int(MAX_N_TRAIN) if MAX_N_TRAIN else 0,
         max_n_test=int(MAX_N_TEST) if MAX_N_TEST else 0,
-        repeats=int(REPEATS) if REPEATS else 1,
-        baseline_set=BASELINE_SET,
+        fidelity=FIDELITY,
         bootstrap_samples=int(BOOTSTRAP_SAMPLES) if BOOTSTRAP_SAMPLES else 1000,
         # SimplePFN ensemble parameters
         n_estimators=int(N_ESTIMATORS) if N_ESTIMATORS else 1,

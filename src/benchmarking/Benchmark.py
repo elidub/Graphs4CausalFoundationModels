@@ -391,11 +391,21 @@ class Benchmark:
 
         use_device = self.device
 
-        for tid in tasks:
+        if not self.quiet:
+            print(f"\n[Benchmark] Starting to process {len(tasks)} tasks: {tasks}")
+            print(f"[Benchmark] Tasks available in raw_map: {sorted(raw_map.keys())}")
+        
+        for idx, tid in enumerate(tasks):
+            if not self.quiet:
+                print(f"\n{'='*80}")
+                print(f"[Benchmark] Processing task {idx+1}/{len(tasks)}: {tid}")
+                print(f"{'='*80}")
+            
             if tid not in raw_map:
                 if not self.quiet:
-                    print(f"Skipping task {tid}: no raw data")
+                    print(f"[Benchmark] ✗ Skipping task {tid}: no raw data in raw_map")
                 continue
+            
             entry = raw_map[tid]
             df = entry["df"]
             target = entry["target_column"]
@@ -406,15 +416,16 @@ class Benchmark:
             
             if N_total == 0 or F_total == 0:
                 if not self.quiet:
-                    print(f"Skipping task {tid}: empty dataset (N={N_total}, F={F_total})")
+                    print(f"[Benchmark] ✗ Skipping task {tid}: empty dataset (N={N_total}, F={F_total})")
                 continue
             
             # Log if dataset is smaller than requested, but still process it
             if not self.quiet:
+                print(f"[Benchmark] Task {tid}: {N_total} samples, {F_total} features")
                 if (self.n_features and F_total < self.n_features) or \
                    (self.n_train and N_total < self.n_train) or \
                    (self.n_test and N_total < (self.n_train or 0) + (self.n_test or 0)):
-                    print(f"Task {tid}: Dataset smaller than requested ({N_total} samples, {F_total} features) - will use available data and pad")
+                    print(f"[Benchmark] ⚠ Dataset smaller than requested - will use available data and pad")
 
             # Estimate whether repeated resampling is relevant
             wants_feat = (
@@ -523,8 +534,30 @@ class Benchmark:
                         "n_test": X_test.shape[0],
                         **metrics_row,
                     })
+                    if not self.quiet:
+                        print(f"[Benchmark] ✓ Successfully processed task {tid} repeat {rep}")
             except Exception as e:
-                print(f"Error processing task {tid}: {e}")
+                import traceback
+                print(f"\n[Benchmark] ✗ ERROR processing task {tid}: {e}")
+                print(f"[Benchmark] Error type: {type(e).__name__}")
+                print(f"[Benchmark] Traceback:\n{traceback.format_exc()}")
+                print(f"[Benchmark] Continuing to next task...\n")
+
+        # Print processing summary
+        if not self.quiet:
+            print(f"\n{'='*80}")
+            print(f"[Benchmark] PROCESSING COMPLETE")
+            print(f"{'='*80}")
+            print(f"Tasks requested: {len(tasks)}")
+            print(f"Tasks loaded: {len(raw_map)}")
+            print(f"Results collected: {len(results)}")
+            if results:
+                processed_tasks = sorted(set(r["task_id"] for r in results if isinstance(r.get("task_id"), (int, float))))
+                print(f"Tasks successfully processed: {processed_tasks}")
+                missing_tasks = [t for t in tasks if t not in processed_tasks]
+                if missing_tasks:
+                    print(f"⚠ Tasks MISSING from results: {missing_tasks}")
+            print(f"{'='*80}\n")
 
         df_out = pd.DataFrame(results)
 
@@ -666,9 +699,9 @@ class Benchmark:
 
         Fidelity levels:
         - "minimal": 1 task, basic baselines, 1 repeat
-        - "low":     10 tasks, basic baselines, 1 repeat
-        - "high":    all tasks, extended baselines, 5 repeats
-        - "very high" / "very_high": all tasks, extended baselines, 25 repeats
+        - "low":     all available tasks, basic baselines, 1 repeat
+        - "high":    all available tasks, extended baselines, 5 repeats
+        - "very high" / "very_high": all available tasks, extended baselines, 25 repeats
         """
         # Normalize fidelity key
         key = fidelity.strip().lower().replace("-", "_").replace(" ", "_")
@@ -684,7 +717,7 @@ class Benchmark:
         elif key == "low":
             repeats = 1
             baseline_set = "basic"
-            task_cap = 10
+            task_cap = None  # Use all available tasks (changed from 10)
         elif key == "high":
             repeats = 5
             baseline_set = "extended"
@@ -704,23 +737,11 @@ class Benchmark:
         if self.max_tasks is not None and self.max_tasks > 0:
             base_tasks = base_tasks[: self.max_tasks]
 
-        # then cap further based on fidelity setting
-        if task_cap is not None:
+        # then cap further based on fidelity setting (only if task_cap would reduce the list)
+        if task_cap is not None and task_cap < len(base_tasks):
             tasks_use = base_tasks[: task_cap]
-        else:
-            tasks_use = base_tasks
-
-        return self._run_core(
-            tasks=tasks_use,
-            repeats=repeats,
-            baseline_set=baseline_set,
-            checkpoint_path=checkpoint_path,
-        )
-        base_tasks = base_tasks[: self.max_tasks]
-
-        # then cap further based on fidelity setting
-        if task_cap is not None:
-            tasks_use = base_tasks[: task_cap]
+            if not self.quiet:
+                print(f"[Benchmark] Fidelity '{key}' capping tasks from {len(base_tasks)} to {task_cap}")
         else:
             tasks_use = base_tasks
 
