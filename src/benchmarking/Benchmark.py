@@ -16,6 +16,16 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+# Optional matplotlib import - benchmarking works without it
+try:
+    import matplotlib.pyplot as plt
+    import matplotlib
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    matplotlib = None
+    plt = None
+
 from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet, HuberRegressor, BayesianRidge
 from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor, GradientBoostingRegressor, AdaBoostRegressor
 from sklearn.svm import SVR
@@ -359,12 +369,242 @@ class Benchmark:
         high = float(np.nanpercentile(stats, 100 * (1 - alpha / 2)))
         return low, high
 
+    def _save_benchmark_info(
+        self,
+        output_file: Path,
+        tasks: List[int],
+        repeats: int,
+        baseline_set: str,
+        checkpoint_path: Optional[str],
+        models: Dict[str, Any],
+        fidelity: str,
+    ):
+        """Save a detailed description of the benchmark setup alongside the results."""
+        info_file = output_file.with_name(f"{output_file.stem}_info.txt")
+        
+        with open(info_file, "w") as f:
+            f.write("="*80 + "\n")
+            f.write("BENCHMARK CONFIGURATION\n")
+            f.write("="*80 + "\n\n")
+            
+            f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Results file: {output_file.name}\n\n")
+            
+            f.write("-"*80 + "\n")
+            f.write("FIDELITY SETTINGS\n")
+            f.write("-"*80 + "\n")
+            f.write(f"Fidelity level: {fidelity}\n")
+            f.write(f"Number of repeats: {repeats}\n")
+            f.write(f"Baseline set: {baseline_set}\n")
+            f.write(f"Bootstrap samples: {self.bootstrap_samples}\n\n")
+            
+            f.write("-"*80 + "\n")
+            f.write("TASKS\n")
+            f.write("-"*80 + "\n")
+            f.write(f"Number of tasks: {len(tasks)}\n")
+            f.write(f"Task IDs: {tasks}\n\n")
+            
+            f.write("-"*80 + "\n")
+            f.write("MODELS\n")
+            f.write("-"*80 + "\n")
+            f.write(f"Number of baseline models: {len(models)}\n")
+            f.write("Baseline models:\n")
+            for name, model in models.items():
+                model_type = type(model).__name__
+                f.write(f"  - {name}: {model_type}\n")
+            
+            if checkpoint_path:
+                f.write(f"\nSimplePFN checkpoint: {checkpoint_path}\n")
+                f.write(f"SimplePFN ensemble size: {self.n_estimators}\n")
+                f.write(f"SimplePFN norm methods: {self.norm_methods}\n")
+                f.write(f"SimplePFN outlier strategies: {self.outlier_strategies}\n")
+            else:
+                f.write("\nSimplePFN: Not used\n")
+            
+            f.write("\n" + "-"*80 + "\n")
+            f.write("DATA PREPROCESSING\n")
+            f.write("-"*80 + "\n")
+            f.write(f"Negative one-one scaling: {self.negative_one_one_scaling}\n")
+            f.write(f"Standardize: {self.standardize}\n")
+            f.write(f"Yeo-Johnson transform: {self.yeo_johnson}\n")
+            f.write(f"Remove outliers: {self.remove_outliers}\n")
+            f.write(f"Outlier quantile: {self.outlier_quantile}\n")
+            f.write(f"Shuffle samples: {self.shuffle_samples}\n")
+            f.write(f"Shuffle features: {self.shuffle_features}\n\n")
+            
+            f.write("-"*80 + "\n")
+            f.write("DATA SUBSAMPLING\n")
+            f.write("-"*80 + "\n")
+            f.write(f"n_features: {self.n_features if self.n_features else 'all'}\n")
+            f.write(f"max_n_features: {self.max_n_features if self.max_n_features else 'no limit'}\n")
+            f.write(f"n_train: {self.n_train if self.n_train else 'all'}\n")
+            f.write(f"max_n_train: {self.max_n_train if self.max_n_train else 'no limit'}\n")
+            f.write(f"n_test: {self.n_test if self.n_test else 'all'}\n")
+            f.write(f"max_n_test: {self.max_n_test if self.max_n_test else 'no limit'}\n")
+            f.write(f"Only numeric features: {self.only_numeric}\n\n")
+            
+            f.write("-"*80 + "\n")
+            f.write("SYSTEM\n")
+            f.write("-"*80 + "\n")
+            f.write(f"Device: {self.device}\n")
+            f.write(f"Config path: {self.config_path if self.config_path else 'None'}\n")
+            f.write(f"Data directory: {self.loader.data_dir}\n\n")
+            
+            f.write("="*80 + "\n")
+        
+        if not self.quiet:
+            print(f"Saved benchmark info to {info_file}")
+
+    def _create_performance_plots(
+        self,
+        results: List[Dict[str, Any]],
+        output_file: Path,
+    ):
+        """Create bar plots with bootstrap confidence intervals for all models by reading from CSV."""
+        # Check if matplotlib is available
+        if not MATPLOTLIB_AVAILABLE:
+            if not self.quiet:
+                print("[Benchmark] Skipping performance plots (matplotlib not available)")
+            return
+        
+        try:
+            # Use Agg backend to avoid display issues
+            matplotlib.use('Agg')
+        except Exception as e:
+            if not self.quiet:
+                print(f"[Benchmark] Warning: Could not set matplotlib backend: {e}")
+            return
+        
+        try:
+            # Read the CSV file that was just saved
+            df = pd.read_csv(output_file)
+            
+            # Filter to summary_model rows which have the aggregated stats
+            summary_df = df[df['process_id'] == 'summary_model'].copy()
+            
+            if summary_df.empty:
+                if not self.quiet:
+                    print("[Benchmark] No summary_model data found in CSV, skipping plots")
+                return
+            
+            # Get unique models
+            models = summary_df['model'].unique()
+            
+            # Prepare data for plotting
+            model_stats = {}
+            for model in models:
+                model_data = summary_df[summary_df['model'] == model]
+                mse_row = model_data[model_data['metric'] == 'mse']
+                r2_row = model_data[model_data['metric'] == 'r2']
+                
+                model_stats[model] = {
+                    'mse_mean': mse_row['mean'].values[0] if not mse_row.empty else np.nan,
+                    'mse_ci_low': mse_row['ci95_mean_low'].values[0] if not mse_row.empty else np.nan,
+                    'mse_ci_high': mse_row['ci95_mean_high'].values[0] if not mse_row.empty else np.nan,
+                    'r2_mean': r2_row['mean'].values[0] if not r2_row.empty else np.nan,
+                    'r2_ci_low': r2_row['ci95_mean_low'].values[0] if not r2_row.empty else np.nan,
+                    'r2_ci_high': r2_row['ci95_mean_high'].values[0] if not r2_row.empty else np.nan,
+                }
+            
+            # Sort models by R² (descending)
+            sorted_models = sorted(
+                model_stats.keys(),
+                key=lambda m: model_stats[m]['r2_mean'] if not np.isnan(model_stats[m]['r2_mean']) else -np.inf,
+                reverse=True
+            )
+            
+            # Create figure with two subplots
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+            fig.suptitle('Benchmark Performance Summary', fontsize=16, fontweight='bold')
+            
+            # Prepare data for plotting
+            x_pos = np.arange(len(sorted_models))
+            
+            # Plot MSE (lower is better)
+            mse_means = [model_stats[m]['mse_mean'] for m in sorted_models]
+            mse_errors = [
+                [model_stats[m]['mse_mean'] - model_stats[m]['mse_ci_low'],
+                 model_stats[m]['mse_ci_high'] - model_stats[m]['mse_mean']]
+                for m in sorted_models
+            ]
+            mse_errors = np.array(mse_errors).T
+            
+            ax1.bar(x_pos, mse_means, yerr=mse_errors, capsize=5, alpha=0.7, color='steelblue', edgecolor='black')
+            ax1.set_xlabel('Model', fontsize=12)
+            ax1.set_ylabel('Mean Squared Error (lower is better)', fontsize=12)
+            ax1.set_title('MSE with 95% Bootstrap Confidence Intervals', fontsize=14)
+            ax1.set_xticks(x_pos)
+            ax1.set_xticklabels(sorted_models, rotation=45, ha='right')
+            ax1.grid(axis='y', alpha=0.3)
+            
+            # Plot R² (higher is better)
+            r2_means = [model_stats[m]['r2_mean'] for m in sorted_models]
+            r2_errors = [
+                [model_stats[m]['r2_mean'] - model_stats[m]['r2_ci_low'],
+                 model_stats[m]['r2_ci_high'] - model_stats[m]['r2_mean']]
+                for m in sorted_models
+            ]
+            r2_errors = np.array(r2_errors).T
+            
+            ax2.bar(x_pos, r2_means, yerr=r2_errors, capsize=5, alpha=0.7, color='forestgreen', edgecolor='black')
+            ax2.set_xlabel('Model', fontsize=12)
+            ax2.set_ylabel('R² Score (higher is better)', fontsize=12)
+            ax2.set_title('R² with 95% Bootstrap Confidence Intervals', fontsize=14)
+            ax2.set_xticks(x_pos)
+            ax2.set_xticklabels(sorted_models, rotation=45, ha='right')
+            ax2.grid(axis='y', alpha=0.3)
+            ax2.axhline(y=0, color='red', linestyle='--', alpha=0.5, linewidth=1)
+            
+            plt.tight_layout()
+            
+            # Save plot
+            plot_file = output_file.with_name(f"{output_file.stem}_performance.png")
+            plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            if not self.quiet:
+                print(f"Saved performance plot to {plot_file}")
+            
+            # Also save a summary table
+            summary_file = output_file.with_name(f"{output_file.stem}_summary.txt")
+            with open(summary_file, "w") as f:
+                f.write("="*80 + "\n")
+                f.write("PERFORMANCE SUMMARY (sorted by R² descending)\n")
+                f.write("="*80 + "\n\n")
+                f.write(f"{'Model':<20} {'MSE Mean':<15} {'MSE 95% CI':<30} {'R² Mean':<15} {'R² 95% CI':<30}\n")
+                f.write("-"*80 + "\n")
+                
+                for model in sorted_models:
+                    stats = model_stats[model]
+                    
+                    # Format values safely
+                    mse_mean_str = f"{stats['mse_mean']:.4f}" if not np.isnan(stats['mse_mean']) else "N/A"
+                    r2_mean_str = f"{stats['r2_mean']:.4f}" if not np.isnan(stats['r2_mean']) else "N/A"
+                    
+                    mse_ci_str = (f"[{stats['mse_ci_low']:.4f}, {stats['mse_ci_high']:.4f}]" 
+                                 if not (np.isnan(stats['mse_ci_low']) or np.isnan(stats['mse_ci_high'])) else "N/A")
+                    r2_ci_str = (f"[{stats['r2_ci_low']:.4f}, {stats['r2_ci_high']:.4f}]" 
+                                if not (np.isnan(stats['r2_ci_low']) or np.isnan(stats['r2_ci_high'])) else "N/A")
+                    
+                    f.write(f"{model:<20} {mse_mean_str:<15} {mse_ci_str:<30} {r2_mean_str:<15} {r2_ci_str:<30}\n")
+                
+                f.write("\n" + "="*80 + "\n")
+            
+            if not self.quiet:
+                print(f"Saved performance summary to {summary_file}")
+        
+        except Exception as e:
+            if not self.quiet:
+                print(f"[Benchmark] Warning: Could not create performance plots: {e}")
+                print(f"[Benchmark] Continuing without plots...")
+
     def _run_core(
         self,
         tasks: List[int],
         repeats: int,
         baseline_set: str,
         checkpoint_path: Optional[str],
+        fidelity: str = "low",
     ) -> pd.DataFrame:
         raw_map = self.loader.load_tasks_raw(tasks)
         # Offline fallback: if nothing could be resolved via tasks (e.g., no mapping and offline),
@@ -425,7 +665,7 @@ class Benchmark:
                 if (self.n_features and F_total < self.n_features) or \
                    (self.n_train and N_total < self.n_train) or \
                    (self.n_test and N_total < (self.n_train or 0) + (self.n_test or 0)):
-                    print(f"[Benchmark] ⚠ Dataset smaller than requested - will use available data and pad")
+                    print(f"[Benchmark] Dataset smaller than requested - will use available data and pad")
 
             # Estimate whether repeated resampling is relevant
             wants_feat = (
@@ -535,7 +775,7 @@ class Benchmark:
                         **metrics_row,
                     })
                     if not self.quiet:
-                        print(f"[Benchmark] ✓ Successfully processed task {tid} repeat {rep}")
+                        print(f"[Benchmark] Successfully processed task {tid} repeat {rep}")
             except Exception as e:
                 import traceback
                 print(f"\n[Benchmark] ✗ ERROR processing task {tid}: {e}")
@@ -673,16 +913,42 @@ class Benchmark:
             if detailed_rows:
                 df_out = pd.concat([df_out, pd.DataFrame(detailed_rows)], ignore_index=True)
 
-        # Save
+        # Save - create a folder for this PID
         out_path = Path(self.output_csv)
         process_id = os.getpid()
-        if out_path.suffix:
-            out_file = out_path.with_name(f"{out_path.stem}_pid{process_id}{out_path.suffix}")
+        
+        # Create a PID-specific folder
+        if out_path.parent.name:
+            pid_folder = out_path.parent / f"run_pid{process_id}"
         else:
-            out_file = Path(f"{self.output_csv}_pid{process_id}")
+            pid_folder = Path(f"run_pid{process_id}")
+        pid_folder.mkdir(parents=True, exist_ok=True)
+        
+        # Save CSV in the PID folder
+        if out_path.suffix:
+            out_file = pid_folder / f"{out_path.stem}.csv"
+        else:
+            out_file = pid_folder / f"{out_path.name}.csv"
         df_out.to_csv(out_file, index=False)
         if not self.quiet:
             print(f"Saved results to {out_file} (PID: {process_id})")
+
+        # Save benchmark configuration info
+        self._save_benchmark_info(
+            output_file=out_file,
+            tasks=tasks,
+            repeats=repeats,
+            baseline_set=baseline_set,
+            checkpoint_path=checkpoint_path,
+            models=models,
+            fidelity=fidelity,
+        )
+
+        # Create performance plots
+        self._create_performance_plots(
+            results=results,
+            output_file=out_file,
+        )
 
         return df_out
 
@@ -700,14 +966,18 @@ class Benchmark:
         Fidelity levels:
         - "minimal": 1 task, basic baselines, 1 repeat
         - "low":     all available tasks, basic baselines, 1 repeat
+        - "low_all_baselines": all available tasks, extended baselines, 1 repeat
         - "high":    all available tasks, extended baselines, 5 repeats
         - "very high" / "very_high": all available tasks, extended baselines, 25 repeats
         """
+        import time
+        start_time = time.time()
+        
         # Normalize fidelity key
         key = fidelity.strip().lower().replace("-", "_").replace(" ", "_")
-        allowed = {"minimal", "low", "high", "very_high"}
+        allowed = {"minimal", "low", "low_all_baselines", "high", "very_high"}
         if key not in allowed:
-            raise ValueError(f"Invalid fidelity '{fidelity}'. Choose one of: minimal, low, high, very high")
+            raise ValueError(f"Invalid fidelity '{fidelity}'. Choose one of: minimal, low, low_all_baselines, high, very high")
 
         # Map fidelity to settings
         if key == "minimal":
@@ -718,6 +988,10 @@ class Benchmark:
             repeats = 1
             baseline_set = "basic"
             task_cap = None  # Use all available tasks (changed from 10)
+        elif key == "low_all_baselines":
+            repeats = 1
+            baseline_set = "extended"
+            task_cap = None  # all available tasks
         elif key == "high":
             repeats = 5
             baseline_set = "extended"
@@ -745,9 +1019,22 @@ class Benchmark:
         else:
             tasks_use = base_tasks
 
-        return self._run_core(
+        result = self._run_core(
             tasks=tasks_use,
             repeats=repeats,
             baseline_set=baseline_set,
             checkpoint_path=checkpoint_path,
+            fidelity=key,
         )
+        
+        elapsed_time = time.time() - start_time
+        hours = int(elapsed_time // 3600)
+        minutes = int((elapsed_time % 3600) // 60)
+        seconds = elapsed_time % 60
+        
+        if not self.quiet:
+            print(f"\n{'='*80}")
+            print(f"[Benchmark] Completed in: {hours}h {minutes}m {seconds:.2f}s (total: {elapsed_time:.2f}s)")
+            print(f"{'='*80}\n")
+        
+        return result
