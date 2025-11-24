@@ -229,6 +229,79 @@ class SCM:
         self._fixed_endogenous = None
         self._fixed_batch = None
 
+    # ------------------------------------------------------------------
+    # Mechanism management
+    # ------------------------------------------------------------------
+    def set_mechanism(self, node: str, mechanism: BaseMechanism) -> None:
+        """Replace the structural mechanism for a given node.
+
+        Simplified version: always skips validation, never resets cached noise,
+        and always recomputes structure bookkeeping.
+
+        Parameters
+        ----------
+        node : str
+            Name of the node in the DAG whose mechanism should be replaced.
+        mechanism : BaseMechanism
+            New mechanism instance. Its ``node_shape`` defines the node's output shape.
+        """
+        if node not in self.dag.nodes():
+            raise KeyError(f"Node '{node}' not found in DAG.")
+
+        self.mechanisms[node] = mechanism
+        # Always recompute to keep slices consistent if shape changed.
+        self._recompute_structure()
+
+    # Internal: recompute node shapes + slices (extracted from __init__ logic)
+    def _recompute_structure(self) -> None:
+        """Recompute per-node shapes, flattened dims, parent slices, and noise slices.
+
+        Safe to call after a mechanism output shape change.
+        """
+        # Node shapes
+        for v in self._topo:
+            if v in self.mechanisms:
+                self._node_shape[v] = tuple(self.mechanisms[v].node_shape)
+            elif self._is_root[v]:
+                self._node_shape[v] = tuple(self._user_node_shapes.get(v, ()))
+            else:
+                self._node_shape[v] = tuple(self._user_node_shapes.get(v, ()))
+
+        self._flat_dim = {
+            v: (int(torch.tensor(self._node_shape[v]).prod().item()) if self._node_shape[v] else 1)
+            for v in self._topo
+        }
+
+        # Parent feature slices
+        self._parent_slices = {}
+        self._parent_total_dim = {}
+        for v in self._topo:
+            off, slices = 0, []
+            for p in self._parents[v]:
+                d = self._flat_dim[p]
+                slices.append((p, off, off + d))
+                off += d
+            self._parent_slices[v] = slices
+            self._parent_total_dim[v] = off
+
+        # Noise ordering slices (exo)
+        exo_off = 0
+        self._exo_slices = {}
+        for v in self._exo_order:
+            d = 1 if self.use_exogenous_mechanisms else self._flat_dim[v]
+            self._exo_slices[v] = (exo_off, exo_off + d)
+            exo_off += d
+        self._total_exo_dim = exo_off
+
+        # Noise ordering slices (endo)
+        endo_off = 0
+        self._endo_slices = {}
+        for v in self._endo_order:
+            d = self._flat_dim[v]
+            self._endo_slices[v] = (endo_off, endo_off + d)
+            endo_off += d
+        self._total_endo_dim = endo_off
+
     # ----------------------------------------------------------------------
     # Noise sampling
     # ----------------------------------------------------------------------
