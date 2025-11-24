@@ -440,6 +440,8 @@ def main():
             hidden_mult=model_config.get("hidden_mult", 4),
             output_dim=output_dim,  # Use calculated output dimension
             normalize_features=model_config.get("normalize_features", True),  # Apply normalization (default: True)
+            n_sample_attention_sink_rows=model_config.get("n_sample_attention_sink_rows", 0),  # Attention sink rows
+            n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
         )
         # Count parameters
         total_params = sum(p.numel() for p in model.parameters())
@@ -447,6 +449,15 @@ def main():
         print(f"   Total parameters: {total_params:,}")
         print(f"   Trainable parameters: {trainable_params:,}")
         print(f"   SimplePFN model created")
+        
+        # Print attention sink configuration
+        n_sink_rows = model_config.get("n_sample_attention_sink_rows", 0)
+        n_sink_cols = model_config.get("n_feature_attention_sink_cols", 0)
+        print(f"\nATTENTION SINK CONFIGURATION:")
+        print(f"   Sample attention sink rows: {n_sink_rows} {'(disabled)' if n_sink_rows == 0 else '(enabled)'}")
+        print(f"   Feature attention sink cols: {n_sink_cols} {'(disabled)' if n_sink_cols == 0 else '(enabled)'}")
+        if n_sink_rows > 0 or n_sink_cols > 0:
+            print(f"   Purpose: Provide stable attention targets for improved training stability")
         
         # Print normalization configuration
         normalize_enabled = model_config.get("normalize_features", True)

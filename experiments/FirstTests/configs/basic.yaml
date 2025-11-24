@@ -289,6 +289,12 @@ model_config:
     value: 50  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
   normalize_features:  # whether to apply quantile transform + standard normalization internally
     value: true
+  
+  # Attention Sink Configuration
+  n_sample_attention_sink_rows:  # number of fixed random rows to prepend as attention sinks (0 = disabled)
+    value: 5
+  n_feature_attention_sink_cols:  # number of fixed random columns to prepend as attention sinks (0 = disabled)
+    value: 5
 
   # BarDistribution Configuration (used to model the output distribution)
   use_bar_distribution:
@@ -318,7 +324,7 @@ training_config:
   weight_decay: # weight decay for optimizer, might not be needed
     value: 0.00001 
   max_steps:  #critial for determing training duration!
-    value: 10000
+    value: 20000
   max_epochs: # should always be 1
     value: 1
 

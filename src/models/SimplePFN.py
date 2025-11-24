@@ -211,12 +211,16 @@ class SimplePFNRegressor(nn.Module):
         output_dim: int = 1,
         hidden_mult: int = 4,
         normalize_features: bool = True,
+        n_sample_attention_sink_rows: int = 0,
+        n_feature_attention_sink_cols: int = 0,
     ):
         super().__init__()
         self.num_features = num_features
         self.d_model = d_model
         self.output_dim = output_dim
         self.normalize_features = normalize_features
+        self.n_sample_attention_sink_rows = n_sample_attention_sink_rows
+        self.n_feature_attention_sink_cols = n_feature_attention_sink_cols
 
         # === Embedding MLPs ===
         # Row-wise MLPs over feature dimension (R^L -> R^D)
@@ -233,8 +237,9 @@ class SimplePFNRegressor(nn.Module):
         self.label_mask_embed = nn.Parameter(torch.zeros(1, 1, d_model))
         nn.init.normal_(self.label_mask_embed, std=0.02)
 
-        # Feature positional encodings (sinusoidal) for L features + 1 label column
-        feat_pos = self._build_feature_positional(num_features + 1, d_model)  # (L+1, D)
+        # Feature positional encodings (sinusoidal) for L_sink + L features + 1 label column
+        total_feature_tokens = n_feature_attention_sink_cols + num_features + 1
+        feat_pos = self._build_feature_positional(total_feature_tokens, d_model)  # (L_sink+L+1, D)
         self.register_buffer("feature_positional", feat_pos.unsqueeze(0).unsqueeze(0), persistent=False)
 
         # Learnable scaling for row vs cell embeddings (for stability)
@@ -252,6 +257,28 @@ class SimplePFNRegressor(nn.Module):
 
         # Cache for sample-attention masks keyed by (N, M, device)
         self._mask_cache: Dict[Tuple[int, int, torch.device], torch.Tensor] = {}
+        
+        # Attention sink rows: fixed random rows added to each batch
+        # These are initialized once and reused across all batches
+        if n_sample_attention_sink_rows > 0:
+            # Initialize sink rows as learnable parameters
+            self.sink_rows_x = nn.Parameter(torch.randn(1, n_sample_attention_sink_rows, num_features))
+            self.sink_rows_y = nn.Parameter(torch.randn(1, n_sample_attention_sink_rows))
+            nn.init.normal_(self.sink_rows_x, mean=0.0, std=0.02)
+            nn.init.normal_(self.sink_rows_y, mean=0.0, std=0.02)
+        else:
+            self.sink_rows_x = None
+            self.sink_rows_y = None
+        
+        # Attention sink columns: fixed random columns (features) added to each batch
+        # These are initialized once and reused across all batches
+        if n_feature_attention_sink_cols > 0:
+            # Initialize sink columns as learnable parameters
+            # Note: We don't need separate train/test versions since columns are shared
+            self.sink_cols = nn.Parameter(torch.randn(1, 1, n_feature_attention_sink_cols))
+            nn.init.normal_(self.sink_cols, mean=0.0, std=0.02)
+        else:
+            self.sink_cols = None
 
     @staticmethod
     def _build_feature_positional(num_tokens: int, dim: int) -> torch.Tensor:
@@ -265,24 +292,34 @@ class SimplePFNRegressor(nn.Module):
         pe[:, 1::2] = torch.cos(position * div_term)
         return pe  # (num_tokens, dim)
 
-    def _build_sample_attn_mask(self, N: int, M: int, device: torch.device) -> torch.Tensor:
+    def _build_sample_attn_mask(self, N_sink: int, N: int, M: int, device: torch.device) -> torch.Tensor:
         """
-        Build or fetch a Boolean attention mask over S = N + M samples.
+        Build or fetch a Boolean attention mask over S = N_sink + N + M samples.
 
         Masking policy:
-            - Prevent train samples from attending to test samples.
-            - Prevent test samples from attending to each other.
-            - Allow test samples to attend to train samples.
+            - Sink rows can attend to all other sink rows (no masking between sinks)
+            - Train samples can attend to sink rows and other train samples
+            - Train samples cannot attend to test samples
+            - Test samples can attend to sink rows and train samples
+            - Test samples cannot attend to each other
+            
+        Sequence order: [sink_rows | train_rows | test_rows]
         """
-        key = (N, M, device)
+        key = (N_sink, N, M, device)
         if key in self._mask_cache:
             return self._mask_cache[key]
 
-        S = N + M
+        S = N_sink + N + M
         mask = torch.zeros((S, S), dtype=torch.bool, device=device)
+        
+        # Sink rows (indices 0:N_sink) - no masking, they can attend to all sinks
+        # Train rows (indices N_sink:N_sink+N) - cannot attend to test rows
         if M > 0:
-            mask[:N, N:S] = True   # train cannot look at test
-            mask[N:S, N:S] = True  # test cannot look at test
+            mask[N_sink:N_sink+N, N_sink+N:S] = True   # train cannot look at test
+            
+            # Test rows (indices N_sink+N:S) - can attend to sinks and train, but not other test
+            mask[N_sink+N:S, N_sink+N:S] = True  # test cannot look at test
+        
         self._mask_cache[key] = mask
         return mask
 
@@ -429,39 +466,72 @@ class SimplePFNRegressor(nn.Module):
         assert L == self.num_features
         M = X_test.shape[1]
         device = X_train.device
+        
+        # === Prepend attention sink rows if configured ===
+        N_sink = self.n_sample_attention_sink_rows
+        if N_sink > 0 and self.sink_rows_x is not None and self.sink_rows_y is not None:
+            # Expand sink rows across batch dimension
+            sink_x = self.sink_rows_x.expand(B, -1, -1).to(device)  # (B, N_sink, L)
+            sink_y = self.sink_rows_y.expand(B, -1).to(device)      # (B, N_sink)
+            
+            # Prepend sink rows to training data
+            X_train_with_sink = torch.cat([sink_x, X_train], dim=1)  # (B, N_sink+N, L)
+            y_train_with_sink = torch.cat([sink_y, y_train], dim=1)  # (B, N_sink+N)
+        else:
+            X_train_with_sink = X_train
+            y_train_with_sink = y_train
+            N_sink = 0
 
         # === Normalize features (if enabled) ===
         if self.normalize_features:
-            X_train_norm, X_test_norm = self._normalize_features(X_train, X_test)
+            X_train_norm, X_test_norm = self._normalize_features(X_train_with_sink, X_test)
         else:
-            X_train_norm, X_test_norm = X_train, X_test
+            X_train_norm, X_test_norm = X_train_with_sink, X_test
 
         # === Embed features ===
-        feat_train = self._embed_train_features(X_train_norm)       # (B, N, L, D)
+        feat_train = self._embed_train_features(X_train_norm)       # (B, N_sink+N, L, D)
         feat_test  = self._embed_test_features(X_test_norm)         # (B, M, L, D)
-        feat_all   = torch.cat([feat_train, feat_test], dim=1)      # (B, S, L, D), S = N+M
+        feat_all   = torch.cat([feat_train, feat_test], dim=1)      # (B, S, L, D), S = N_sink+N+M
+
+        # === Prepend attention sink columns if configured ===
+        L_sink = self.n_feature_attention_sink_cols
+        if L_sink > 0 and self.sink_cols is not None:
+            # Expand sink columns across batch and sample dimensions
+            # sink_cols shape: (1, 1, L_sink) -> (B, S, L_sink, D)
+            S = feat_all.shape[1]  # Total samples: N_sink + N + M
+            
+            # First embed the sink column values through the cell MLP
+            sink_cols_expanded = self.sink_cols.expand(B, S, -1).to(device)  # (B, S, L_sink)
+            sink_feat = self.cell_mlp(sink_cols_expanded.unsqueeze(-1))      # (B, S, L_sink, D)
+            
+            # Prepend sink features to the feature dimension
+            feat_all = torch.cat([sink_feat, feat_all], dim=2)               # (B, S, L_sink+L, D)
+        else:
+            L_sink = 0
 
         # === Embed labels ===
-        lab_train = self._embed_train_labels(y_train)               # (B, N, D)
+        lab_train = self._embed_train_labels(y_train_with_sink)     # (B, N_sink+N, D)
         lab_test  = self.label_mask_embed.expand(B, M, self.d_model)
         lab_all   = torch.cat([lab_train, lab_test], dim=1)         # (B, S, D)
 
-        # Stack features + label column along feature axis -> (B, S, L+1, D)
-        x = torch.cat([feat_all, lab_all.unsqueeze(2)], dim=2)      # (B, S, L+1, D)
+        # Stack features + label column along feature axis -> (B, S, L_sink+L+1, D)
+        x = torch.cat([feat_all, lab_all.unsqueeze(2)], dim=2)      # (B, S, L_sink+L+1, D)
 
         # Add feature positional encodings (shared over samples)
-        # feature_positional: (1, 1, L+1, D)
+        # feature_positional: (1, 1, L_sink+L+1, D)
         x = x + self.feature_positional
 
         # Build row-wise attention mask and apply blocks
-        samp_mask = self._build_sample_attn_mask(N, M, device)      # (S, S)
+        samp_mask = self._build_sample_attn_mask(N_sink, N, M, device)  # (S, S)
 
         for blk in self.blocks:
             x = blk(x, sample_attn_mask=samp_mask)
 
-        # Readout: take the label column at position L for test rows only
-        label_pos = self.num_features
-        h_test = x[:, N:, label_pos, :]                             # (B, M, D)
+        # Readout: take the label column for test rows only
+        # Label column is now at position L_sink + L (after sink columns and regular features)
+        # Test rows now start at index N_sink+N instead of N
+        label_pos = L_sink + self.num_features
+        h_test = x[:, N_sink+N:, label_pos, :]                      # (B, M, D)
         predictions = self.regression_head(h_test)                  # (B, M, output_dim)
 
         # Backward-compatible squeeze when output_dim == 1
