@@ -42,7 +42,7 @@ if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
 
 # Import required modules
-from priordata_processing.Datasets.ObservationalDataset import ObservationalDataset
+from priordata_processing.Datasets.InterventionalDataset import InterventionalDataset
 
 
 def load_yaml_config(config_path: str):
@@ -206,15 +206,15 @@ class DataloaderDatasetVisualizer:
         if endo_p_zero:
             self.log(f"[INFO] Endogenous noise sparsity (p_zero): {endo_p_zero.get('value', endo_p_zero.get('distribution', 'unknown'))}")
         
-        # Create dataset directly (using new refactored ObservationalDataset)
-        self.log(f"[INFO] Creating dataset with seed {self.seed}...")
-        self.dataset = ObservationalDataset(
+        # Create dataset directly (InterventionalDataset provides observational + interventional splits)
+        self.log(f"[INFO] Creating interventional dataset with seed {self.seed}...")
+        self.dataset = InterventionalDataset(
             scm_config=scm_config,
             preprocessing_config=preprocessing_config,
             dataset_config=dataset_config,
             seed=self.seed
         )
-        self.log(f"[OK] Dataset created with {len(self.dataset)} samples")
+        self.log(f"[OK] Interventional dataset created with {len(self.dataset)} samples")
         
         # Create dataloader (same as simple_run.py)
         # Override batch_size with n_datasets_per_batch if provided
@@ -240,51 +240,211 @@ class DataloaderDatasetVisualizer:
         self.log("[OK] Dataloader created successfully")
         
     def extract_tabular_data_from_batch(self, batch):
-        """
-        Extract individual tabular datasets from a batch.
+        """Extract per-dataset interventional tables from a batch.
+
+        InterventionalDataset returns either:
+        - (X_obs, Y_obs, X_intv, Y_intv) when no intervened feature is tracked
+        - (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv) when intervened feature is tracked
         
-        Args:
-            batch: Batch from dataloader
-            
+        We ignore observational part and build combined interventional feature matrix
+        that appends the intervened feature column as the last column (if present).
+        
         Returns:
-            List of (X_train, y_train, X_test, y_test) tuples for each dataset in the batch
+            List of (X_intv_features_plus_T, Y_intv, intervened_column_index) per dataset.
+            If no intervened feature, intervened_column_index is None.
         """
         datasets = []
-        
-        if isinstance(batch, (list, tuple)) and len(batch) == 4:
-            # Standard format: [X_train, y_train, X_test, y_test]
-            X_train, y_train, X_test, y_test = batch
-            batch_size = X_train.shape[0]
-            
-            self.log("[INFO] Standard format detected (4 elements):")
-            self.log(f"[INFO]   Batch size: {batch_size}")
-            self.log(f"[INFO]   X_train shape: {X_train.shape}")
-            self.log(f"[INFO]   y_train shape: {y_train.shape}")
-            self.log(f"[INFO]   X_test shape: {X_test.shape}")
-            self.log(f"[INFO]   y_test shape: {y_test.shape}")
-            
-            # Extract individual datasets from the batch
+        if isinstance(batch, (list, tuple)) and len(batch) == 6:
+            X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = batch  # tensors with batch dim
+            batch_size = X_intv.shape[0]
+            self.log("[INFO] Interventional batch format detected (6 elements with intervened feature).")
+            self.log(f"[INFO]   X_intv shape: {X_intv.shape}")
+            self.log(f"[INFO]   T_intv shape: {T_intv.shape}")
+            self.log(f"[INFO]   Y_intv shape: {Y_intv.shape}")
             for i in range(batch_size):
-                # Get training data for this dataset
-                X_train_i = X_train[i].detach().cpu().numpy()  # Shape: [n_samples, n_features]
-                y_train_i = y_train[i].detach().cpu().numpy()  # Shape: [n_samples, 1] or [n_samples]
-                X_test_i = X_test[i].detach().cpu().numpy()    # Shape: [n_samples, n_features]
-                y_test_i = y_test[i].detach().cpu().numpy()    # Shape: [n_samples, 1] or [n_samples]
-                
-                # Combine X and y for visualization (squeeze if needed)
-                if len(y_train_i.shape) > 1 and y_train_i.shape[1] == 1:
-                    y_train_i = y_train_i.squeeze(1)
-                if len(y_test_i.shape) > 1 and y_test_i.shape[1] == 1:
-                    y_test_i = y_test_i.squeeze(1)
-                
-                datasets.append((X_train_i, y_train_i, X_test_i, y_test_i))
-                
+                Xi = X_intv[i].detach().cpu().numpy()       # (n_samples, n_features)
+                Ti = T_intv[i].detach().cpu().numpy()       # (n_samples, 1)
+                Yi = Y_intv[i].detach().cpu().numpy()       # (n_samples, 1)
+                if Ti.ndim == 2 and Ti.shape[1] == 1:
+                    pass
+                else:
+                    Ti = Ti.reshape(Ti.shape[0], 1)
+                if Yi.ndim == 2 and Yi.shape[1] == 1:
+                    Yi = Yi.squeeze(1)
+                combined = np.concatenate([Xi, Ti], axis=1)
+                intervened_col_index = combined.shape[1] - 1
+                datasets.append((combined, Yi, intervened_col_index))
+        elif isinstance(batch, (list, tuple)) and len(batch) == 4:
+            X_obs, Y_obs, X_intv, Y_intv = batch  # tensors with batch dim
+            batch_size = X_intv.shape[0]
+            self.log("[INFO] Interventional batch format detected (4 elements without intervened feature).")
+            self.log(f"[INFO]   X_intv shape: {X_intv.shape}")
+            self.log(f"[INFO]   Y_intv shape: {Y_intv.shape}")
+            for i in range(batch_size):
+                Xi = X_intv[i].detach().cpu().numpy()       # (n_samples, n_features)
+                Yi = Y_intv[i].detach().cpu().numpy()       # (n_samples, 1)
+                if Yi.ndim == 2 and Yi.shape[1] == 1:
+                    Yi = Yi.squeeze(1)
+                datasets.append((Xi, Yi, None))  # No intervened column
         else:
-            self.log(f"[WARN] Unexpected batch format: {type(batch)}")
-            if hasattr(batch, '__len__'):
-                self.log(f"[WARN] Batch length: {len(batch)}")
-            
+            self.log(f"[WARN] Unexpected batch format (len={len(batch) if hasattr(batch,'__len__') else 'NA'}). Skipping.")
         return datasets
+
+    def visualize_interventional_dataset(self, X_intv_with_T, Y_intv, intervened_col_idx, dataset_idx, batch_idx, save_dir=None):
+        """Visualize ONLY interventional portion; highlight intervened feature if present.
+
+        Args:
+            X_intv_with_T: ndarray (n_samples, n_features) or (n_samples, n_features+1) if intervened feature included
+            Y_intv: ndarray (n_samples,)
+            intervened_col_idx: int index of intervened feature column (last), or None if no intervened feature
+        """
+        n_samples, n_features_total = X_intv_with_T.shape
+        self.log(f"[INFO] Visualizing interventional dataset {dataset_idx} from batch {batch_idx}")
+        self.log(f"[INFO]   Interventional samples: {n_samples}")
+        if intervened_col_idx is not None:
+            self.log(f"[INFO]   Features (excluding intervened): {n_features_total-1}; intervened feature index (local): {intervened_col_idx}")
+        else:
+            self.log(f"[INFO]   Features: {n_features_total}; no intervened feature tracked")
+
+        # Active features mask (exclude zero-variance); always keep intervened feature if present
+        variances = np.var(X_intv_with_T, axis=0)
+        active_mask = variances > 1e-10
+        if intervened_col_idx is not None:
+            active_mask[intervened_col_idx] = True
+        X_active = X_intv_with_T[:, active_mask]
+        feature_names = [f"X{i}" for i, keep in enumerate(active_mask) if keep]
+        # Mark intervened feature name if present
+        if intervened_col_idx is not None:
+            intervened_name = f"X{intervened_col_idx} (intervened)"
+            feature_names[-1] = intervened_name  # intervened forced as last due to construction
+
+        # Build DataFrame for correlation & plotting
+        df = pd.DataFrame(X_active, columns=feature_names)
+        df['target'] = Y_intv
+
+        # Correlation heatmap including intervened feature
+        fig_hm, ax_hm = plt.subplots(figsize=(0.9*len(feature_names)+3, 6))
+        corr = df.corr()
+        sns.heatmap(corr, annot=True, cmap='coolwarm', center=0, ax=ax_hm, fmt='.2f', cbar_kws={'shrink':0.7})
+        ax_hm.set_title(f'Correlation (Interventional) - Batch {batch_idx} Dataset {dataset_idx}', fontsize=12)
+        if save_dir:
+            hm_path = Path(save_dir)/'interventional_correlation.png'
+            fig_hm.savefig(hm_path, dpi=150, bbox_inches='tight')
+            self.log(f"[OK] Saved interventional correlation heatmap: {hm_path}")
+        plt.close(fig_hm)
+
+        # Scatter plots: each feature vs target; highlight intervened feature
+        fig_sc, axes = plt.subplots(1, X_active.shape[1], figsize=(4*X_active.shape[1], 4))
+        if X_active.shape[1] == 1:
+            axes = [axes]
+        for col_idx, ax in enumerate(axes):
+            col_data = X_active[:, col_idx]
+            name = feature_names[col_idx]
+            ax.scatter(col_data, Y_intv, alpha=0.6, s=25, edgecolors='none',
+                       c='tomato' if name.endswith('(intervened)') else 'steelblue')
+            ax.set_xlabel(name)
+            ax.set_ylabel('target')
+            if name.endswith('(intervened)'):
+                ax.set_title('Intervened Feature vs Target')
+            else:
+                ax.set_title(f'{name} vs target')
+        fig_sc.suptitle(f'Interventional Scatterplots - Batch {batch_idx} Dataset {dataset_idx}', fontsize=14)
+        fig_sc.tight_layout()
+        if save_dir:
+            sc_path = Path(save_dir)/'interventional_scatterplots.png'
+            fig_sc.savefig(sc_path, dpi=150, bbox_inches='tight')
+            self.log(f"[OK] Saved interventional scatterplots: {sc_path}")
+        plt.close(fig_sc)
+
+        # Pairwise scatterplot matrix between all features (including target)
+        if X_active.shape[1] > 1:
+            self.log("[INFO] Creating pairwise scatterplot matrix for all features...")
+            
+            # Limit to first 6 features if too many for readability
+            max_features_for_pairplot = min(X_active.shape[1], 6)
+            selected_feature_names = feature_names[:max_features_for_pairplot]
+            X_selected = X_active[:, :max_features_for_pairplot]
+            
+            self.log(f"[INFO] Plotting pairwise relationships for {max_features_for_pairplot} features (+ target)")
+            
+            # Create pairwise scatterplot matrix: features vs features + features vs target
+            n_plots = max_features_for_pairplot + 1  # +1 for target
+            fig_pair, axes_pair = plt.subplots(n_plots, n_plots, figsize=(3*n_plots, 3*n_plots))
+            
+            # Handle single/small subplot cases
+            if n_plots == 1:
+                axes_pair = [[axes_pair]]
+            elif n_plots == 2:
+                axes_pair = axes_pair.reshape(2, 2)
+            
+            # All data for plotting (features + target)
+            plot_data = np.column_stack([X_selected, Y_intv])
+            plot_labels = selected_feature_names + ['target']
+            
+            # Trim data for plotting (remove 2.5% extremes from each end)
+            plot_data_trimmed = np.copy(plot_data)
+            combined_mask = np.ones(len(plot_data), dtype=bool)
+            
+            for col_idx in range(plot_data.shape[1]):
+                col_data = plot_data[:, col_idx]
+                lower_bound = np.percentile(col_data, 2.5)
+                upper_bound = np.percentile(col_data, 97.5)
+                col_mask = (col_data >= lower_bound) & (col_data <= upper_bound)
+                combined_mask &= col_mask
+            
+            # Apply combined mask to all columns
+            plot_data_trimmed = plot_data[combined_mask]
+            
+            self.log(f"[INFO] Trimmed data for pairwise visualization: {len(plot_data)} -> {len(plot_data_trimmed)} samples")
+            
+            for i in range(n_plots):
+                for j in range(n_plots):
+                    ax = axes_pair[i, j]
+                    
+                    if i == j:
+                        # Diagonal: histograms
+                        ax.hist(plot_data_trimmed[:, i], bins=20, alpha=0.7, 
+                               color='tomato' if plot_labels[i].endswith('(intervened)') else 'steelblue',
+                               edgecolor='black')
+                        ax.set_ylabel('Count')
+                        if i == n_plots - 1:
+                            ax.set_xlabel(plot_labels[i])
+                    else:
+                        # Off-diagonal: scatter plots
+                        color = 'tomato' if (plot_labels[i].endswith('(intervened)') or 
+                                            plot_labels[j].endswith('(intervened)')) else 'steelblue'
+                        ax.scatter(plot_data_trimmed[:, j], plot_data_trimmed[:, i],
+                                  alpha=0.6, s=15, edgecolors='none', c=color)
+                        
+                        if j == 0:
+                            ax.set_ylabel(plot_labels[i])
+                        if i == n_plots - 1:
+                            ax.set_xlabel(plot_labels[j])
+                    
+                    # Remove tick labels for inner plots
+                    if i < n_plots - 1:
+                        ax.set_xticklabels([])
+                    if j > 0:
+                        ax.set_yticklabels([])
+            
+            fig_pair.suptitle(f'Pairwise Feature Relationships (Interventional) - Batch {batch_idx} Dataset {dataset_idx}', 
+                             fontsize=14, y=0.995)
+            fig_pair.tight_layout()
+            
+            if save_dir:
+                pair_path = Path(save_dir)/'interventional_pairwise_scatterplot.png'
+                fig_pair.savefig(pair_path, dpi=150, bbox_inches='tight')
+                self.log(f"[OK] Saved pairwise scatterplot matrix: {pair_path}")
+            plt.close(fig_pair)
+        else:
+            self.log("[INFO] Only 1 active feature, skipping pairwise scatterplot matrix")
+
+        # Simple stats
+        self.log('[INFO] Interventional feature summary:')
+        if intervened_col_idx is not None:
+            interv_values = X_intv_with_T[:, intervened_col_idx]
+            self.log(f"[INFO]   Intervened feature range: [{interv_values.min():.3f}, {interv_values.max():.3f}] std: {interv_values.std():.3f}")
+        self.log(f"[INFO]   Target range: [{Y_intv.min():.3f}, {Y_intv.max():.3f}] std: {Y_intv.std():.3f}")
     
     def visualize_dataset(self, X_train, y_train, X_test, y_test, dataset_idx, batch_idx, save_dir=None):
         """
@@ -1112,21 +1272,18 @@ class DataloaderDatasetVisualizer:
                 self.log(f"[INFO] Visualizing first {n_to_visualize} datasets...")
                 
                 for dataset_idx in range(n_to_visualize):
-                    X_train, y_train, X_test, y_test = datasets[dataset_idx]
-                    
-                    # Create dataset directory
+                    X_intv_with_T, Y_intv, interv_col = datasets[dataset_idx]
                     dataset_dir = batch_dir / f"dataset_{dataset_idx + 1}"
                     dataset_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    # Create dataset log file
                     dataset_log_path = dataset_dir / "analysis.txt"
                     with open(dataset_log_path, 'w', encoding='utf-8') as dataset_log:
                         self.current_output_file = dataset_log
-                        
-                        self.log(f"\n--- Dataset {dataset_idx + 1} ---")
-                        self.visualize_dataset(
-                            X_train, y_train, X_test, y_test,
-                            dataset_idx=dataset_idx + 1, 
+                        self.log(f"\n--- Interventional Dataset {dataset_idx + 1} ---")
+                        self.visualize_interventional_dataset(
+                            X_intv_with_T,
+                            Y_intv,
+                            interv_col,
+                            dataset_idx=dataset_idx + 1,
                             batch_idx=batch_idx + 1,
                             save_dir=dataset_dir
                         )

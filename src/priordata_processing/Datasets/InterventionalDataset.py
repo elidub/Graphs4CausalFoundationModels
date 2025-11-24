@@ -1,0 +1,401 @@
+from __future__ import annotations
+from typing import Dict, Any, Optional, Union
+from torch.utils.data import Dataset
+import torch
+import torch.distributions as dist
+import sys
+import os
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+from priors.causal_prior.noise_distributions.ResamplingDist import ResamplingDist
+
+from priors.causal_prior.scm.SCMSampler import SCMSampler
+from priordata_processing.BasicProcessing import BasicProcessing
+from utils import FixedSampler, TorchDistributionSampler, CategoricalSampler, DiscreteUniformSampler
+
+
+class InterventionalDataset(Dataset):
+    """
+    Dataset for purely observational causal data (no interventions).
+    
+    This class directly accepts SCM, preprocessing, and dataset configurations,
+    internally creating SCMSampler and sampling hyperparameters on-the-fly.
+    
+    Parameters
+    ----------
+    scm_config : Dict[str, Any]
+        Configuration for SCM hyperparameters (same format as SCMSampler).
+        Supports all SCMSampler parameters including:
+        - num_nodes, graph_edge_prob, graph_seed
+        - mechanism parameters (mlp_*, xgb_*)
+        - noise distribution parameters (exo_std_*, endo_std_*)
+        - endo_p_zero: probability of endogenous noise being exactly zero
+    preprocessing_config : Dict[str, Any]
+        Configuration for data preprocessing hyperparameters
+    dataset_config : Dict[str, Any]
+        Configuration for dataset parameters (size, max samples, etc.)
+    seed : Optional[int], default None
+        Random seed for reproducibility
+        
+    Examples
+    --------
+    >>> scm_config = {
+    ...     "num_nodes": {"value": 5},
+    ...     "endo_p_zero": {"value": 0.3},  # 30% of endogenous noise is zero
+    ...     # ... other parameters
+    ... }
+    >>> dataset = ObservationalDataset(scm_config, preprocessing_config, dataset_config)
+    """
+    
+    # Expected preprocessing hyperparameters
+    EXPECTED_PREPROCESSING_HYPERPARAMETERS = {
+        "dropout_prob": float,
+        "shuffle_data": bool,
+        "target_feature": (int, type(None)),
+        "random_seed": (int, type(None)),
+        "negative_one_one_scaling": bool,
+        "remove_outliers": bool,
+        "outlier_quantile": float,
+        "yeo_johnson": bool,
+        "standardize": bool,
+        "y_clip_quantile": (float, type(None)),
+        "eps": float,
+    }
+    
+    # Expected dataset configuration parameters
+    EXPECTED_DATASET_HYPERPARAMETERS = {
+        "dataset_size": int,
+        "max_number_features": int,
+        "max_number_train_samples": int,
+        "max_number_test_samples": int,
+        "number_train_samples_per_dataset": (torch.distributions.Distribution, int),
+        "number_test_samples_per_dataset": (torch.distributions.Distribution, int),
+    }
+    
+    # Distribution factories for building samplers
+    DISTRIBUTION_FACTORIES = {
+        "fixed": lambda params: FixedSampler(params["value"]),
+        "uniform": lambda params: TorchDistributionSampler(
+            dist.Uniform(low=params["low"], high=params["high"])
+        ),
+        "normal": lambda params: TorchDistributionSampler(
+            dist.Normal(loc=params["mean"], scale=params["std"])
+        ),
+        "lognormal": lambda params: TorchDistributionSampler(
+            dist.LogNormal(loc=params["mean"], scale=params["std"])
+        ),
+        "exponential": lambda params: TorchDistributionSampler(
+            dist.Exponential(rate=params["lambd"])
+        ),
+        "gamma": lambda params: TorchDistributionSampler(
+            dist.Gamma(concentration=params["alpha"], rate=params["beta"])
+        ),
+        "beta": lambda params: TorchDistributionSampler(
+            dist.Beta(concentration1=params["alpha"], concentration0=params["beta"])
+        ),
+        "categorical": lambda params: CategoricalSampler(
+            params["choices"], params.get("probabilities")
+        ),
+        "discrete_uniform": lambda params: DiscreteUniformSampler(params["low"], params["high"]),
+    }
+    
+    # PyTorch distribution factories
+    TORCH_DISTRIBUTION_FACTORIES = {
+        "uniform": lambda params: dist.Uniform(low=params["low"], high=params["high"]),
+        "normal": lambda params: dist.Normal(loc=params["mean"], scale=params["std"]),
+        "lognormal": lambda params: dist.LogNormal(loc=params["mean"], scale=params["std"]),
+        "exponential": lambda params: dist.Exponential(rate=params["lambd"]),
+        "gamma": lambda params: dist.Gamma(concentration=params["alpha"], rate=params["beta"]),
+        "beta": lambda params: dist.Beta(concentration1=params["alpha"], concentration0=params["beta"]),
+    }
+
+    def __init__(self, 
+                 scm_config: Dict[str, Any],
+                 preprocessing_config: Dict[str, Any],
+                 dataset_config: Dict[str, Any],
+                 seed: Optional[int] = None):
+        """
+        Initialize the dataset with configuration dictionaries.
+        
+        Args:
+            scm_config: SCM hyperparameter configuration
+            preprocessing_config: Preprocessing hyperparameter configuration
+            dataset_config: Dataset configuration (size, max samples, etc.)
+            seed: Random seed for reproducibility
+        """
+        self.scm_config = scm_config
+        self.preprocessing_config = preprocessing_config
+        self.dataset_config = dataset_config
+        self.seed = seed
+        
+        # Build samplers for preprocessing and dataset parameters
+        self.preprocessing_samplers = self._build_samplers(
+            self.preprocessing_config, 
+            self.EXPECTED_PREPROCESSING_HYPERPARAMETERS, 
+            "preprocessing"
+        )
+        
+        # Filter out 'seed' from dataset_config since we handle it as a constructor parameter
+        dataset_config_filtered = {k: v for k, v in self.dataset_config.items() if k != 'seed'}
+        self.dataset_samplers = self._build_samplers(
+            dataset_config_filtered, 
+            self.EXPECTED_DATASET_HYPERPARAMETERS, 
+            "dataset"
+        )
+        
+        # Create SCMSampler with the SCM config
+        scm_seed = None
+        if seed is not None:
+            scm_seed = (seed * 31 + 17) % (2**32)
+        self.scm_sampler = SCMSampler(scm_config, seed=scm_seed)
+        
+        # Sample dataset parameters once to get the size
+        # (size is the only parameter that should be fixed for the whole dataset)
+        generator = torch.Generator()
+        if seed is not None:
+            generator.manual_seed(seed)
+        
+        dataset_params = self._sample_parameters(
+            self.dataset_samplers,
+            self.EXPECTED_DATASET_HYPERPARAMETERS,
+            "dataset",
+            generator
+        )
+        
+        # Extract only the dataset size (fixed for whole dataset)
+        self.size = dataset_params["dataset_size"]
+        
+        # Store max values as attributes (these should be fixed)
+        self.max_number_features = dataset_params["max_number_features"]
+        self.max_number_train_samples = dataset_params["max_number_train_samples"]
+        self.max_number_test_samples = dataset_params["max_number_test_samples"]
+        
+        # Don't store the distributions - they will be sampled per item in __getitem__
+    
+    def _build_samplers(self, config: Dict[str, Any], expected_params: Dict[str, Any], 
+                       config_name: str) -> Dict[str, Any]:
+        """Build sampler objects from configuration."""
+        samplers = {}
+        
+        for param_name, param_config in config.items():
+            # Handle shorthand fixed value notation
+            if "value" in param_config and "distribution" not in param_config:
+                if param_name in ["number_train_samples_per_dataset", "number_test_samples_per_dataset"]:
+                    sampler = FixedSampler(param_config["value"])
+                else:
+                    sampler = FixedSampler(param_config["value"])
+            elif "distribution" in param_config:
+                dist_type = param_config["distribution"]
+                
+                if param_name in ["number_train_samples_per_dataset", "number_test_samples_per_dataset"]:
+                    # Create PyTorch distribution directly
+                    if dist_type not in self.TORCH_DISTRIBUTION_FACTORIES:
+                        raise ValueError(f"Unknown distribution type for {param_name}: {dist_type}")
+                    
+                    dist_params = param_config.get("distribution_parameters", {})
+                    try:
+                        sampler = self.TORCH_DISTRIBUTION_FACTORIES[dist_type](dist_params)
+                    except Exception as e:
+                        raise ValueError(f"Error creating distribution for {config_name}.{param_name}: {e}")
+                else:
+                    # Regular parameter: create sampler
+                    if dist_type not in self.DISTRIBUTION_FACTORIES:
+                        raise ValueError(f"Unknown distribution type: {dist_type}")
+                    
+                    dist_params = param_config.get("distribution_parameters", {})
+                    if dist_type == "fixed":
+                        if "value" not in param_config:
+                            raise ValueError(f"Fixed distribution for {param_name} requires 'value' key")
+                        dist_params = {"value": param_config["value"]}
+                    
+                    try:
+                        sampler = self.DISTRIBUTION_FACTORIES[dist_type](dist_params)
+                    except Exception as e:
+                        raise ValueError(f"Error creating sampler for {config_name}.{param_name}: {e}")
+            else:
+                raise ValueError(f"Configuration for {config_name}.{param_name} must specify 'distribution' or 'value'")
+            
+            samplers[param_name] = sampler
+        
+        return samplers
+    
+    def _sample_parameters(self, samplers: Dict[str, Any], expected_types: Dict[str, Any],
+                          config_name: str, generator: torch.Generator) -> Dict[str, Any]:
+        """Sample parameters from samplers with type validation."""
+        sampled_params = {}
+        
+        for param_name, sampler in samplers.items():
+            if param_name in ["number_train_samples_per_dataset", "number_test_samples_per_dataset"]:
+                # Special case: handle FixedSampler, PyTorch distribution, or int directly
+                if isinstance(sampler, FixedSampler):
+                    value = sampler.sample(generator)
+                elif isinstance(sampler, torch.distributions.Distribution):
+                    value = sampler
+                elif isinstance(sampler, int):
+                    value = sampler
+                else:
+                    raise ValueError(f"Parameter {config_name}.{param_name} has invalid type")
+            else:
+                value = sampler.sample(generator)
+            
+            # Type validation
+            expected_type = expected_types[param_name]
+            if not isinstance(value, expected_type):
+                if param_name in ["number_train_samples_per_dataset", "number_test_samples_per_dataset"]:
+                    if isinstance(expected_type, tuple):
+                        if not isinstance(value, expected_type):
+                            raise ValueError(f"Parameter {config_name}.{param_name} has invalid type")
+                    elif isinstance(value, torch.distributions.Distribution):
+                        pass  # This is correct
+                    else:
+                        raise ValueError(f"Parameter {config_name}.{param_name} has invalid type")
+                elif isinstance(expected_type, type) and expected_type is int and isinstance(value, float):
+                    value = int(value)
+                elif isinstance(expected_type, type) and expected_type is float and isinstance(value, int):
+                    value = float(value)
+                elif isinstance(expected_type, type) and expected_type is tuple and isinstance(value, list):
+                    value = tuple(value)
+                elif isinstance(expected_type, tuple) and type(None) in expected_type:
+                    allowed_types = [t for t in expected_type if t is not type(None)]
+                    if value is not None and not isinstance(value, tuple(allowed_types)):
+                        raise ValueError(f"Parameter {config_name}.{param_name} has invalid type")
+                else:
+                    raise ValueError(f"Parameter {config_name}.{param_name} has invalid type")
+            
+            sampled_params[param_name] = value
+        
+        return sampled_params
+
+    def __len__(self):
+        return self.size
+    
+    def __getitem__(self, idx):
+        if idx < 0 or idx >= self.size:
+            raise IndexError(f"Index {idx} out of range for dataset of size {self.size}")
+        
+        seed = self.seed + idx if self.seed is not None else idx
+        torch.manual_seed(seed)
+        
+        # Create a generator for this specific item
+        item_generator = torch.Generator()
+        item_generator.manual_seed(seed)
+        
+        # Sample preprocessing parameters for this item
+        preprocessing_params = self._sample_parameters(
+            self.preprocessing_samplers,
+            self.EXPECTED_PREPROCESSING_HYPERPARAMETERS,
+            "preprocessing",
+            item_generator
+        )
+        
+        # Sample dataset parameters for this item (except size and max values which are fixed)
+        dataset_params = self._sample_parameters(
+            self.dataset_samplers,
+            self.EXPECTED_DATASET_HYPERPARAMETERS,
+            "dataset",
+            item_generator
+        )
+        
+        # Extract sample counts from dataset params
+        train_dist = dataset_params["number_train_samples_per_dataset"]
+        test_dist = dataset_params["number_test_samples_per_dataset"]
+        
+        # Sample train and test sample counts
+        if isinstance(train_dist, torch.distributions.Distribution):
+            number_train_samples = int(train_dist.sample().item())
+        elif isinstance(train_dist, int):
+            number_train_samples = train_dist
+        else:
+            number_train_samples = int(train_dist.sample(item_generator) if hasattr(train_dist, 'sample') else train_dist)
+        
+        if isinstance(test_dist, torch.distributions.Distribution):
+            number_test_samples = int(test_dist.sample().item())
+        elif isinstance(test_dist, int):
+            number_test_samples = test_dist
+        else:
+            number_test_samples = int(test_dist.sample(item_generator) if hasattr(test_dist, 'sample') else test_dist)
+        
+        # Sample an SCM
+        scm = self.scm_sampler.sample(seed=seed)
+        
+        # sample the observational data first
+        
+        scm.sample_exogenous(num_samples=number_train_samples)
+        scm.sample_endogenous(num_samples=number_train_samples)
+
+        obs0_raw = scm.propagate(num_samples=number_train_samples)
+        # Reshape from (N,) to (N,1) for BasicProcessing compatibility
+        obs0 = {k: v.reshape(-1, 1) if v.dim() == 1 else v for k, v in obs0_raw.items()}
+
+        # now, do interventioanal sampling
+        # for interventional sampling, first determine intervention node
+
+        intervention_node = torch.randint(0, len(scm.dag.nodes()), (1,)).item() # select random node for intervention
+
+        scm.sample_exogenous(num_samples=number_test_samples) #sample observational data again. 
+        scm.sample_endogenous(num_samples=number_test_samples) #sample observational data again. 
+
+        obs1_raw = scm.propagate(num_samples=number_test_samples)  # fresh observational batch (test-size)
+
+        # Collect observational samples for the chosen intervention node (marginal)
+        intervention_samples = obs1_raw[intervention_node]
+
+        # Resampling distribution over observational marginal (without replacement)
+        interventional_dist = ResamplingDist(intervention_samples)
+
+
+        scm.intervene(node = intervention_node) # intervene on the chosen node
+
+        # Replace the noise distribution for the intervened node with its observational marginal
+        if intervention_node in scm.dag.endogenous_variables():
+            scm.endogenous_noise[intervention_node] = interventional_dist
+        if intervention_node in scm.dag.exogenous_variables():
+            scm.exogenous_noise[intervention_node] = interventional_dist
+
+        # Sample new noise for interventional scenario
+        scm.sample_exogenous(num_samples=number_test_samples)
+        scm.sample_endogenous(num_samples=number_test_samples)
+
+        interv1_raw = scm.propagate(num_samples=number_test_samples)  # interventional data (post-intervention)
+        # Reshape from (N,) to (N,1) for BasicProcessing compatibility
+        interv1 = {k: v.reshape(-1, 1) if v.dim() == 1 else v for k, v in interv1_raw.items()}
+        
+        # Create BasicProcessing instance with sampled preprocessing parameters
+        processor = BasicProcessing(
+            n_features=self.max_number_features,
+            max_n_features=self.max_number_features,
+            n_train_samples=number_train_samples,
+            max_n_train_samples=self.max_number_train_samples,
+            n_test_samples=number_test_samples,
+            max_n_test_samples=self.max_number_test_samples,
+            dropout_prob=preprocessing_params["dropout_prob"],
+            target_feature=preprocessing_params["target_feature"],
+            intervened_feature=intervention_node,
+            random_seed=preprocessing_params["random_seed"],
+            negative_one_one_scaling=preprocessing_params["negative_one_one_scaling"],
+            standardize=preprocessing_params["standardize"],
+            yeo_johnson=preprocessing_params["yeo_johnson"],
+            remove_outliers=preprocessing_params["remove_outliers"],
+            outlier_quantile=preprocessing_params["outlier_quantile"],
+            shuffle_samples=preprocessing_params["shuffle_data"],
+            shuffle_features=False,  # Default
+            y_clip_quantile=preprocessing_params.get("y_clip_quantile"),
+            eps=preprocessing_params.get("eps", 1e-8),
+            device=None,  # Default
+            dtype=None,  # Default
+        )
+        
+        # Process observational (train) and interventional (test) splits separately
+        processed = processor.process_from_splits(
+            train_dataset=obs0,
+            test_dataset=interv1,
+            mode='fast'
+        )
+        if len(processed) == 4:
+            X_obs, Y_obs, X_intv, Y_intv = processed
+            return X_obs, Y_obs, X_intv, Y_intv
+        else:
+            X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = processed
+            return X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv
