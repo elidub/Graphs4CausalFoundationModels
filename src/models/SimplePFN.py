@@ -474,9 +474,13 @@ class SimplePFNRegressor(nn.Module):
             sink_x = self.sink_rows_x.expand(B, -1, -1).to(device)  # (B, N_sink, L)
             sink_y = self.sink_rows_y.expand(B, -1).to(device)      # (B, N_sink)
             
+            # Match y_train dimensions (could be (B, N) or (B, N, 1))
+            if y_train.dim() == 3:
+                sink_y = sink_y.unsqueeze(-1)  # (B, N_sink, 1) to match y_train
+            
             # Prepend sink rows to training data
             X_train_with_sink = torch.cat([sink_x, X_train], dim=1)  # (B, N_sink+N, L)
-            y_train_with_sink = torch.cat([sink_y, y_train], dim=1)  # (B, N_sink+N)
+            y_train_with_sink = torch.cat([sink_y, y_train], dim=1)  # (B, N_sink+N) or (B, N_sink+N, 1)
         else:
             X_train_with_sink = X_train
             y_train_with_sink = y_train
