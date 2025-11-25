@@ -166,10 +166,10 @@ def main(args):
 if __name__ == "__main__":
     # Configuration (ALL_CAPS) - edit these constants instead of using CLI args
     TASKS = ""  # comma-separated task ids, e.g. "361072,361073" or empty to use defaults
-    MAX_TASKS = 2
+    MAX_TASKS = 30
     DATA_DIR = "data_cache"
     CONFIG = str(repo_root / "experiments/FirstTests/configs/basic.yaml")
-    CHECKPOINT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16624966.0/final_model_with_bardist.pt"  # Leave empty to auto-detect or skip PFN
+    CHECKPOINT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16631563.0/step_46000.pt"  # Leave empty to auto-detect or skip PFN
     DEVICE = "cpu"
     OUTPUT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/src/benchmarking/results/benchmark_results.csv"  # Process ID will be automatically added: benchmark_results_pid12345.csv
     NO_TARGET_ENCODING = True
@@ -182,12 +182,12 @@ if __name__ == "__main__":
     N_FEATURES = 50
     MAX_N_FEATURES = 50
     N_TRAIN = 1000
-    MAX_N_TRAIN = 500
-    N_TEST = 500
-    MAX_N_TEST = 500
+    MAX_N_TRAIN = 10000
+    N_TEST = 10000
+    MAX_N_TEST = 10000
     PREFER_NUMERIC = False
     ONLY_NUMERIC = False
-    FIDELITY = "low"  # Options: "minimal", "low", "high", "very_high"
+    FIDELITY = "high"  # Options: "minimal", "low", "high", "very_high"
     BOOTSTRAP_SAMPLES = 10000
     
     # SimplePFN Ensemble parameters
