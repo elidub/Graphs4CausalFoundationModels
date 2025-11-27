@@ -271,11 +271,37 @@ class InterventionalDataset(Dataset):
     def __len__(self):
         return self.size
     
+    def _contains_nan(self, *tensors):
+        """Check if any of the provided tensors contains NaN values."""
+        for tensor in tensors:
+            if tensor is not None and torch.isnan(tensor).any():
+                return True
+        return False
+    
     def __getitem__(self, idx):
+        """Get item with retry logic if NaN values are detected."""
         if idx < 0 or idx >= self.size:
             raise IndexError(f"Index {idx} out of range for dataset of size {self.size}")
         
+        max_retries = 10
+        for attempt in range(max_retries):
+            result = self._get_item_internal(idx, attempt)
+            
+            # Check if result contains NaN
+            if not self._contains_nan(*result):
+                return result
+            
+            # NaN detected, print warning and retry
+            print(f"[InterventionalDataset] Warning: NaN detected in sample {idx} (attempt {attempt + 1}/{max_retries}). Resampling...")
+        
+        # If we've exhausted retries, raise an error
+        raise RuntimeError(f"Failed to generate valid sample for index {idx} after {max_retries} attempts (NaN persists)")
+    
+    def _get_item_internal(self, idx, attempt=0):
+        """Internal method to generate a single item."""
+        # Use attempt number to vary the seed for retries
         seed = self.seed + idx if self.seed is not None else idx
+        seed = seed + attempt * 1000000  # Offset seed by attempt number
         torch.manual_seed(seed)
         
         # Create a generator for this specific item
