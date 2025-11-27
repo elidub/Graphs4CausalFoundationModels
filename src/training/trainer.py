@@ -1004,6 +1004,83 @@ class Trainer:
                 else:
                     predictions = output
 
+                # Check for NaN predictions and raise error with full input details
+                if torch.isnan(predictions).any():
+                    print("\n" + "="*80)
+                    print("ERROR: Model produced NaN predictions!")
+                    print("="*80)
+                    print(f"\nPredictions shape: {predictions.shape}")
+                    print(f"Number of NaN values: {torch.isnan(predictions).sum().item()}")
+                    print(f"\nPredictions:\n{predictions}")
+                    
+                    if len(batch_data) == 6:
+                        print("\n" + "-"*80)
+                        print("INTERVENTIONAL FORMAT INPUT TENSORS:")
+                        print("-"*80)
+                        
+                        # X_obs: compute variance per batch element per feature
+                        print(f"\nX_obs (observational features) shape: {X_obs.shape}")
+                        print(f"X_obs:\n{X_obs}")
+                        print(f"\nX_obs variance per batch element per feature:")
+                        for b in range(X_obs.shape[0]):
+                            var_per_feature = torch.var(X_obs[b], dim=0)  # Variance across samples for each feature
+                            print(f"  Batch element {b}: {var_per_feature}")
+                        
+                        # T_obs: compute variance per batch element
+                        print(f"\nT_obs (observational intervention targets) shape: {T_obs.shape}")
+                        print(f"T_obs:\n{T_obs}")
+                        print(f"\nT_obs variance per batch element:")
+                        for b in range(T_obs.shape[0]):
+                            var = torch.var(T_obs[b])
+                            print(f"  Batch element {b}: {var.item()}")
+                        
+                        # Y_obs: compute variance per batch element
+                        print(f"\nY_obs (observational targets) shape: {Y_obs.shape}")
+                        print(f"Y_obs:\n{Y_obs}")
+                        print(f"\nY_obs variance per batch element:")
+                        for b in range(Y_obs.shape[0]):
+                            var = torch.var(Y_obs[b])
+                            print(f"  Batch element {b}: {var.item()}")
+                        
+                        # X_intv: compute variance per batch element per feature
+                        print(f"\nX_intv (intervention features) shape: {X_intv.shape}")
+                        print(f"X_intv:\n{X_intv}")
+                        print(f"\nX_intv variance per batch element per feature:")
+                        for b in range(X_intv.shape[0]):
+                            var_per_feature = torch.var(X_intv[b], dim=0)  # Variance across samples for each feature
+                            print(f"  Batch element {b}: {var_per_feature}")
+                        
+                        # T_intv: compute variance per batch element
+                        print(f"\nT_intv (intervention targets) shape: {T_intv.shape}")
+                        print(f"T_intv:\n{T_intv}")
+                        print(f"\nT_intv variance per batch element:")
+                        for b in range(T_intv.shape[0]):
+                            var = torch.var(T_intv[b])
+                            print(f"  Batch element {b}: {var.item()}")
+                        
+                        # Y_intv: compute variance per batch element
+                        print(f"\nY_intv (ground truth) shape: {Y_intv.shape}")
+                        print(f"Y_intv:\n{Y_intv}")
+                        print(f"\nY_intv variance per batch element:")
+                        for b in range(Y_intv.shape[0]):
+                            var = torch.var(Y_intv[b])
+                            print(f"  Batch element {b}: {var.item()}")
+                    else:
+                        print("\n" + "-"*80)
+                        print("OBSERVATIONAL FORMAT INPUT TENSORS:")
+                        print("-"*80)
+                        print(f"\nX_train shape: {X_train.shape}")
+                        print(f"X_train:\n{X_train}")
+                        print(f"\ny_train shape: {y_train.shape}")
+                        print(f"y_train:\n{y_train}")
+                        print(f"\nX_test shape: {X_test.shape}")
+                        print(f"X_test:\n{X_test}")
+                        print(f"\ny_test shape: {y_test.shape}")
+                        print(f"y_test:\n{y_test}")
+                    
+                    print("\n" + "="*80)
+                    raise RuntimeError("Model produced NaN predictions. See full tensor dump above.")
+
                 if self.bar_distribution is not None:
                     if len(predictions.shape) == 2:
                         raise ValueError(f"BarDistribution requires high-dimensional predictions, got shape {predictions.shape}")

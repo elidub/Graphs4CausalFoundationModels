@@ -41,10 +41,10 @@ scm_config:
       #- 0.1
       #- 0.01
       #- 0.001
-      1.0
-      0.0
-      0.0
-      0.0
+      #- 1.0
+      #- 0.0
+      #- 0.0
+      #- 0.0
 
 
   mechanism_seed:
@@ -291,7 +291,7 @@ model_config:
   num_features:
     value: 50  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
   normalize_features:  # whether to apply quantile transform + standard normalization internally
-    value: true
+    value: false
   
   # Attention Sink Configuration
   n_sample_attention_sink_rows:  # number of fixed random rows to prepend as attention sinks (0 = disabled)
