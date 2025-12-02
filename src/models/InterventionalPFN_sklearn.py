@@ -75,46 +75,82 @@ class InterventionalPFNSklearn(SimplePFNSklearn):
         This overrides SimplePFNSklearn.load() to instantiate InterventionalPFN
         instead of SimplePFNRegressor.
         """
+        # Always print debug info if verbose
+        print(f"[InterventionalPFNSklearn] Loading with config_path: {self.config_path}")
+        print(f"[InterventionalPFNSklearn] verbose={self.verbose}")
+        
         # Call parent's config loading logic
         if self.config_path:
             import yaml
             with open(self.config_path, "r") as f:
                 cfg = yaml.safe_load(f)
             
-            # Extract model kwargs from config
-            self.model_kwargs = {}
-            if "model" in cfg:
-                model_cfg = cfg["model"]
-                self.model_kwargs = {
-                    "num_features": model_cfg.get("num_features"),
-                    "d_model": model_cfg.get("d_model", 256),
-                    "depth": model_cfg.get("depth", 8),
-                    "heads_feat": model_cfg.get("heads_feat", 8),
-                    "heads_samp": model_cfg.get("heads_samp", 8),
-                    "dropout": model_cfg.get("dropout", 0.0),
-                    "output_dim": model_cfg.get("output_dim", 1),
-                    "hidden_mult": model_cfg.get("hidden_mult", 4),
-                    "normalize_features": model_cfg.get("normalize_features", True),
-                }
+            print(f"[InterventionalPFNSklearn] Config loaded. Top-level keys: {list(cfg.keys())}")
             
-            # Check for BarDistribution in config
-            if "bar_distribution" in cfg:
-                self.use_bar_distribution = True
-                from src.Losses.BarDistribution import BarDistribution
-                bar_cfg = cfg["bar_distribution"]
-                self.bar_distribution = BarDistribution(
-                    num_bars=bar_cfg.get("num_bars", 50),
-                    min_width=bar_cfg.get("min_width", 0.01),
-                    scale_floor=bar_cfg.get("scale_floor", 0.1),
-                    max_fit_items=bar_cfg.get("max_fit_items", 10000),
-                    log_prob_clip_min=bar_cfg.get("log_prob_clip_min", -10.0),
-                    log_prob_clip_max=bar_cfg.get("log_prob_clip_max", 10.0),
-                )
-                # Update output_dim to match bar distribution parameters
-                self.model_kwargs["output_dim"] = self.bar_distribution.num_params()
+            # Extract model kwargs from config
+            # Note: Config uses "model_config" and each parameter has a nested "value" key
+            self.model_kwargs = {}
+            if "model_config" in cfg:
+                model_cfg = cfg["model_config"]
+                
+                # Helper function to get value from config (handles both direct values and nested "value" keys)
+                def get_config_value(config_dict, key, default):
+                    if key not in config_dict:
+                        return default
+                    val = config_dict[key]
+                    # If it's a dict with "value" key, extract the value
+                    if isinstance(val, dict) and "value" in val:
+                        return val["value"]
+                    return val
+                
+                self.model_kwargs = {
+                    "num_features": get_config_value(model_cfg, "num_features", None),
+                    "d_model": get_config_value(model_cfg, "d_model", 256),
+                    "depth": get_config_value(model_cfg, "depth", 8),
+                    "heads_feat": get_config_value(model_cfg, "heads_feat", 8),
+                    "heads_samp": get_config_value(model_cfg, "heads_samp", 8),
+                    "dropout": get_config_value(model_cfg, "dropout", 0.0),
+                    "output_dim": get_config_value(model_cfg, "output_dim", 1),
+                    "hidden_mult": get_config_value(model_cfg, "hidden_mult", 4),
+                    "normalize_features": get_config_value(model_cfg, "normalize_features", True),
+                }
+                
                 if self.verbose:
-                    print(f"[InterventionalPFNSklearn] BarDistribution enabled with {self.bar_distribution.num_bars} bars")
-                    print(f"[InterventionalPFNSklearn] Model output_dim set to {self.model_kwargs['output_dim']}")
+                    print(f"[InterventionalPFNSklearn] Loaded model_kwargs from config: {self.model_kwargs}")
+                
+                # Check for BarDistribution in config
+                use_bar = get_config_value(model_cfg, "use_bar_distribution", False)
+                if use_bar:
+                    self.use_bar_distribution = True
+                    from src.Losses.BarDistribution import BarDistribution
+                    self.bar_distribution = BarDistribution(
+                        num_bars=get_config_value(model_cfg, "num_bars", 50),
+                        min_width=float(get_config_value(model_cfg, "min_width", 0.01)),
+                        scale_floor=float(get_config_value(model_cfg, "scale_floor", 0.1)),
+                        max_fit_items=get_config_value(model_cfg, "max_fit_items", 10000),
+                        log_prob_clip_min=get_config_value(model_cfg, "log_prob_clip_min", -10.0),
+                        log_prob_clip_max=get_config_value(model_cfg, "log_prob_clip_max", 10.0),
+                    )
+                    # Update output_dim to match bar distribution parameters
+                    self.model_kwargs["output_dim"] = self.bar_distribution.num_params
+                    if self.verbose:
+                        print(f"[InterventionalPFNSklearn] BarDistribution enabled with {self.bar_distribution.num_bars} bars")
+                        print(f"[InterventionalPFNSklearn] Model output_dim set to {self.model_kwargs['output_dim']}")
+            else:
+                if self.verbose:
+                    print(f"[InterventionalPFNSklearn] WARNING: 'model_config' not found in config file!")
+                # Set defaults if model_config is missing
+                self.model_kwargs = {
+                    "num_features": None,
+                    "d_model": 256,
+                    "depth": 8,
+                    "heads_feat": 8,
+                    "heads_samp": 8,
+                    "dropout": 0.0,
+                    "output_dim": 1,
+                    "hidden_mult": 4,
+                    "normalize_features": True,
+                }
         else:
             self.model_kwargs = {
                 "num_features": override_kwargs.get("num_features") if override_kwargs else None,

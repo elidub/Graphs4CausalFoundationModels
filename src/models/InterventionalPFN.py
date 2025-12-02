@@ -405,7 +405,7 @@ class InterventionalPFN(nn.Module):
                 - "predictions": (B, M) if output_dim == 1, else (B, M, output_dim)
         """
         B, N, L = X_obs.shape
-        assert L == self.num_features
+        assert L == self.num_features, f"Expected {self.num_features} features, got {L}"
         M = X_intv.shape[1]
         device = X_obs.device
 
