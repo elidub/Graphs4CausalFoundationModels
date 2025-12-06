@@ -333,6 +333,7 @@ class BarDistribution(PosteriorPredictive):
         y:    (B, M)
         return: (B,)
         """
+        # Numerically stable: operate purely in log-space
         self._check_ready()
         B, M = y.shape
         K = self.num_bars
@@ -341,10 +342,71 @@ class BarDistribution(PosteriorPredictive):
         device, dtype = self._adopt_pred_ctx(pred)
         y = y.to(device=device, dtype=dtype)
 
-        pdf = self._pdf_from_pred(pred, y)  # (B,M), safely clipped inside
-        logpdf = self._safe_log(pdf)
-        logpdf = torch.clamp(logpdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max).to(dtype=logpdf.dtype)
+        logpdf = self._logpdf_from_pred(pred, y)  # (B,M), fully log-space
+        logpdf = torch.clamp(logpdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
         return logpdf.mean(dim=1)
+
+    def _logpdf_from_pred(self, pred: Tensor, y: Tensor) -> Tensor:
+        """
+        Compute log(pdf(y)) directly without leaving log space.
+        Returns tensor of shape (B, M).
+        """
+        B, M = y.shape
+        device, dtype = self._adopt_pred_ctx(pred)
+
+        w_logits, sL_raw, sR_raw = self._unpack(pred)
+        # Log-probabilities for mixture components
+        log_probs = torch.log_softmax(w_logits, dim=-1)  # (B,M,K+2)
+        log_pL = log_probs[..., 0]
+        log_pBars = log_probs[..., 1:-1]                # (B,M,K)
+        log_pR = log_probs[..., -1]
+
+        # Stable positive tail scales
+        sL = self._safe_scale(self.base_s_left.to(device, dtype), sL_raw, device, dtype)
+        sR = self._safe_scale(self.base_s_right.to(device, dtype), sR_raw, device, dtype)
+
+        edges = self.edges.to(device=device, dtype=dtype)
+        widths = self.widths.to(device=device, dtype=dtype)
+
+        # Regions
+        left_mask = y < edges[0]
+        right_mask = y >= edges[-1]
+        mid_mask = ~(left_mask | right_mask)
+
+        # Prepare output
+        logpdf = torch.empty(B, M, device=device, dtype=dtype)
+
+        # Left half-Gaussian: log f(y) = log(2) + log pL + log_norm_const - log sL - 0.5 * z^2
+        if left_mask.any():
+            yL = y[left_mask]
+            sL_sel = sL[left_mask]
+            z = (yL - edges[0]) / sL_sel  # negative values
+            log_gauss = self._log_norm_const - torch.log(sL_sel) - 0.5 * z * z
+            log_pdf_left = torch.log(torch.tensor(2.0, device=device, dtype=dtype)) + log_pL[left_mask] + log_gauss
+            logpdf[left_mask] = torch.clamp(log_pdf_left, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
+
+        # Right half-Gaussian
+        if right_mask.any():
+            yR = y[right_mask]
+            sR_sel = sR[right_mask]
+            z = (yR - edges[-1]) / sR_sel  # nonnegative
+            log_gauss = self._log_norm_const - torch.log(sR_sel) - 0.5 * z * z
+            log_pdf_right = torch.log(torch.tensor(2.0, device=device, dtype=dtype)) + log_pR[right_mask] + log_gauss
+            logpdf[right_mask] = torch.clamp(log_pdf_right, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
+
+        # Bars (constant density within bar): log f(y) = log p_k - log width_k for the active bar
+        if mid_mask.any():
+            internal = edges[1:-1]  # (K-1,)
+            k = torch.bucketize(y[mid_mask], internal, right=False)  # (num_mid,), values in [0, K-1]
+            widths_k = widths[k]  # (num_mid,)
+            log_pBars_all = log_pBars[mid_mask]  # (num_mid, K)
+            # Gather log p_k for active bar
+            log_pk = log_pBars_all.gather(dim=-1, index=k.view(-1, 1)).squeeze(-1)
+            log_dens_mid = log_pk - torch.log(widths_k)
+            logpdf[mid_mask] = torch.clamp(log_dens_mid, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
+
+        # Final clamp for safety
+        return torch.clamp(logpdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
 
     def mode(self, pred: Tensor) -> Tensor:
         """
