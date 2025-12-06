@@ -268,7 +268,7 @@ preprocessing_config:
   standardize:
     value: true
   remove_outliers:
-    value: true
+    value: false
   outlier_quantile:
     value: 0.99
   yeo_johnson:
