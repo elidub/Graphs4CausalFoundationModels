@@ -572,6 +572,204 @@ class InterventionalPFNSklearn(SimplePFNSklearn):
             all_preds.append(chunk_pred)
         
         return np.concatenate(all_preds, axis=0)
+    
+    def predict_entropy(
+        self,
+        X_obs: Any,
+        T_obs: Any,
+        Y_obs: Any,
+        X_intv: Any,
+        T_intv: Any,
+        num_samples: int = 1000,
+    ) -> np.ndarray:
+        """
+        Compute the entropy of the predictive distribution for each test sample.
+        
+        Entropy is estimated using Monte Carlo sampling from the BarDistribution:
+        H[p(y)] ≈ -E[log p(y)] where y ~ p(y)
+        
+        Args:
+            X_obs: Observational features (N, L)
+            T_obs: Observational intervened feature (N,) or (N, 1)
+            Y_obs: Observational targets (N,) or (N, 1)
+            X_intv: Interventional features (M, L)
+            T_intv: Interventional intervened feature (M,) or (M, 1)
+            num_samples: Number of MC samples for entropy estimation (default: 1000)
+            
+        Returns:
+            Entropy values of shape (M,)
+            
+        Raises:
+            ValueError: If BarDistribution is not enabled
+        """
+        if not self.use_bar_distribution:
+            raise ValueError("[InterventionalPFNSklearn] predict_entropy() requires BarDistribution")
+        
+        if self.model is None:
+            raise RuntimeError("[InterventionalPFNSklearn] Model not loaded. Call load() first.")
+        
+        # Convert to numpy and ensure correct shapes
+        if hasattr(X_obs, "values"):
+            X_obs = X_obs.values
+        if hasattr(T_obs, "values"):
+            T_obs = T_obs.values
+        if hasattr(Y_obs, "values"):
+            Y_obs = Y_obs.values
+        if hasattr(X_intv, "values"):
+            X_intv = X_intv.values
+        if hasattr(T_intv, "values"):
+            T_intv = T_intv.values
+        
+        X_obs = np.asarray(X_obs, dtype=np.float32)
+        T_obs = np.asarray(T_obs, dtype=np.float32)
+        Y_obs = np.asarray(Y_obs, dtype=np.float32)
+        X_intv = np.asarray(X_intv, dtype=np.float32)
+        T_intv = np.asarray(T_intv, dtype=np.float32)
+        
+        # Ensure T arrays are 2D
+        if T_obs.ndim == 1:
+            T_obs = T_obs.reshape(-1, 1)
+        if T_intv.ndim == 1:
+            T_intv = T_intv.reshape(-1, 1)
+        if Y_obs.ndim == 2 and Y_obs.shape[1] == 1:
+            Y_obs = Y_obs.squeeze(1)
+        
+        # Convert to torch tensors
+        X_obs_t = torch.from_numpy(X_obs).unsqueeze(0).to(self.device)  # (1, N, L)
+        T_obs_t = torch.from_numpy(T_obs).unsqueeze(0).to(self.device)  # (1, N, 1)
+        Y_obs_t = torch.from_numpy(Y_obs).unsqueeze(0).to(self.device)  # (1, N)
+        X_intv_t = torch.from_numpy(X_intv).unsqueeze(0).to(self.device)  # (1, M, L)
+        T_intv_t = torch.from_numpy(T_intv).unsqueeze(0).to(self.device)  # (1, M, 1)
+        
+        # Forward pass to get distribution parameters
+        self.model.eval()
+        with torch.no_grad():
+            out = self.model(X_obs_t, T_obs_t, Y_obs_t, X_intv_t, T_intv_t)
+            raw_preds = out["predictions"]  # (1, M, output_dim)
+            
+            # Sample from the distribution
+            samples = self.bar_distribution.sample(raw_preds, num_samples=num_samples)  # (1, num_samples, M)
+            
+            # Compute log probabilities of the samples
+            # Need to reshape for average_log_prob: expects (B, M) for y
+            M = samples.shape[2]
+            log_probs = []
+            
+            for i in range(num_samples):
+                y_sample = samples[:, i, :]  # (1, M)
+                log_prob = self.bar_distribution.average_log_prob(raw_preds, y_sample)  # (1,)
+                log_probs.append(log_prob)
+            
+            # Average log probabilities to estimate entropy
+            # H[p(y)] ≈ -E[log p(y)]
+            log_probs_stacked = torch.stack(log_probs, dim=0)  # (num_samples, 1)
+            entropy = -log_probs_stacked.mean(dim=0)  # (1,)
+            
+            # Since we have a single batch, expand to per-test-sample entropy
+            # For a more accurate per-sample entropy, we need to compute it separately
+            # Let's compute it properly per test sample
+            entropies = []
+            for m in range(M):
+                y_samples_m = samples[0, :, m]  # (num_samples,)
+                log_probs_m = []
+                
+                for sample_val in y_samples_m:
+                    # Create a batch with just this test sample
+                    y_single = sample_val.unsqueeze(0).unsqueeze(0)  # (1, 1)
+                    pred_single = raw_preds[:, m:m+1, :]  # (1, 1, output_dim)
+                    log_prob = self.bar_distribution.average_log_prob(pred_single, y_single)
+                    log_probs_m.append(log_prob.item())
+                
+                entropy_m = -np.mean(log_probs_m)
+                entropies.append(entropy_m)
+            
+            return np.array(entropies, dtype=np.float32)
+    
+    def predict_variance(
+        self,
+        X_obs: Any,
+        T_obs: Any,
+        Y_obs: Any,
+        X_intv: Any,
+        T_intv: Any,
+        num_samples: int = 1000,
+    ) -> np.ndarray:
+        """
+        Compute the variance of the predictive distribution for each test sample.
+        
+        Variance is estimated using Monte Carlo sampling from the BarDistribution:
+        Var[y] = E[y²] - E[y]²
+        
+        Args:
+            X_obs: Observational features (N, L)
+            T_obs: Observational intervened feature (N,) or (N, 1)
+            Y_obs: Observational targets (N,) or (N, 1)
+            X_intv: Interventional features (M, L)
+            T_intv: Interventional intervened feature (M,) or (M, 1)
+            num_samples: Number of MC samples for variance estimation (default: 1000)
+            
+        Returns:
+            Variance values of shape (M,)
+            
+        Raises:
+            ValueError: If BarDistribution is not enabled
+        """
+        if not self.use_bar_distribution:
+            raise ValueError("[InterventionalPFNSklearn] predict_variance() requires BarDistribution")
+        
+        if self.model is None:
+            raise RuntimeError("[InterventionalPFNSklearn] Model not loaded. Call load() first.")
+        
+        # Convert to numpy and ensure correct shapes
+        if hasattr(X_obs, "values"):
+            X_obs = X_obs.values
+        if hasattr(T_obs, "values"):
+            T_obs = T_obs.values
+        if hasattr(Y_obs, "values"):
+            Y_obs = Y_obs.values
+        if hasattr(X_intv, "values"):
+            X_intv = X_intv.values
+        if hasattr(T_intv, "values"):
+            T_intv = T_intv.values
+        
+        X_obs = np.asarray(X_obs, dtype=np.float32)
+        T_obs = np.asarray(T_obs, dtype=np.float32)
+        Y_obs = np.asarray(Y_obs, dtype=np.float32)
+        X_intv = np.asarray(X_intv, dtype=np.float32)
+        T_intv = np.asarray(T_intv, dtype=np.float32)
+        
+        # Ensure T arrays are 2D
+        if T_obs.ndim == 1:
+            T_obs = T_obs.reshape(-1, 1)
+        if T_intv.ndim == 1:
+            T_intv = T_intv.reshape(-1, 1)
+        if Y_obs.ndim == 2 and Y_obs.shape[1] == 1:
+            Y_obs = Y_obs.squeeze(1)
+        
+        # Convert to torch tensors
+        X_obs_t = torch.from_numpy(X_obs).unsqueeze(0).to(self.device)  # (1, N, L)
+        T_obs_t = torch.from_numpy(T_obs).unsqueeze(0).to(self.device)  # (1, N, 1)
+        Y_obs_t = torch.from_numpy(Y_obs).unsqueeze(0).to(self.device)  # (1, N)
+        X_intv_t = torch.from_numpy(X_intv).unsqueeze(0).to(self.device)  # (1, M, L)
+        T_intv_t = torch.from_numpy(T_intv).unsqueeze(0).to(self.device)  # (1, M, 1)
+        
+        # Forward pass to get distribution parameters
+        self.model.eval()
+        with torch.no_grad():
+            out = self.model(X_obs_t, T_obs_t, Y_obs_t, X_intv_t, T_intv_t)
+            raw_preds = out["predictions"]  # (1, M, output_dim)
+            
+            # Sample from the distribution
+            samples = self.bar_distribution.sample(raw_preds, num_samples=num_samples)  # (1, num_samples, M)
+            
+            # Compute variance per test sample: Var[y] = E[y²] - E[y]²
+            samples_np = samples.cpu().numpy()[0]  # (num_samples, M)
+            
+            mean = np.mean(samples_np, axis=0)  # (M,)
+            mean_of_squares = np.mean(samples_np ** 2, axis=0)  # (M,)
+            variance = mean_of_squares - mean ** 2  # (M,)
+            
+            return variance.astype(np.float32)
 
 
 if __name__ == "__main__":
