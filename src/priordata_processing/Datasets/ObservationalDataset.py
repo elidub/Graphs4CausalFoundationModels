@@ -133,6 +133,18 @@ class ObservationalDataset(Dataset):
         self.dataset_config = dataset_config
         self.seed = seed
         
+        # Helper to extract value from config entries that may be plain or dicts with {'value': ...}
+        def _get_cfg_value(cfg: Dict[str, Any], key: str, default: Any):
+            raw = cfg.get(key, default)
+            if isinstance(raw, dict) and "value" in raw:
+                return raw["value"]
+            return raw
+
+        # Rejection sampling settings (optional)
+        self.min_target_variance = _get_cfg_value(self.dataset_config, "min_target_variance", None)
+        # Prevent infinite loops: cap the number of re-sampling attempts
+        self.max_resample_attempts = int(_get_cfg_value(self.dataset_config, "max_resample_attempts", 10) or 10)
+        
         # Build samplers for preprocessing and dataset parameters
         self.preprocessing_samplers = self._build_samplers(
             self.preprocessing_config, 
@@ -242,6 +254,20 @@ class ObservationalDataset(Dataset):
         sampled_params = {}
         
         for param_name, sampler in samplers.items():
+            # If the parameter is not part of the expected types, sample it loosely and skip validation.
+            if param_name not in expected_types:
+                # Handle samplers that are FixedSampler-like or torch distributions
+                if hasattr(sampler, 'sample'):
+                    try:
+                        value = sampler.sample(generator)
+                    except TypeError:
+                        # Some samplers may not accept a generator
+                        value = sampler.sample()
+                else:
+                    value = sampler
+                sampled_params[param_name] = value
+                continue
+
             if param_name in ["number_train_samples_per_dataset", "number_test_samples_per_dataset"]:
                 # Special case: handle FixedSampler, PyTorch distribution, or int directly
                 if isinstance(sampler, FixedSampler):
@@ -339,25 +365,6 @@ class ObservationalDataset(Dataset):
         else:
             number_test_samples = int(test_dist.sample(item_generator) if hasattr(test_dist, 'sample') else test_dist)
         
-        # Sample an SCM
-        scm = self.scm_sampler.sample(seed=seed)
-        
-        # Total samples needed
-        total_samples = number_train_samples + number_test_samples
-        
-        # Generate data from SCM
-        scm.sample_exogenous(num_samples=total_samples)
-        scm.sample_endogenous(num_samples=total_samples)
-        scm_data = scm.propagate(num_samples=total_samples)
-        
-        # Convert to format expected by BasicProcessing
-        # SCM returns {node_id: tensor with shape [num_samples, *node_shape]}
-        # BasicProcessing expects {feature_id: tensor with shape [num_samples, 1]}
-        dataset = {}
-        for key, value in scm_data.items():
-            # Reshape to [num_samples, 1] regardless of original node_shape
-            dataset[key] = value.reshape(total_samples, -1)
-        
         # Create BasicProcessing instance with sampled preprocessing parameters
         processor = BasicProcessing(
             n_features=self.max_number_features,
@@ -382,7 +389,65 @@ class ObservationalDataset(Dataset):
             dtype=None,  # Default
         )
         
-        # Process the data
-        X_train, Y_train, X_test, Y_test = processor.process(dataset)
+        # Rejection strategy: resample if target variances are too small
+        # We re-run SCM sampling up to max_resample_attempts
+        attempt = 0
+        last_X_train = last_Y_train = last_X_test = last_Y_test = None
+        while True:
+            # Sample an SCM
+            scm = self.scm_sampler.sample(seed=seed + attempt)
+            
+            # Total samples needed
+            total_samples = number_train_samples + number_test_samples
+            
+            # Generate data from SCM
+            scm.sample_exogenous(num_samples=total_samples)
+            scm.sample_endogenous(num_samples=total_samples)
+            scm_data = scm.propagate(num_samples=total_samples)
+            
+            # Convert to format expected by BasicProcessing
+            # SCM returns {node_id: tensor with shape [num_samples, *node_shape]}
+            # BasicProcessing expects {feature_id: tensor with shape [num_samples, 1]}
+            dataset = {}
+            for key, value in scm_data.items():
+                # Reshape to [num_samples, 1] regardless of original node_shape
+                dataset[key] = value.reshape(total_samples, -1)
+            
+            # Process the data
+            X_train, Y_train, X_test, Y_test = processor.process(dataset)
+            
+            # Save latest outputs so we can return even if rejection keeps failing
+            last_X_train, last_Y_train = X_train, Y_train
+            last_X_test, last_Y_test = X_test, Y_test
+            
+            # If no threshold provided, accept immediately
+            if self.min_target_variance is None:
+                break
+            
+            # Compute variances on the target for train and test
+            # Y_* may have shape (N, 1); use flatten for variance computation
+            var_train = torch.var(Y_train.reshape(-1))
+            var_test = torch.var(Y_test.reshape(-1))
+            
+            # Normalize threshold to float if provided as str in YAML
+            threshold = self.min_target_variance
+            if threshold is not None and isinstance(threshold, str):
+                try:
+                    threshold = float(threshold)
+                except ValueError:
+                    # If parsing fails, disable rejection to avoid crashing
+                    threshold = None
+            
+            # Check threshold
+            if threshold is None:
+                break  # Accept since no valid threshold
+            
+            if (var_train.item() >= threshold) and (var_test.item() >= threshold):
+                break  # Accept
+            
+            attempt += 1
+            if attempt >= self.max_resample_attempts:
+                # Give up and return the last sampled data to avoid infinite loop
+                break
         
-        return X_train, Y_train, X_test, Y_test
+        return last_X_train, last_Y_train, last_X_test, last_Y_test

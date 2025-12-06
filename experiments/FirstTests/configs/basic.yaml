@@ -217,6 +217,16 @@ dataset_config:
       low: 200
       high: 500
 
+  # Rejection sampling: ensure target variance is sufficiently large
+  # If either train or test target variance falls below this threshold, resample the dataset.
+  # Set to null to disable rejection.
+  min_target_variance:
+    value: 1e-4
+
+  # Safety cap on number of re-sampling attempts to avoid infinite loops
+  max_resample_attempts:
+    value: 10
+
 
   max_number_features:
     value: 50
@@ -336,7 +346,7 @@ training_config:
   batch_size: # batch size
     value: 8
   accumulate_grad_batches:
-    value: 1
+    value: 4
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
     value: 64
 
