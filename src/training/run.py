@@ -35,6 +35,7 @@ from training_utils import load_yaml_config, extract_config_values, get_device, 
 
 # Import BarDistribution for probabilistic output
 from Losses.BarDistribution import BarDistribution
+from priordata_processing.Datasets.Collator import BatchSplitCollator
 
 # Weights & Biases for experiment tracking
 try:
@@ -316,11 +317,60 @@ def main():
         print(f"   Number of workers: {num_workers}")
         print(f"   Shuffle: False")
         
+        # Build per-batch collator using dataset_config
+        # Expected keys (new scheme):
+        # - max_number_samples_per_dataset
+        # - max_number_train_samples_per_dataset
+        # - max_number_test_samples_per_dataset
+        # - n_test_samples_per_dataset (can be fixed value or distribution spec)
+        import torch.distributions as dist
+
+        def _get_int(cfg: dict, key: str, default_val: int) -> int:
+            raw = cfg.get(key, {"value": default_val})
+            val = extract_config_values(raw)
+            try:
+                return int(val)
+            except Exception:
+                return int(default_val)
+
+        max_total = _get_int(dataset_config, "max_number_samples_per_dataset", 1000)
+        max_train_cap = _get_int(dataset_config, "max_number_train_samples_per_dataset", max_total)
+        max_test_cap = _get_int(dataset_config, "max_number_test_samples_per_dataset", max_total)
+
+        # Build distribution for n_test per dataset
+        n_test_cfg = dataset_config.get("n_test_samples_per_dataset")
+        if isinstance(n_test_cfg, dict) and n_test_cfg.get("distribution"):
+            dist_type = n_test_cfg.get("distribution")
+            params = n_test_cfg.get("distribution_parameters", {})
+            if dist_type == "discrete_uniform":
+                low = int(params.get("low", 0))
+                high = int(params.get("high", max_total))
+                # Use Uniform and cast to int inside collator
+                n_test_dist = dist.Uniform(low=low, high=high)
+            elif dist_type == "uniform":
+                n_test_dist = dist.Uniform(low=float(params.get("low", 0)), high=float(params.get("high", max_total)))
+            elif dist_type == "normal":
+                n_test_dist = dist.Normal(loc=float(params.get("mean", max_total // 2)), scale=float(params.get("std", max(1, max_total/10))))
+            else:
+                # Fallback: fixed half split
+                n_test_dist = max_total // 2
+        else:
+            # Fixed integer
+            n_test_dist = extract_config_values(n_test_cfg) if n_test_cfg is not None else (max_total // 2)
+
+        collator = BatchSplitCollator(
+            max_number_samples_per_dataset=max_total,
+            max_number_train_samples_per_dataset=max_train_cap,
+            max_number_test_samples_per_dataset=max_test_cap,
+            n_test_samples_distribution=n_test_dist,
+        )
+
         dataloader = DataLoader(
             dataset,
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
+            collate_fn=collator,
             persistent_workers=num_workers > 0  # Only use persistent workers when num_workers > 0
         )
         print(f"   DataLoader created successfully")
@@ -331,6 +381,31 @@ def main():
         input_size, output_size = determine_input_size(first_batch)
         print(f"   Input features: {input_size}")
         print(f"   Output size: {output_size}")
+
+        # Print shapes of the first few batches to verify collator behavior
+        print(f"\nBATCH SHAPE DIAGNOSTICS (first 3 batches):")
+        def _fmt_shape(x):
+            try:
+                return tuple(x.shape)
+            except Exception:
+                return 'n/a'
+        try:
+            for i, b in enumerate(dataloader):
+                if i >= 3:
+                    break
+                if isinstance(b, (list, tuple)):
+                    if len(b) == 4:
+                        X_tr, Y_tr, X_te, Y_te = b
+                        print(f"   [Batch {i}] observational -> X_tr{_fmt_shape(X_tr)} Y_tr{_fmt_shape(Y_tr)} | X_te{_fmt_shape(X_te)} Y_te{_fmt_shape(Y_te)}")
+                    elif len(b) == 6:
+                        X_tr, T_tr, Y_tr, X_te, T_te, Y_te = b
+                        print(f"   [Batch {i}] interventional -> X_tr{_fmt_shape(X_tr)} T_tr{_fmt_shape(T_tr)} Y_tr{_fmt_shape(Y_tr)} | X_te{_fmt_shape(X_te)} T_te{_fmt_shape(T_te)} Y_te{_fmt_shape(Y_te)}")
+                    else:
+                        print(f"   [Batch {i}] unknown batch format len={len(b)}: shapes={[ _fmt_shape(x) for x in b ]}")
+                else:
+                    print(f"   [Batch {i}] unexpected batch type: {type(b)}")
+        except Exception as e:
+            print(f"   Warning: failed to iterate diagnostic batches: {e}")
         
         # Use num_features from config if available, otherwise use detected input_size
         num_features = model_config.get("num_features", input_size)

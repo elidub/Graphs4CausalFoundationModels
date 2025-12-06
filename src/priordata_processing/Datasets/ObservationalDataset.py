@@ -66,10 +66,15 @@ class ObservationalDataset(Dataset):
     EXPECTED_DATASET_HYPERPARAMETERS = {
         "dataset_size": int,
         "max_number_features": int,
-        "max_number_train_samples": int,
-        "max_number_test_samples": int,
+        # New config scheme: caps and total per dataset
+        "max_number_samples_per_dataset": int,
+        "max_number_train_samples_per_dataset": int,
+        "max_number_test_samples_per_dataset": int,
+        # Per-dataset sampling distributions (classic naming kept for compatibility)
         "number_train_samples_per_dataset": (torch.distributions.Distribution, int),
         "number_test_samples_per_dataset": (torch.distributions.Distribution, int),
+        # Optional new key to drive collator; we accept it but don't use directly here
+        "n_test_samples_per_dataset": (torch.distributions.Distribution, int),
     }
     
     # Distribution factories for building samplers
@@ -164,12 +169,24 @@ class ObservationalDataset(Dataset):
         
         # Extract only the dataset size (fixed for whole dataset)
         self.size = dataset_params["dataset_size"]
-        
+
         # Store max values as attributes (these should be fixed)
-        self.max_number_features = dataset_params["max_number_features"]
-        self.max_number_train_samples = dataset_params["max_number_train_samples"]
-        self.max_number_test_samples = dataset_params["max_number_test_samples"]
-        
+        self.max_number_features = dataset_params.get("max_number_features")
+        # Backward compatibility: accept both old and new keys
+        self.max_number_train_samples = dataset_params.get(
+            "max_number_train_samples_per_dataset",
+            dataset_params.get("max_number_train_samples", 0),
+        )
+        self.max_number_test_samples = dataset_params.get(
+            "max_number_test_samples_per_dataset",
+            dataset_params.get("max_number_test_samples", 0),
+        )
+        # New total cap (not strictly needed inside this Dataset, but recorded for reference)
+        self.max_number_samples_per_dataset = dataset_params.get(
+            "max_number_samples_per_dataset",
+            self.max_number_train_samples + self.max_number_test_samples,
+        )
+
         # Don't store the distributions - they will be sampled per item in __getitem__
     
     def _build_samplers(self, config: Dict[str, Any], expected_params: Dict[str, Any], 
@@ -295,6 +312,13 @@ class ObservationalDataset(Dataset):
             "dataset",
             item_generator
         )
+
+        if "number_train_samples_per_dataset" not in dataset_params: 
+            train_dist = self.dataset_config["max_number_train_samples_per_dataset"]["value"]
+            dataset_params["number_train_samples_per_dataset"] = train_dist
+        if "number_test_samples_per_dataset" not in dataset_params:
+            test_dist = self.dataset_config["max_number_test_samples_per_dataset"]["value"]
+            dataset_params["number_test_samples_per_dataset"] = test_dist
         
         # Extract sample counts from dataset params
         train_dist = dataset_params["number_train_samples_per_dataset"]

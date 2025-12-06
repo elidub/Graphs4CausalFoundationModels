@@ -206,14 +206,21 @@ scm_config:
 dataset_config:
   dataset_size:
     value: 100000000
-  max_number_train_samples:
-    value: 500
-  number_train_samples_per_dataset:
-    value: 500
-  max_number_test_samples:
-    value: 500
-  number_test_samples_per_dataset:
-    value: 500
+
+  max_number_samples_per_dataset: #actual value of samples (train plus test) per dataset
+    value: 1000
+
+  max_number_train_samples_per_dataset:  #how many train samples to actually sample per dataset
+    value: 1000
+  max_number_test_samples_per_dataset:  # how many test samples to actually sample per dataset
+    value: 1000
+  n_test_samples_per_dataset: # how many of the max_number_train_samples_per_dataset to use to pass to the model. the rest will be test samples
+    distribution: "discrete_uniform"
+    distribution_parameters:
+      low: 100
+      high: 1000
+
+
   max_number_features:
     value: 50
   seed:
