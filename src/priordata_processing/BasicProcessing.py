@@ -276,7 +276,7 @@ class BasicProcessing:
         
         # With probability 0.9, select uniformly from high-variance features
         # With probability 0.1, select uniformly from all valid features
-        if random.random() == 0.0 and len(high_variance_features) > 0:
+        if random.random() >= 1.0 and len(high_variance_features) > 0:
             return random.choice(high_variance_features)
         else:
             return random.choice(valid_features)
