@@ -137,7 +137,8 @@ class SampleXGBoostMechanism(BaseMechanism):
         num_hidden_layers: int = 0,
         hidden_dim: int = 64,
         nonlins: str = "mixed",
-    activation_mode: Literal["pre", "post", "mixed_in_noise"] = "pre",
+        activation_mode: Literal["pre", "post", "mixed_in_noise"] = "pre",
+        use_batch_norm: bool = False,
         generator: Optional[torch.Generator] = None,
         n_training_samples: int = 1000,
         name: Optional[str] = None,
@@ -156,13 +157,11 @@ class SampleXGBoostMechanism(BaseMechanism):
             activation_mode = "mixed_in_noise"
         self.activation_mode = activation_mode
 
-        # Tiny runtime indicator to confirm mixed-in-noise wiring
-        if self.activation_mode == "mixed_in_noise":
-            print("[SampleXGBoostMechanism] Using mixed-in-noise: concatenating eps to input features.")
         self.gen = generator
         self.n_training_samples = n_training_samples
         self.add_noise = add_noise
         self.nonlins = nonlins
+        self.use_batch_norm = use_batch_norm
 
         out_dim = int(torch.tensor(node_shape).prod().item()) if node_shape else 1
         D = max(1, input_dim)  # allow D=0 via learned token
@@ -172,6 +171,12 @@ class SampleXGBoostMechanism(BaseMechanism):
         n_hidden = num_hidden_layers
         if n_hidden < 0:
             raise ValueError("num_hidden_layers must be >= 0")
+
+        # Optional parameter-free BatchNorm on inputs prior to XGBoost stack
+        self.input_batch_norm = None
+        if self.use_batch_norm:
+            # Apply BN to the raw input (or augmented input for mixed_in_noise). No learnable params.
+            self.input_batch_norm = torch.nn.BatchNorm1d(num_features=effective_input_dim, affine=False)
 
         # Build XGBoost layer stack
         self.xgb_layers = torch.nn.ModuleList()
@@ -283,6 +288,10 @@ class SampleXGBoostMechanism(BaseMechanism):
                 if eps_in.dim() != x.dim() or eps_in.shape != x.shape:
                     eps_in = torch.zeros_like(x)
             x = torch.cat([x, eps_in], dim=-1)
+
+        # Apply BatchNorm to input if enabled (after augmentation for mixed_in_noise)
+        if self.input_batch_norm is not None:
+            x = self.input_batch_norm(x)
 
         # Forward through XGBoost layers with optional activations between them
         for idx, layer in enumerate(self.xgb_layers):

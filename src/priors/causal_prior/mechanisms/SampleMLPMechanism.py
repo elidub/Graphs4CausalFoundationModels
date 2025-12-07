@@ -48,6 +48,7 @@ class SampleMLPMechanism(BaseMechanism):
         num_hidden_layers: int = 2,
         hidden_dim: int = 64,
         activation_mode: Literal["pre", "post", "mixed_in_noise"] = "pre",
+        use_batch_norm: bool = False,
         generator: Optional[torch.Generator] = None,
         name: Optional[str] = None,
     ) -> None:
@@ -57,11 +58,19 @@ class SampleMLPMechanism(BaseMechanism):
             activation_mode = "mixed_in_noise"
         self.activation_mode = activation_mode
         self.gen = generator
+        self.use_batch_norm = use_batch_norm
 
         out_dim = int(torch.tensor(node_shape).prod().item()) if node_shape else 1
         D = max(1, input_dim)  # allow D=0 via learned token
         # If we're mixing noise into the input, the effective input dimension doubles (parents + noise)
         effective_input_dim = D * 2 if self.activation_mode == "mixed_in_noise" else D
+
+        # Optional BatchNorm on inputs prior to MLP
+        self.input_batch_norm = None
+        if self.use_batch_norm:
+            # BatchNorm1d expects shape (B, F). Apply it to x or x_aug. No learnable parameters (affine=False).
+            self.input_batch_norm = nn.BatchNorm1d(num_features=effective_input_dim, affine=False)
+            # Tiny runtime indicator to confirm BN is active
 
         # use fixed number of hidden layers
         if num_hidden_layers < 0:
@@ -89,9 +98,6 @@ class SampleMLPMechanism(BaseMechanism):
         # if we need a separate activation for 'post' but n_hidden==0, build one
         self.post_activation = RandomActivation(nonlins=nonlins, generator=self.gen) if self.activation_mode == "post" else None
 
-        # Tiny runtime indicator to confirm mixed-in-noise wiring
-        if self.activation_mode == "mixed_in_noise":
-            print("[SampleMLPMechanism] Using mixed-in-noise: concatenating eps to input features.")
 
     def _forward(self, parents: Tensor, eps: Optional[Tensor] = None) -> Tensor:
         B = parents.shape[0]
@@ -111,8 +117,14 @@ class SampleMLPMechanism(BaseMechanism):
                     except Exception:
                         eps_in = torch.zeros_like(x)
             x_aug = torch.cat([x, eps_in], dim=-1)
+            # Apply batch norm on augmented input if enabled
+            if self.input_batch_norm is not None:
+                x_aug = self.input_batch_norm(x_aug)
             out = self.net(x_aug)  # (B, out_dim)
         else:
+            # Apply batch norm on input if enabled
+            if self.input_batch_norm is not None:
+                x = self.input_batch_norm(x)
             out = self.net(x)  # (B, out_dim)
         if self.node_shape:
             out = out.view(B, *self.node_shape)

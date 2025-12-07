@@ -133,10 +133,12 @@ class SCMSampler:
         "mlp_num_hidden_layers": int,
         "mlp_hidden_dim": int,
         "mlp_activation_mode": str,
+    "mlp_use_batch_norm": bool,
         "mlp_node_shape": tuple,
         "xgb_num_hidden_layers": int,
         "xgb_hidden_dim": int,
         "xgb_activation_mode": str,
+    "xgb_use_batch_norm": bool,
         "xgb_node_shape": tuple,
         "xgb_n_training_samples": int,
         "xgb_add_noise": bool,
@@ -348,6 +350,7 @@ class SCMSampler:
                     num_hidden_layers=params["xgb_num_hidden_layers"],
                     hidden_dim=params["xgb_hidden_dim"],
                     activation_mode=params["xgb_activation_mode"],
+                    use_batch_norm=params.get("xgb_use_batch_norm", False),
                     node_shape=params["xgb_node_shape"],
                     n_training_samples=params["xgb_n_training_samples"],
                     add_noise=params["xgb_add_noise"],
@@ -361,6 +364,7 @@ class SCMSampler:
                     hidden_dim=params["mlp_hidden_dim"],
                     nonlins=params["mlp_nonlins"],
                     activation_mode=params["mlp_activation_mode"],
+                    use_batch_norm=params.get("mlp_use_batch_norm", False),
                     node_shape=params["mlp_node_shape"],
                     generator=mechanism_generator
                 )

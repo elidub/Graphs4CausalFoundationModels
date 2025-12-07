@@ -101,6 +101,17 @@ scm_config:
         - 0.3
         - 0.3
         - 0.3
+
+  # Apply parameter-free BatchNorm to inputs before MLP
+  mlp_use_batch_norm:
+    distribution: "categorical"
+    distribution_parameters:
+      choices:
+        - true
+        - false
+      probabilities:
+        - 1.0
+        - 0.0
       
   xgb_node_shape:
     value: [1]
@@ -125,6 +136,17 @@ scm_config:
         - 0.33
         - 0.33
         - 0.34
+
+  # Apply parameter-free BatchNorm to inputs before XGBoost stack
+  xgb_use_batch_norm:
+    distribution: "categorical"
+    distribution_parameters:
+      choices:
+        - true
+        - false
+      probabilities:
+        - 0.5
+        - 0.5
   xgb_node_shape:
     value: [1]
   xgb_n_training_samples:
