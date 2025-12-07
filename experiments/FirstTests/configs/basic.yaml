@@ -118,9 +118,11 @@ scm_config:
       choices:
         - "pre"
         - "post"
+        - "mixed_in"
       probabilities:
-        - 0.5
-        - 0.5
+        - 0.33
+        - 0.33
+        - 0.34
   xgb_node_shape:
     value: [1]
   xgb_n_training_samples:

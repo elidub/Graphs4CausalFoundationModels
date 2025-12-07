@@ -116,8 +116,11 @@ class SampleXGBoostMechanism(BaseMechanism):
         Number of hidden XGBoost layers.
     hidden_dim : int, default 64
         Width of hidden layers (number of outputs from each XGBoost layer).
-    activation_mode : {'pre','post'}, default 'pre'
+    nonlins : str, default 'mixed'
+        Activation function family to apply between XGBoost layers (same options as RandomActivation used in MLP).
+    activation_mode : {'pre','post','mixed_in_noise'}, default 'pre'
         Whether to apply XGBoost transformation before or after adding noise.
+        'mixed_in_noise' concatenates eps to the input features and feeds through the XGBoost stack (no additive output noise).
     generator : torch.Generator, optional
         RNG for reproducibility of architecture sampling.
     n_training_samples : int, default 1000
@@ -133,7 +136,8 @@ class SampleXGBoostMechanism(BaseMechanism):
         node_shape: Tuple[int, ...] = (),
         num_hidden_layers: int = 0,
         hidden_dim: int = 64,
-        activation_mode: Literal["pre", "post"] = "pre",
+        nonlins: str = "mixed",
+    activation_mode: Literal["pre", "post", "mixed_in_noise"] = "pre",
         generator: Optional[torch.Generator] = None,
         n_training_samples: int = 1000,
         name: Optional[str] = None,
@@ -147,13 +151,23 @@ class SampleXGBoostMechanism(BaseMechanism):
                 "  pip install xgboost scikit-learn"
             )
 
+        # Normalize activation_mode aliases from config
+        if activation_mode == "mixed_in":
+            activation_mode = "mixed_in_noise"
         self.activation_mode = activation_mode
+
+        # Tiny runtime indicator to confirm mixed-in-noise wiring
+        if self.activation_mode == "mixed_in_noise":
+            print("[SampleXGBoostMechanism] Using mixed-in-noise: concatenating eps to input features.")
         self.gen = generator
         self.n_training_samples = n_training_samples
         self.add_noise = add_noise
+        self.nonlins = nonlins
 
         out_dim = int(torch.tensor(node_shape).prod().item()) if node_shape else 1
         D = max(1, input_dim)  # allow D=0 via learned token
+        # If mixing noise into input, double the first layer input dimension
+        effective_input_dim = D * 2 if self.activation_mode == "mixed_in_noise" else D
 
         n_hidden = num_hidden_layers
         if n_hidden < 0:
@@ -161,12 +175,18 @@ class SampleXGBoostMechanism(BaseMechanism):
 
         # Build XGBoost layer stack
         self.xgb_layers = torch.nn.ModuleList()
+        # Activation used between layers (same family as MLP RandomActivation)
+        try:
+            from priors.causal_prior.mechanisms.RandomActivation import RandomActivation
+            self.inter_layer_activation = RandomActivation(nonlins=self.nonlins, generator=self.gen)
+        except Exception:
+            self.inter_layer_activation = None
 
         if n_hidden == 0:
             # Direct mapping from input to output
             n_est, max_d = self._sample_xgboost_params()
             layer = XGBoostLayer(
-                input_dim=D,
+                input_dim=effective_input_dim,
                 output_dim=out_dim,
                 n_estimators=n_est,
                 max_depth=max_d,
@@ -176,7 +196,7 @@ class SampleXGBoostMechanism(BaseMechanism):
             self.xgb_layers.append(layer)
         else:
             # Stack of hidden layers + output layer
-            current_dim = D
+            current_dim = effective_input_dim
 
             # Hidden layers
             for _ in range(n_hidden):
@@ -211,7 +231,7 @@ class SampleXGBoostMechanism(BaseMechanism):
         )
 
         # For 'post' mode with no hidden layers, we need a separate XGBoost layer
-        if activation_mode == "post" and n_hidden == 0:
+        if self.activation_mode == "post" and n_hidden == 0:
             n_est, max_d = self._sample_xgboost_params()
             self.post_xgb_layer = XGBoostLayer(
                 input_dim=out_dim,
@@ -254,9 +274,23 @@ class SampleXGBoostMechanism(BaseMechanism):
         B = parents.shape[0]
         x = parents if self.input_dim > 0 else self._zero_parent_token.expand(B, 1)
 
-        # Forward through XGBoost layers
-        for layer in self.xgb_layers:
+        # If mixed_in_noise, concatenate eps to the input features before any XGBoost layer
+        if self.activation_mode == "mixed_in_noise":
+            if eps is None:
+                eps_in = torch.zeros_like(x)
+            else:
+                eps_in = eps
+                if eps_in.dim() != x.dim() or eps_in.shape != x.shape:
+                    eps_in = torch.zeros_like(x)
+            x = torch.cat([x, eps_in], dim=-1)
+
+        # Forward through XGBoost layers with optional activations between them
+        for idx, layer in enumerate(self.xgb_layers):
             x = layer(x)
+            # Apply activation after each hidden layer (and after the single layer case if desired)
+            is_last = (idx == len(self.xgb_layers) - 1)
+            if self.inter_layer_activation is not None and (not is_last):
+                x = self.inter_layer_activation(x)
 
         out = x
         if self.node_shape:
@@ -272,7 +306,7 @@ class SampleXGBoostMechanism(BaseMechanism):
             # Apply noise after XGBoost transformation
             out = out + eps
             return out.reshape(B, -1)
-        else:  # post
+        elif self.activation_mode == "post":
             # Apply XGBoost transformation after adding noise
             noisy_out = out + eps
             if self.post_xgb_layer is not None:
@@ -282,3 +316,6 @@ class SampleXGBoostMechanism(BaseMechanism):
                 return final_out.reshape(B, *self.node_shape)
             else:
                 return noisy_out.reshape(B, *self.node_shape)
+        else:
+            # mixed_in_noise: already injected noise via input concatenation; no additive output noise
+            return out.reshape(B, *self.node_shape)
