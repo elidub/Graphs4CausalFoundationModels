@@ -23,8 +23,9 @@ class Preprocessor:
         max_n_train_samples: int,
         n_test_samples: int,
         max_n_test_samples: int,
-        negative_one_one_scaling: bool = True,
-        standardize: bool = False,
+        # Separate feature vs target transforms
+        feature_negative_one_one_scaling: bool = False,
+        feature_standardize: bool = True,
         yeo_johnson: bool = False,
         remove_outliers: bool = True,
         outlier_quantile: float = 0.95,
@@ -32,6 +33,7 @@ class Preprocessor:
         shuffle_features: bool = True,
         eps: float = 1e-8,
         y_clip_quantile: Optional[float] = None,
+        target_negative_one_one_scaling: bool = True,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
@@ -45,8 +47,9 @@ class Preprocessor:
         max_n_train_samples: Maximum number of training samples to pad to.
         n_test_samples: Desired number of test samples (non-zero). If fewer exist, uses all available and pads.
         max_n_test_samples: Maximum number of test samples to pad to.
-        negative_one_one_scaling: Whether to scale features and targets to [-1, 1] using train stats.
-        standardize: Whether to standardize features (zero mean, unit variance) using train stats.
+    feature_standardize: Whether to standardize FEATURES (zero mean, unit variance) using train stats.
+    feature_negative_one_one_scaling: Whether to scale FEATURES to [-1, 1] using train stats.
+    target_negative_one_one_scaling: Whether to scale TARGET to [-1, 1] using train stats.
         yeo_johnson: Whether to apply Yeo-Johnson transform to features (fit on train) before standardization.
         remove_outliers: Whether to winsorize features based on train-quantiles.
         outlier_quantile: Upper quantile (q). We winsorize using (1-q, q). Example: 0.95 → clamp to [p5, p95].
@@ -68,8 +71,9 @@ class Preprocessor:
         self.n_test = n_test_samples
         self.max_n_test = max_n_test_samples
 
-        self.negative_one_one_scaling = negative_one_one_scaling
-        self.standardize = standardize
+        # Feature vs target transforms (defaults chosen to satisfy: features standardized, target [-1,1] scaled)
+        self.feature_negative_one_one_scaling = feature_negative_one_one_scaling
+        self.feature_standardize = feature_standardize
         self.yeo_johnson = yeo_johnson
         self.remove_outliers = remove_outliers
         self.outlier_quantile = outlier_quantile
@@ -77,6 +81,7 @@ class Preprocessor:
         self.shuffle_features = shuffle_features
         self.eps = eps
         self.y_clip_quantile = y_clip_quantile
+        self.target_negative_one_one_scaling = target_negative_one_one_scaling
 
         self.device = device
         self.dtype = dtype
@@ -193,13 +198,13 @@ class Preprocessor:
             Xtr = self._apply_yeo_johnson(Xtr, lambdas)
             Xte = self._apply_yeo_johnson(Xte, lambdas)
 
-        if self.standardize:
+        if self.feature_standardize:
             mean = Xtr.mean(dim=1, keepdim=True)                  # [B,1,F]
             std = Xtr.std(dim=1, keepdim=True).clamp_min(self.eps)
             Xtr = (Xtr - mean) / std
             Xte = (Xte - mean) / std
 
-        if self.negative_one_one_scaling:
+        if self.feature_negative_one_one_scaling:
             # Min-max per (B,F) using train, then scale both sets
             xmin = Xtr.amin(dim=1, keepdim=True)
             xmax = Xtr.amax(dim=1, keepdim=True)
@@ -325,7 +330,7 @@ class Preprocessor:
             Ytr = Ytr.clamp(min=lo.squeeze(-1), max=hi.squeeze(-1))
             Yte = Yte.clamp(min=lo.squeeze(-1), max=hi.squeeze(-1))
 
-        if self.negative_one_one_scaling:
+        if self.target_negative_one_one_scaling:
             ymin = Ytr.amin(dim=1, keepdim=True)
             ymax = Ytr.amax(dim=1, keepdim=True)
             rng = (ymax - ymin).clamp_min(self.eps)

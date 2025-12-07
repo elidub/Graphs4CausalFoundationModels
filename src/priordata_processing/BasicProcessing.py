@@ -71,8 +71,13 @@ class BasicProcessing:
         dropout_prob: float = 0.0,
         target_feature: Optional[int] = None,
         random_seed: Optional[int] = None,
-        negative_one_one_scaling: bool = True,
-        standardize: bool = True,
+    # Legacy combined flags (kept for backward-compat)
+    negative_one_one_scaling: bool = True,
+    standardize: bool = True,
+    # New split flags (override legacy when provided)
+    feature_standardize: Optional[bool] = None,
+    feature_negative_one_one_scaling: Optional[bool] = None,
+    target_negative_one_one_scaling: Optional[bool] = None,
         yeo_johnson: bool = False,
         remove_outliers: bool = True,
         outlier_quantile: float = 0.95,
@@ -95,6 +100,16 @@ class BasicProcessing:
         self.max_n_train_samples = max_n_train_samples
         self.n_test_samples = n_test_samples
         self.max_n_test_samples = max_n_test_samples
+        # Store new split flags with sensible defaults
+        # Default: features standardized, target scaled to [-1,1]
+        self.feature_standardize = feature_standardize if feature_standardize is not None else standardize
+        self.feature_negative_one_one_scaling = (
+            feature_negative_one_one_scaling if feature_negative_one_one_scaling is not None else False
+        )
+        self.target_negative_one_one_scaling = (
+            target_negative_one_one_scaling if target_negative_one_one_scaling is not None else True
+        )
+        # Keep legacy values for backward compatibility
         self.negative_one_one_scaling = negative_one_one_scaling
         self.standardize = standardize
         self.yeo_johnson = yeo_johnson
@@ -163,14 +178,16 @@ class BasicProcessing:
             max_n_train_samples=self.max_n_train_samples,
             n_test_samples=self.n_test_samples,
             max_n_test_samples=self.max_n_test_samples,
-            negative_one_one_scaling=self.negative_one_one_scaling,
-            standardize=self.standardize,
+            # Use split controls: features standardized; target scaled to [-1,1]
+            feature_negative_one_one_scaling=self.feature_negative_one_one_scaling,
+            feature_standardize=self.feature_standardize,
             yeo_johnson=self.yeo_johnson,
             remove_outliers=self.remove_outliers,
             outlier_quantile=self.outlier_quantile,
             shuffle_samples=self.shuffle_samples,
             shuffle_features=self.shuffle_features,
             y_clip_quantile=self.y_clip_quantile,
+            target_negative_one_one_scaling=self.target_negative_one_one_scaling,
             eps=self.eps,
             device=self.device,
             dtype=self.dtype,

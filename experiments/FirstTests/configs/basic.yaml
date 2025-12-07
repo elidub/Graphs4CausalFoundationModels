@@ -296,9 +296,12 @@ preprocessing_config:
     value: true
   target_feature:
     value: null
-  negative_one_one_scaling:
+  # Split preprocessing controls: features vs target
+  feature_standardize:
     value: true
-  standardize:
+  feature_negative_one_one_scaling:
+    value: false
+  target_negative_one_one_scaling:
     value: true
   remove_outliers:
     value: true

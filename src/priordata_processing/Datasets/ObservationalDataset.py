@@ -366,6 +366,14 @@ class ObservationalDataset(Dataset):
             number_test_samples = int(test_dist.sample(item_generator) if hasattr(test_dist, 'sample') else test_dist)
         
         # Create BasicProcessing instance with sampled preprocessing parameters
+        # Map legacy combined flags to new split flags with sensible defaults
+        _feature_standardize = preprocessing_params.get("feature_standardize",
+                                                       preprocessing_params.get("standardize", True))
+        _feature_neg11 = preprocessing_params.get("feature_negative_one_one_scaling",
+                                                  False if _feature_standardize else preprocessing_params.get("negative_one_one_scaling", True))
+        _target_neg11 = preprocessing_params.get("target_negative_one_one_scaling",
+                                                 preprocessing_params.get("negative_one_one_scaling", True))
+
         processor = BasicProcessing(
             n_features=self.max_number_features,
             max_n_features=self.max_number_features,
@@ -376,8 +384,13 @@ class ObservationalDataset(Dataset):
             dropout_prob=preprocessing_params["dropout_prob"],
             target_feature=preprocessing_params["target_feature"],
             random_seed=preprocessing_params["random_seed"],
-            negative_one_one_scaling=preprocessing_params["negative_one_one_scaling"],
-            standardize=preprocessing_params["standardize"],
+            # Legacy flags retained, but split flags take precedence internally
+            negative_one_one_scaling=preprocessing_params.get("negative_one_one_scaling", True),
+            standardize=preprocessing_params.get("standardize", True),
+            # New split flags
+            feature_standardize=_feature_standardize,
+            feature_negative_one_one_scaling=_feature_neg11,
+            target_negative_one_one_scaling=_target_neg11,
             yeo_johnson=preprocessing_params["yeo_johnson"],
             remove_outliers=preprocessing_params["remove_outliers"],
             outlier_quantile=preprocessing_params["outlier_quantile"],
