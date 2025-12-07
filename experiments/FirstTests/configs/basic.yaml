@@ -96,9 +96,11 @@ scm_config:
       choices:
         - "pre"
         - "post"
+        - "mixed_in"
       probabilities:
-        - 0.5
-        - 0.5
+        - 0.3
+        - 0.3
+        - 0.3
       
   xgb_node_shape:
     value: [1]
