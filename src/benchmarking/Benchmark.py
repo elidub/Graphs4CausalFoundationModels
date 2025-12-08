@@ -266,8 +266,10 @@ class Benchmark:
             max_n_train_samples=max_n_train or req_n_train,
             n_test_samples=req_n_test,
             max_n_test_samples=max_n_test or req_n_test,
-            negative_one_one_scaling=self.negative_one_one_scaling,
-            standardize=self.standardize,
+            # Map legacy flags to new, explicit feature/target preprocessing args
+            feature_negative_one_one_scaling=False,
+            feature_standardize=self.standardize,
+            target_negative_one_one_scaling=self.negative_one_one_scaling,
             yeo_johnson=self.yeo_johnson,
             remove_outliers=self.remove_outliers,
             outlier_quantile=self.outlier_quantile,
