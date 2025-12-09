@@ -501,11 +501,23 @@ class Benchmark:
                 
                 model_stats[model] = {
                     'mse_mean': mse_row['mean'].values[0] if not mse_row.empty else np.nan,
+                    'mse_median': mse_row['median'].values[0] if not mse_row.empty else np.nan,
+                    'mse_std': mse_row['std'].values[0] if not mse_row.empty else np.nan,
+                    'mse_iqr': mse_row['iqr'].values[0] if not mse_row.empty else np.nan,
                     'mse_ci_low': mse_row['ci95_mean_low'].values[0] if not mse_row.empty else np.nan,
                     'mse_ci_high': mse_row['ci95_mean_high'].values[0] if not mse_row.empty else np.nan,
+                    'mse_median_ci_low': mse_row['ci95_median_low'].values[0] if not mse_row.empty else np.nan,
+                    'mse_median_ci_high': mse_row['ci95_median_high'].values[0] if not mse_row.empty else np.nan,
                     'r2_mean': r2_row['mean'].values[0] if not r2_row.empty else np.nan,
+                    'r2_median': r2_row['median'].values[0] if not r2_row.empty else np.nan,
+                    'r2_std': r2_row['std'].values[0] if not r2_row.empty else np.nan,
+                    'r2_iqr': r2_row['iqr'].values[0] if not r2_row.empty else np.nan,
                     'r2_ci_low': r2_row['ci95_mean_low'].values[0] if not r2_row.empty else np.nan,
                     'r2_ci_high': r2_row['ci95_mean_high'].values[0] if not r2_row.empty else np.nan,
+                    'r2_median_ci_low': r2_row['ci95_median_low'].values[0] if not r2_row.empty else np.nan,
+                    'r2_median_ci_high': r2_row['ci95_median_high'].values[0] if not r2_row.empty else np.nan,
+                    'avg_rank_mse': mse_row['avg_rank_mse'].values[0] if not mse_row.empty and 'avg_rank_mse' in mse_row.columns else np.nan,
+                    'avg_rank_r2': r2_row['avg_rank_r2'].values[0] if not r2_row.empty and 'avg_rank_r2' in r2_row.columns else np.nan,
                 }
             
             # Sort models by R² (descending)
@@ -570,27 +582,70 @@ class Benchmark:
             # Also save a summary table
             summary_file = output_file.with_name(f"{output_file.stem}_summary.txt")
             with open(summary_file, "w") as f:
-                f.write("="*80 + "\n")
+                f.write("="*120 + "\n")
                 f.write("PERFORMANCE SUMMARY (sorted by R² descending)\n")
-                f.write("="*80 + "\n\n")
-                f.write(f"{'Model':<20} {'MSE Mean':<15} {'MSE 95% CI':<30} {'R² Mean':<15} {'R² 95% CI':<30}\n")
-                f.write("-"*80 + "\n")
+                f.write("="*120 + "\n\n")
+                
+                # Header for mean/median comparison
+                f.write(f"{'Model':<15} {'MSE Mean':<12} {'MSE Median':<12} {'MSE CI':<24} {'R² Mean':<12} {'R² Median':<12} {'R² CI':<24}\n")
+                f.write("-"*120 + "\n")
                 
                 for model in sorted_models:
                     stats = model_stats[model]
                     
                     # Format values safely
                     mse_mean_str = f"{stats['mse_mean']:.4f}" if not np.isnan(stats['mse_mean']) else "N/A"
+                    mse_median_str = f"{stats['mse_median']:.4f}" if not np.isnan(stats['mse_median']) else "N/A"
                     r2_mean_str = f"{stats['r2_mean']:.4f}" if not np.isnan(stats['r2_mean']) else "N/A"
+                    r2_median_str = f"{stats['r2_median']:.4f}" if not np.isnan(stats['r2_median']) else "N/A"
                     
                     mse_ci_str = (f"[{stats['mse_ci_low']:.4f}, {stats['mse_ci_high']:.4f}]" 
                                  if not (np.isnan(stats['mse_ci_low']) or np.isnan(stats['mse_ci_high'])) else "N/A")
                     r2_ci_str = (f"[{stats['r2_ci_low']:.4f}, {stats['r2_ci_high']:.4f}]" 
                                 if not (np.isnan(stats['r2_ci_low']) or np.isnan(stats['r2_ci_high'])) else "N/A")
                     
-                    f.write(f"{model:<20} {mse_mean_str:<15} {mse_ci_str:<30} {r2_mean_str:<15} {r2_ci_str:<30}\n")
+                    f.write(f"{model:<15} {mse_mean_str:<12} {mse_median_str:<12} {mse_ci_str:<24} {r2_mean_str:<12} {r2_median_str:<12} {r2_ci_str:<24}\n")
                 
-                f.write("\n" + "="*80 + "\n")
+                # Add detailed statistics section
+                f.write("\n" + "="*120 + "\n")
+                f.write("DETAILED STATISTICS\n")
+                f.write("="*120 + "\n\n")
+                
+                f.write(f"{'Model':<15} {'MSE Std':<12} {'MSE IQR':<12} {'MSE Rank':<12} {'R² Std':<12} {'R² IQR':<12} {'R² Rank':<12}\n")
+                f.write("-"*120 + "\n")
+                
+                for model in sorted_models:
+                    stats = model_stats[model]
+                    
+                    mse_std_str = f"{stats['mse_std']:.4f}" if not np.isnan(stats['mse_std']) else "N/A"
+                    mse_iqr_str = f"{stats['mse_iqr']:.4f}" if not np.isnan(stats['mse_iqr']) else "N/A"
+                    mse_rank_str = f"{stats['avg_rank_mse']:.2f}" if not np.isnan(stats['avg_rank_mse']) else "N/A"
+                    
+                    r2_std_str = f"{stats['r2_std']:.4f}" if not np.isnan(stats['r2_std']) else "N/A"
+                    r2_iqr_str = f"{stats['r2_iqr']:.4f}" if not np.isnan(stats['r2_iqr']) else "N/A"
+                    r2_rank_str = f"{stats['avg_rank_r2']:.2f}" if not np.isnan(stats['avg_rank_r2']) else "N/A"
+                    
+                    f.write(f"{model:<15} {mse_std_str:<12} {mse_iqr_str:<12} {mse_rank_str:<12} {r2_std_str:<12} {r2_iqr_str:<12} {r2_rank_str:<12}\n")
+                
+                # Add median confidence intervals section
+                f.write("\n" + "="*120 + "\n")
+                f.write("MEDIAN CONFIDENCE INTERVALS (95%)\n")
+                f.write("="*120 + "\n\n")
+                
+                f.write(f"{'Model':<15} {'MSE Median CI':<30} {'R² Median CI':<30}\n")
+                f.write("-"*120 + "\n")
+                
+                for model in sorted_models:
+                    stats = model_stats[model]
+                    
+                    mse_median_ci_str = (f"[{stats['mse_median_ci_low']:.4f}, {stats['mse_median_ci_high']:.4f}]" 
+                                        if not (np.isnan(stats['mse_median_ci_low']) or np.isnan(stats['mse_median_ci_high'])) else "N/A")
+                    r2_median_ci_str = (f"[{stats['r2_median_ci_low']:.4f}, {stats['r2_median_ci_high']:.4f}]" 
+                                       if not (np.isnan(stats['r2_median_ci_low']) or np.isnan(stats['r2_median_ci_high'])) else "N/A")
+                    
+                    f.write(f"{model:<15} {mse_median_ci_str:<30} {r2_median_ci_str:<30}\n")
+                
+                f.write("\n" + "="*120 + "\n")
             
             if not self.quiet:
                 print(f"Saved performance summary to {summary_file}")
@@ -915,25 +970,25 @@ class Benchmark:
             if detailed_rows:
                 df_out = pd.concat([df_out, pd.DataFrame(detailed_rows)], ignore_index=True)
 
-        # Save - create a folder for this PID
+        # Save - create a folder with timestamp
         out_path = Path(self.output_csv)
-        process_id = os.getpid()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # Create a PID-specific folder
+        # Create a timestamp-specific folder
         if out_path.parent.name:
-            pid_folder = out_path.parent / f"run_pid{process_id}"
+            run_folder = out_path.parent / f"run_{timestamp}"
         else:
-            pid_folder = Path(f"run_pid{process_id}")
-        pid_folder.mkdir(parents=True, exist_ok=True)
+            run_folder = Path(f"run_{timestamp}")
+        run_folder.mkdir(parents=True, exist_ok=True)
         
-        # Save CSV in the PID folder
+        # Save CSV in the run folder
         if out_path.suffix:
-            out_file = pid_folder / f"{out_path.stem}.csv"
+            out_file = run_folder / f"{out_path.stem}.csv"
         else:
-            out_file = pid_folder / f"{out_path.name}.csv"
+            out_file = run_folder / f"{out_path.name}.csv"
         df_out.to_csv(out_file, index=False)
         if not self.quiet:
-            print(f"Saved results to {out_file} (PID: {process_id})")
+            print(f"Saved results to {out_file} (Run: {timestamp})")
 
         # Save benchmark configuration info
         self._save_benchmark_info(
