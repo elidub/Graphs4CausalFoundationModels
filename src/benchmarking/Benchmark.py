@@ -34,6 +34,30 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.metrics import mean_squared_error, r2_score
 
+# Optional XGBoost import
+try:
+    from xgboost import XGBRegressor
+    XGBOOST_AVAILABLE = True
+except ImportError:
+    XGBOOST_AVAILABLE = False
+    XGBRegressor = None
+
+# Optional CatBoost import
+try:
+    from catboost import CatBoostRegressor
+    CATBOOST_AVAILABLE = True
+except ImportError:
+    CATBOOST_AVAILABLE = False
+    CatBoostRegressor = None
+
+# Optional TabPFN import
+try:
+    from tabpfn import TabPFNRegressor
+    TABPFN_AVAILABLE = True
+except ImportError:
+    TABPFN_AVAILABLE = False
+    TabPFNRegressor = None
+
 src_dir = Path(__file__).parent.parent
 if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
@@ -315,18 +339,27 @@ class Benchmark:
             # Add a collection of simple, untuned sklearn regressors
             models.update({
                 "ridge": Ridge(),
-                "lasso": Lasso(max_iter=2000),
-                "enet": ElasticNet(max_iter=2000),
+                "lasso": Lasso(),
+                "enet": ElasticNet(),
                 "huber": HuberRegressor(),
                 "bayesridge": BayesianRidge(),
                 "svr": SVR(),
-                "knn": KNeighborsRegressor(n_neighbors=5),
-                "dtr": DecisionTreeRegressor(random_state=42),
-                "extratrees": ExtraTreesRegressor(n_estimators=100, random_state=42),
-                "gbrt": GradientBoostingRegressor(random_state=42),
-                "adaboost": AdaBoostRegressor(random_state=42),
-                "mlp": MLPRegressor(hidden_layer_sizes=(64, 64), max_iter=500, random_state=42),
+                "knn": KNeighborsRegressor(),
+                "dtr": DecisionTreeRegressor(),
+                "extratrees": ExtraTreesRegressor(),
+                "gbrt": GradientBoostingRegressor(),
+                "adaboost": AdaBoostRegressor(),
+                "mlp": MLPRegressor(),
             })
+            # Add XGBoost if available
+            if XGBOOST_AVAILABLE:
+                models["xgboost"] = XGBRegressor(random_state=42, verbosity=0)
+            # Add CatBoost if available
+            if CATBOOST_AVAILABLE:
+                models["catboost"] = CatBoostRegressor(random_state=42, verbose=False)
+            # Add TabPFN if available
+            if TABPFN_AVAILABLE:
+                models["tabpfn"] = TabPFNRegressor(device="cpu", n_estimators=4, random_state=42)
         return models
 
     @staticmethod
