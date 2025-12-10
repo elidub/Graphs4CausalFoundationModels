@@ -139,6 +139,7 @@ class InputMLP(nn.Module):
 class TwoWayBlock(nn.Module):
     """
     Alternating attention across features (columns) and samples (rows), followed by an MLP.
+    Uses pre-layer normalization for better training stability.
     """
     def __init__(self, dim: int, heads_feat: int, heads_samp: int, dropout: float = 0.0, hidden_mult: int = 4):
         super().__init__()
@@ -177,32 +178,32 @@ class TwoWayBlock(nn.Module):
         """
         B, S, L, D = x.shape
 
-        # 1) Feature-attention (within row)
+        # 1) Feature-attention (within row) with pre-layer norm
         x_row = x.reshape(B * S, L, D)                       # (B*S, L, D)
-        x2, _ = self.feat_attn(x_row, x_row, x_row, need_weights=False)
+        x_row_norm = self.ln_feat(x_row)
+        x2, _ = self.feat_attn(x_row_norm, x_row_norm, x_row_norm, need_weights=False)
         x_row = x_row + self.drop(x2)
-        x_row = self.ln_feat(x_row)
         x = x_row.reshape(B, S, L, D)
 
-        # 2) Sample-attention (within column)
+        # 2) Sample-attention (within column) with pre-layer norm
         x_col = x.permute(0, 2, 1, 3).contiguous().reshape(B * L, S, D)  # (B*L, S, D)
+        x_col_norm = self.ln_samp(x_col)
         if sample_attn_mask is not None:
             x2, _ = self.samp_attn(
-                x_col, x_col, x_col,
+                x_col_norm, x_col_norm, x_col_norm,
                 attn_mask=sample_attn_mask,
                 need_weights=False,
             )
         else:
-            x2, _ = self.samp_attn(x_col, x_col, x_col, need_weights=False)
+            x2, _ = self.samp_attn(x_col_norm, x_col_norm, x_col_norm, need_weights=False)
 
         x_col = x_col + self.drop(x2)
-        x_col = self.ln_samp(x_col)
         x = x_col.reshape(B, L, S, D).permute(0, 2, 1, 3).contiguous()    # (B, S, L, D)
 
-        # 3) Position-wise MLP
-        x2 = self.mlp(x)
+        # 3) Position-wise MLP with pre-layer norm
+        x_norm = self.ln_mlp(x)
+        x2 = self.mlp(x_norm)
         x = x + self.drop(x2)
-        x = self.ln_mlp(x)
         return x
 
 
