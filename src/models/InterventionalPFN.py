@@ -176,6 +176,7 @@ class InterventionalPFN(nn.Module):
         output_dim: int = 1,
         hidden_mult: int = 4,
         normalize_features: bool = True,
+        use_same_row_mlp: bool = True,
     ):
         super().__init__()
         self.num_features = num_features  # L (excluding intervened column)
@@ -186,21 +187,18 @@ class InterventionalPFN(nn.Module):
         # === Embedding MLPs ===
         # Row-wise MLPs over feature dimension (R^(L+1) -> R^D)
         # Note: L+1 because we concatenate T to X
-        self.row_mlp_train = InputMLP(num_features + 1, d_model, hidden_mult, dropout)
-        self.row_mlp_test  = InputMLP(num_features + 1, d_model, hidden_mult, dropout)
+        if use_same_row_mlp:
+            self.row_mlp_train = InputMLP(num_features + 1, d_model, hidden_mult, dropout)
+            self.row_mlp_test = self.row_mlp_train
+        else:
+            self.row_mlp_train = InputMLP(num_features + 1, d_model, hidden_mult, dropout)
+            self.row_mlp_test = InputMLP(num_features + 1, d_model, hidden_mult, dropout)
 
         # Shared scalar MLP for regular feature cells
         self.cell_mlp = InputMLP(1, d_model, hidden_mult, dropout)
         
-        # Special scalar MLP for intervened feature cells (T_obs, T_intv)
-        self.intervened_cell_mlp = InputMLP(1, d_model, hidden_mult, dropout)
-
         # Train label scalar MLP
         self.label_mlp_train = InputMLP(1, d_model, hidden_mult, dropout)
-
-        # Learned [MASK] token for the label column on test rows
-        self.label_mask_embed = nn.Parameter(torch.zeros(1, 1, d_model))
-        nn.init.normal_(self.label_mask_embed, std=0.02)
 
         # Feature positional encodings (sinusoidal) for:
         # - L regular features
@@ -214,6 +212,14 @@ class InterventionalPFN(nn.Module):
         self.row_scale = nn.Parameter(torch.tensor(1.0 / math.sqrt(2.0)))
         self.cell_scale = nn.Parameter(torch.tensor(1.0 / math.sqrt(2.0)))
 
+        # Learnable role embeddings
+        self.obs_T_embed = self._create_role_embedding(1, 1, self.d_model)
+        self.obs_label_embed = self._create_role_embedding(1, 1, self.d_model)
+        self.obs_feature_embed = self._create_role_embedding(1, 1, self.d_model)
+        self.intv_T_embed = self._create_role_embedding(1, 1, self.d_model)
+        self.intv_label_embed = self._create_role_embedding(1, 1, self.d_model)
+        self.intv_feature_embed = self._create_role_embedding(1, 1, self.d_model)
+
         # Stacked two-way attention blocks
         self.blocks = nn.ModuleList([
             TwoWayBlock(d_model, heads_feat, heads_samp, dropout=dropout, hidden_mult=hidden_mult)
@@ -226,6 +232,12 @@ class InterventionalPFN(nn.Module):
         # Cache for sample-attention masks keyed by (N, M, device)
         self._mask_cache: Dict[Tuple[int, int, torch.device], torch.Tensor] = {}
 
+    def _create_role_embedding(self, *shape, std=0.02):
+        """Helper to create and initialize a role embedding parameter."""
+        embed = nn.Parameter(torch.zeros(*shape))
+        nn.init.normal_(embed, std=std)
+        return embed
+    
     @staticmethod
     def _build_feature_positional(num_tokens: int, dim: int) -> torch.Tensor:
         """
@@ -322,7 +334,7 @@ class InterventionalPFN(nn.Module):
         X: torch.Tensor,
         T: torch.Tensor,
         row_mlp: nn.Module,
-        is_train: bool,
+        is_intvn: bool,
     ) -> torch.Tensor:
         """
         Embed features with special treatment for intervened column.
@@ -331,7 +343,7 @@ class InterventionalPFN(nn.Module):
             X: (B, S, L) - regular features
             T: (B, S, 1) - intervened feature column
             row_mlp: Row-wise MLP to use (train or test)
-            is_train: Whether this is training data (affects which MLPs are used)
+            is_intvn: Whether this is interventional data (affects which MLPs are used)
 
         Returns:
             Tensor of shape (B, S, L+1, D) where position L is the intervened feature.
@@ -339,7 +351,7 @@ class InterventionalPFN(nn.Module):
         B, S, L = X.shape
         assert L == self.num_features
         assert T.shape == (B, S, 1)
-
+        
         # Concatenate T to X for row-wise embedding
         X_with_T = torch.cat([X, T], dim=2)  # (B, S, L+1)
         
@@ -348,18 +360,22 @@ class InterventionalPFN(nn.Module):
 
         # Cell-wise embeddings
         # Regular features use cell_mlp: X -> (B, S, L) -> add dim -> (B, S, L, 1) -> MLP -> (B, S, L, D)
-        cell_emb_regular = self.cell_mlp(X.unsqueeze(-1))  # (B, S, L, D)
+        cell_emb = self.cell_mlp(X_with_T.unsqueeze(-1))  # (B, S, L, D)
+
+        # Split into regular features and intervened feature
+        X_cells = cell_emb[:, :, :-1, :]  # (B, S, L, D)
+        T_cells = cell_emb[:, :, -1:, :]  # (B, S, 1, D)
         
-        # Intervened feature uses special intervened_cell_mlp
-        # T is (B, S, 1), need to treat each scalar as input
-        # Reshape to (B*S*1, 1) -> MLP -> (B*S*1, D) -> reshape to (B, S, 1, D)
-        B_tmp, S_tmp, _ = T.shape
-        T_flat = T.reshape(-1, 1)  # (B*S*1, 1)
-        cell_emb_intervened_flat = self.intervened_cell_mlp(T_flat)  # (B*S*1, D)
-        cell_emb_intervened = cell_emb_intervened_flat.reshape(B_tmp, S_tmp, 1, -1)  # (B, S, 1, D)
+        # Add role embeddings based on whether this is interventional data
+        if is_intvn:
+            X_cells = X_cells + self.intv_feature_embed.expand(B, S, L, -1)
+            T_cells = T_cells + self.intv_T_embed.expand(B, S, 1, -1)
+        else:
+            X_cells = X_cells + self.obs_feature_embed.expand(B, S, L, -1)
+            T_cells = T_cells + self.obs_T_embed.expand(B, S, 1, -1)
         
-        # Concatenate cell embeddings
-        cell_emb = torch.cat([cell_emb_regular, cell_emb_intervened], dim=2)  # (B, S, L+1, D)
+        # Concatenate back
+        cell_emb = torch.cat([X_cells, T_cells], dim=2)  # (B, S, L+1, D)
 
         # Combine row and cell embeddings
         row_exp = row_emb.unsqueeze(2).expand(-1, -1, L + 1, -1)  # (B, S, L+1, D)
@@ -380,6 +396,8 @@ class InterventionalPFN(nn.Module):
         if Y.dim() == 3:
             Y = Y.squeeze(-1)  # (B, S)
         label_emb = self.label_mlp_train(Y.unsqueeze(-1))  # (B, S, D)
+        # Add role embedding for observational labels
+        label_emb = label_emb + self.obs_label_embed.expand(Y.size(0), Y.size(1), self.d_model)
         return label_emb
 
     def forward(
@@ -431,13 +449,13 @@ class InterventionalPFN(nn.Module):
             X_intv_norm, T_intv_norm = X_intv, T_intv
 
         # === Embed features ===
-        feat_obs = self._embed_features(X_obs_norm, T_obs_norm, self.row_mlp_train, is_train=True)   # (B, N, L+1, D)
-        feat_intv = self._embed_features(X_intv_norm, T_intv_norm, self.row_mlp_test, is_train=False)  # (B, M, L+1, D)
+        feat_obs = self._embed_features(X_obs_norm, T_obs_norm, self.row_mlp_train, is_intvn=False)   # (B, N, L+1, D)
+        feat_intv = self._embed_features(X_intv_norm, T_intv_norm, self.row_mlp_test, is_intvn=True)  # (B, M, L+1, D)
         feat_all = torch.cat([feat_obs, feat_intv], dim=1)  # (B, S, L+1, D), S = N+M
 
         # === Embed labels ===
         lab_obs = self._embed_labels(Y_obs)  # (B, N, D)
-        lab_intv = self.label_mask_embed.expand(B, M, self.d_model)
+        lab_intv = self.intv_label_embed.expand(B, M, self.d_model)
         lab_all = torch.cat([lab_obs, lab_intv], dim=1)  # (B, S, D)
 
         # Stack features (including intervened) + label column along feature axis
