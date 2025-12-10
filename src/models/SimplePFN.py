@@ -140,6 +140,10 @@ class TwoWayBlock(nn.Module):
     """
     Alternating attention across features (columns) and samples (rows), followed by an MLP.
     Uses pre-layer normalization for better training stability.
+    
+    For sample attention, uses separate attention layers instead of masking:
+    - Train samples self-attend among themselves
+    - Test samples cross-attend to train samples
     """
     def __init__(self, dim: int, heads_feat: int, heads_samp: int, dropout: float = 0.0, hidden_mult: int = 4):
         super().__init__()
@@ -152,31 +156,43 @@ class TwoWayBlock(nn.Module):
         )
         self.ln_feat = nn.LayerNorm(dim)
 
-        # Self-attention across samples of the same feature: (B*L, S, D)
-        self.samp_attn = nn.MultiheadAttention(
+        # Sample attention: separate layers for train self-attention and test cross-attention
+        # Self-attention for train samples (including sink rows)
+        self.samp_attn_train = nn.MultiheadAttention(
             embed_dim=dim,
             num_heads=heads_samp,
             dropout=dropout,
             batch_first=True,
         )
-        self.ln_samp = nn.LayerNorm(dim)
+        self.ln_samp_train = nn.LayerNorm(dim)
+        
+        # Cross-attention from test to train samples
+        self.samp_attn_test = nn.MultiheadAttention(
+            embed_dim=dim,
+            num_heads=heads_samp,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.ln_samp_test_q = nn.LayerNorm(dim)  # for query (test)
+        self.ln_samp_test_kv = nn.LayerNorm(dim)  # for key/value (train)
 
         # Position-wise MLP
         self.mlp = MLP(dim, hidden_mult=hidden_mult, dropout=dropout)
         self.ln_mlp = nn.LayerNorm(dim)
         self.drop = nn.Dropout(dropout)
 
-    def forward(self, x: torch.Tensor, sample_attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, N_train: int, N_test: int) -> torch.Tensor:
         """
         Args:
-            x: Input tensor of shape (B, S, L, D).
-            sample_attn_mask: Optional boolean mask of shape (S, S),
-                where True = masked (no attention). Broadcast across batch & heads.
+            x: Input tensor of shape (B, S, L, D) where S = N_train + N_test.
+            N_train: Number of training samples (including sink rows).
+            N_test: Number of test samples.
 
         Returns:
             Tensor of shape (B, S, L, D).
         """
         B, S, L, D = x.shape
+        assert S == N_train + N_test, f"Expected S={N_train + N_test}, got S={S}"
 
         # 1) Feature-attention (within row) with pre-layer norm
         x_row = x.reshape(B * S, L, D)                       # (B*S, L, D)
@@ -185,19 +201,33 @@ class TwoWayBlock(nn.Module):
         x_row = x_row + self.drop(x2)
         x = x_row.reshape(B, S, L, D)
 
-        # 2) Sample-attention (within column) with pre-layer norm
+        # 2) Sample-attention (within column) with separate train/test attention
         x_col = x.permute(0, 2, 1, 3).contiguous().reshape(B * L, S, D)  # (B*L, S, D)
-        x_col_norm = self.ln_samp(x_col)
-        if sample_attn_mask is not None:
-            x2, _ = self.samp_attn(
-                x_col_norm, x_col_norm, x_col_norm,
-                attn_mask=sample_attn_mask,
-                need_weights=False,
+        
+        # Split into train and test samples
+        x_col_train = x_col[:, :N_train, :]    # (B*L, N_train, D)
+        x_col_test = x_col[:, N_train:, :]     # (B*L, N_test, D)
+        
+        # 2a) Self-attention for train samples
+        x_train_norm = self.ln_samp_train(x_col_train)
+        x2_train, _ = self.samp_attn_train(
+            x_train_norm, x_train_norm, x_train_norm, 
+            need_weights=False
+        )
+        x_col_train = x_col_train + self.drop(x2_train)
+        
+        # 2b) Cross-attention from test to train samples
+        if N_test > 0:
+            x_test_norm_q = self.ln_samp_test_q(x_col_test)
+            x_train_norm_kv = self.ln_samp_test_kv(x_col_train)
+            x2_test, _ = self.samp_attn_test(
+                x_test_norm_q, x_train_norm_kv, x_train_norm_kv,
+                need_weights=False
             )
-        else:
-            x2, _ = self.samp_attn(x_col_norm, x_col_norm, x_col_norm, need_weights=False)
-
-        x_col = x_col + self.drop(x2)
+            x_col_test = x_col_test + self.drop(x2_test)
+        
+        # Concatenate train and test back together
+        x_col = torch.cat([x_col_train, x_col_test], dim=1)  # (B*L, S, D)
         x = x_col.reshape(B, L, S, D).permute(0, 2, 1, 3).contiguous()    # (B, S, L, D)
 
         # 3) Position-wise MLP with pre-layer norm
@@ -267,9 +297,6 @@ class SimplePFNRegressor(nn.Module):
 
         # Output projection from D to desired output_dim per test token
         self.regression_head = nn.Linear(d_model, output_dim)
-
-        # Cache for sample-attention masks keyed by (N, M, device)
-        self._mask_cache: Dict[Tuple[int, int, torch.device], torch.Tensor] = {}
         
         # Attention sink rows: fixed random rows added to each batch
         # These are initialized once and reused across all batches
@@ -304,37 +331,6 @@ class SimplePFNRegressor(nn.Module):
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         return pe  # (num_tokens, dim)
-
-    def _build_sample_attn_mask(self, N_sink: int, N: int, M: int, device: torch.device) -> torch.Tensor:
-        """
-        Build or fetch a Boolean attention mask over S = N_sink + N + M samples.
-
-        Masking policy:
-            - Sink rows can attend to all other sink rows (no masking between sinks)
-            - Train samples can attend to sink rows and other train samples
-            - Train samples cannot attend to test samples
-            - Test samples can attend to sink rows and train samples
-            - Test samples cannot attend to each other
-            
-        Sequence order: [sink_rows | train_rows | test_rows]
-        """
-        key = (N_sink, N, M, device)
-        if key in self._mask_cache:
-            return self._mask_cache[key]
-
-        S = N_sink + N + M
-        mask = torch.zeros((S, S), dtype=torch.bool, device=device)
-        
-        # Sink rows (indices 0:N_sink) - no masking, they can attend to all sinks
-        # Train rows (indices N_sink:N_sink+N) - cannot attend to test rows
-        if M > 0:
-            mask[N_sink:N_sink+N, N_sink+N:S] = True   # train cannot look at test
-            
-            # Test rows (indices N_sink+N:S) - can attend to sinks and train, but not other test
-            mask[N_sink+N:S, N_sink+N:S] = True  # test cannot look at test
-        
-        self._mask_cache[key] = mask
-        return mask
 
     @staticmethod
     def _normalize_features(
@@ -538,11 +534,12 @@ class SimplePFNRegressor(nn.Module):
         # feature_positional: (1, 1, L_sink+L+1, D)
         x = x + self.feature_positional
 
-        # Build row-wise attention mask and apply blocks
-        samp_mask = self._build_sample_attn_mask(N_sink, N, M, device)  # (S, S)
-
+        # Apply blocks with separate train/test sample counts
+        N_train_total = N_sink + N  # Total training samples (sink + actual train)
+        N_test_total = M
+        
         for blk in self.blocks:
-            x = blk(x, sample_attn_mask=samp_mask)
+            x = blk(x, N_train=N_train_total, N_test=N_test_total)
 
         # Readout: take the label column for test rows only
         # Label column is now at position L_sink + L (after sink columns and regular features)
@@ -567,7 +564,11 @@ if __name__ == "__main__":
     ytr = torch.randn(B, N)
 
     # Test with default single output
-    print("=== Single Output (Backward Compatible) ===")
+    print("=== SimplePFN Test Suite ===")
+    print("Architecture: SwiGLU activation, Pre-LayerNorm, Separate train/test attention")
+    print()
+    
+    print("=== Test 1: Single Output (Backward Compatible) ===")
     model = SimplePFNRegressor(
         num_features=num_feat,
         d_model=128,
@@ -577,10 +578,11 @@ if __name__ == "__main__":
         dropout=0.1,
     )
     out = model(Xtr, ytr, Xte)
-    print("predictions shape:", out["predictions"].shape)  # (B, M)
+    print(f"✓ predictions shape: {out['predictions'].shape}")  # (B, M)
+    print(f"  Input: X_train={Xtr.shape}, y_train={ytr.shape}, X_test={Xte.shape}")
 
     # Test with high-dimensional output
-    print("\n=== High-Dimensional Output ===")
+    print("\n=== Test 2: High-Dimensional Output ===")
     output_dim = 10
     model_hd = SimplePFNRegressor(
         num_features=num_feat,
@@ -592,10 +594,10 @@ if __name__ == "__main__":
         output_dim=output_dim,
     )
     out_hd = model_hd(Xtr, ytr, Xte)
-    print("high-dim predictions shape:", out_hd["predictions"].shape)  # (B, M, output_dim)
+    print(f"✓ high-dim predictions shape: {out_hd['predictions'].shape}")  # (B, M, output_dim)
 
     # Test BarDistribution-style params
-    print("\n=== BarDistribution Compatibility Example ===")
+    print("\n=== Test 3: BarDistribution Compatibility ===")
     bar_params = 9
     model_bar = SimplePFNRegressor(
         num_features=num_feat,
@@ -607,11 +609,11 @@ if __name__ == "__main__":
         output_dim=bar_params,
     )
     out_bar = model_bar(Xtr, ytr, Xte)
-    print("BarDistribution params shape:", out_bar["predictions"].shape)  # (B, M, 9)
-    print("BarDistribution params sample:", out_bar["predictions"][0, 0, :])
+    print(f"✓ BarDistribution params shape: {out_bar['predictions'].shape}")  # (B, M, 9)
+    print(f"  Sample params: {out_bar['predictions'][0, 0, :].tolist()}")
 
     # Test without normalization
-    print("\n=== Without Internal Normalization ===")
+    print("\n=== Test 4: Without Internal Normalization ===")
     model_no_norm = SimplePFNRegressor(
         num_features=num_feat,
         d_model=128,
@@ -622,5 +624,39 @@ if __name__ == "__main__":
         normalize_features=False,
     )
     out_no_norm = model_no_norm(Xtr, ytr, Xte)
-    print("predictions shape (no norm):", out_no_norm["predictions"].shape)  # (B, M)
-    print("Note: Features passed through as-is (useful if externally preprocessed)")
+    print(f"✓ predictions shape (no norm): {out_no_norm['predictions'].shape}")  # (B, M)
+    print("  Note: Features passed through as-is (useful if externally preprocessed)")
+    
+    # Test with attention sinks
+    print("\n=== Test 5: Attention Sink Rows ===")
+    model_sinks = SimplePFNRegressor(
+        num_features=num_feat,
+        d_model=128,
+        depth=2,
+        heads_feat=4,
+        heads_samp=4,
+        dropout=0.1,
+        n_sample_attention_sink_rows=3,
+    )
+    out_sinks = model_sinks(Xtr, ytr, Xte)
+    print(f"✓ predictions shape (with 3 sink rows): {out_sinks['predictions'].shape}")
+    print("  Note: Sink rows added to training set for attention stability")
+    
+    # Test with attention sink columns
+    print("\n=== Test 6: Attention Sink Columns ===")
+    model_sink_cols = SimplePFNRegressor(
+        num_features=num_feat,
+        d_model=128,
+        depth=2,
+        heads_feat=4,
+        heads_samp=4,
+        dropout=0.1,
+        n_feature_attention_sink_cols=2,
+    )
+    out_sink_cols = model_sink_cols(Xtr, ytr, Xte)
+    print(f"✓ predictions shape (with 2 sink columns): {out_sink_cols['predictions'].shape}")
+    print("  Note: Sink columns added to feature set for attention stability")
+    
+    print("\n" + "="*60)
+    print("✓✓✓ All tests passed successfully! ✓✓✓")
+    print("="*60)
