@@ -81,23 +81,31 @@ import torch.nn.functional as F
 
 class MLP(nn.Module):
     """
-    Two-layer feed-forward block with GELU activations and dropout.
+    Two-layer feed-forward block with SwiGLU activation and dropout.
+    
+    SwiGLU is a gated linear unit variant that uses Swish (SiLU) activation:
+    SwiGLU(x) = (W_1 x) ⊗ SiLU(W_2 x)
+    where ⊗ is element-wise multiplication.
 
     Args:
         dim: Input and output feature dimension (D).
         hidden_mult: Multiplier for the hidden layer size (hidden = hidden_mult * dim).
-        dropout: Dropout rate applied after GELU and after the second linear layer.
+        dropout: Dropout rate applied after activation and after the second linear layer.
     """
     def __init__(self, dim: int, hidden_mult: int = 4, dropout: float = 0.0):
         super().__init__()
         hidden = hidden_mult * dim
+        # SwiGLU uses two parallel projections for gating
         self.fc1 = nn.Linear(dim, hidden)
+        self.fc_gate = nn.Linear(dim, hidden)
         self.fc2 = nn.Linear(hidden, dim)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.fc1(x)
-        x = F.gelu(x)
+        # SwiGLU: x_out = fc1(x) * silu(fc_gate(x))
+        x_linear = self.fc1(x)
+        x_gate = F.silu(self.fc_gate(x))
+        x = x_linear * x_gate
         x = self.dropout(x)
         x = self.fc2(x)
         x = self.dropout(x)
@@ -106,18 +114,22 @@ class MLP(nn.Module):
 
 class InputMLP(nn.Module):
     """
-    Generic 2-layer MLP for input embeddings (row-wise and scalar-wise).
+    Generic 2-layer MLP for input embeddings (row-wise and scalar-wise) with SwiGLU activation.
     """
     def __init__(self, in_dim: int, out_dim: int, hidden_mult: int = 4, dropout: float = 0.0):
         super().__init__()
         hidden = hidden_mult * out_dim
+        # SwiGLU uses two parallel projections for gating
         self.fc1 = nn.Linear(in_dim, hidden)
+        self.fc_gate = nn.Linear(in_dim, hidden)
         self.fc2 = nn.Linear(hidden, out_dim)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.fc1(x)
-        x = F.gelu(x)
+        # SwiGLU: x_out = fc1(x) * silu(fc_gate(x))
+        x_linear = self.fc1(x)
+        x_gate = F.silu(self.fc_gate(x))
+        x = x_linear * x_gate
         x = self.dropout(x)
         x = self.fc2(x)
         x = self.dropout(x)
