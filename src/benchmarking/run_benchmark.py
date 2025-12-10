@@ -17,9 +17,18 @@ This is intentionally simple and meant for small-scale testing.
 """
 
 from __future__ import annotations
+import os
 import sys
 from pathlib import Path
 import numpy as np
+
+# Fix OpenBLAS threading and memory issues BEFORE importing numpy/scipy heavy libraries
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
+os.environ['OPENBLAS_MAIN_FREE'] = '1'
 
 # ensure repo root is on sys.path so local imports work whether run as module or script
 repo_root = Path(__file__).resolve().parents[2]
@@ -167,10 +176,10 @@ if __name__ == "__main__":
     # Configuration (ALL_CAPS) - edit these constants instead of using CLI args
     TASKS = ""  # comma-separated task ids, e.g. "361072,361073" or empty to use defaults
     MAX_TASKS = 20
-    DATA_DIR = "data_cache"
+    DATA_DIR = str(repo_root / "data_cache")  # Use absolute path to data_cache
     CONFIG = str(repo_root / "experiments/FirstTests/configs/basic.yaml")
     #CHECKPOINT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16631563.0/step_46000.pt"  # Leave empty to auto-detect or skip PFN
-    CHECKPOINT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16654670.0/step_35000.pt"  # Leave empty to auto-detect or skip PFN
+    CHECKPOINT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16654670.0/best_model.pt"  # Leave empty to auto-detect or skip PFN
     DEVICE = "cpu"
     OUTPUT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/src/benchmarking/results/benchmark_results.csv"  # Process ID will be automatically added: benchmark_results_pid12345.csv
     NO_TARGET_ENCODING = True
@@ -182,10 +191,10 @@ if __name__ == "__main__":
     # Subsampling env vars (optional) - read from ALL_CAPS environment variables so submit files can set them
     N_FEATURES = 50
     MAX_N_FEATURES = 50
-    N_TRAIN = 500
-    MAX_N_TRAIN = 500
-    N_TEST = 500
-    MAX_N_TEST = 500
+    N_TRAIN = 1000
+    MAX_N_TRAIN = 1000
+    N_TEST = 1000
+    MAX_N_TEST = 1000 
     PREFER_NUMERIC = False
     ONLY_NUMERIC = False
     FIDELITY = "low_all_baselines"  # Options: "minimal", "low", "high", "very_high"
@@ -201,7 +210,7 @@ if __name__ == "__main__":
     NEGATIVE_ONE_ONE_SCALING = True  # Scale data to [-1, 1] range
     STANDARDIZE = True  # Standardize features (z-score normalization)
     YEO_JOHNSON = False  # Apply Yeo-Johnson transformation
-    REMOVE_OUTLIERS = False  # Remove outliers based on quantile
+    REMOVE_OUTLIERS = True  # Remove outliers based on quantile
     OUTLIER_QUANTILE = 0.99  # Quantile threshold for outlier removal
     SHUFFLE_SAMPLES = True  # Shuffle samples during preprocessing
     SHUFFLE_FEATURES = True  # Shuffle features during preprocessing

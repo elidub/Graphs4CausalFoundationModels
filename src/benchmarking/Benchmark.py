@@ -340,16 +340,16 @@ class Benchmark:
             models.update({
                 "ridge": Ridge(),
                 "lasso": Lasso(),
-                "enet": ElasticNet(),
-                "huber": HuberRegressor(),
+                #"enet": ElasticNet(),
+                #"huber": HuberRegressor(),
                 "bayesridge": BayesianRidge(),
-                "svr": SVR(),
+                #"svr": SVR(),
                 "knn": KNeighborsRegressor(),
                 "dtr": DecisionTreeRegressor(),
                 "extratrees": ExtraTreesRegressor(),
                 "gbrt": GradientBoostingRegressor(),
                 "adaboost": AdaBoostRegressor(),
-                "mlp": MLPRegressor(),
+                #"mlp": MLPRegressor(),
             })
             # Add XGBoost if available
             if XGBOOST_AVAILABLE:
@@ -359,7 +359,7 @@ class Benchmark:
                 models["catboost"] = CatBoostRegressor(random_state=42, verbose=False)
             # Add TabPFN if available
             if TABPFN_AVAILABLE:
-                models["tabpfn"] = TabPFNRegressor(device="cpu", n_estimators=4, random_state=42)
+                models["tabpfn"] = TabPFNRegressor(device="cpu", random_state=42)
         return models
 
     @staticmethod
