@@ -53,6 +53,46 @@ class InterventionalDataset(Dataset):
         (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adj_matrix) or
         (X_obs, Y_obs, X_intv, Y_intv, adj_matrix)
         
+        The adjacency matrix has a specific node ordering that aligns with the data:
+        - Position 0: Treatment variable T (the intervened node)
+        - Position 1: Outcome variable Y (the target feature)
+        - Positions 2, 3, ...: Feature variables corresponding to X[:,0], X[:,1], ...
+        
+        CRITICAL: The features at positions 2+ in the adjacency matrix correspond 
+        to the REAL (non-padded) columns of X in the same order. That is:
+        - adj_matrix[2, :] and adj_matrix[:, 2] refer to the same variable as X[:, 0]
+        - adj_matrix[3, :] and adj_matrix[:, 3] refer to the same variable as X[:, 1]
+        - adj_matrix[k+2, :] and adj_matrix[:, k+2] refer to X[:, k]
+        
+        IMPORTANT: X may contain zero-padded columns to reach max_n_features.
+        The adjacency matrix ONLY covers real nodes from the SCM, not padded columns!
+        If adjacency matrix is (N x N) and X has M columns:
+        - If M == N-2: No padding, perfect correspondence
+        - If M > N-2: X contains (M - N + 2) padded columns at the end
+          - X[:, :N-2] are real features (correspond to adjacency positions 2:N)
+          - X[:, N-2:] are zero-padded columns (no adjacency correspondence)
+        
+        Example with padding:
+          - SCM has 32 nodes: 1 treatment + 1 outcome + 30 others
+          - After dropout: 25 features kept
+          - Adjacency matrix: 27x27 (treatment + outcome + 25 features)
+          - X is padded to max_n_features=50, so X.shape = (N, 50)
+          - X[:, :25] = real features (correspond to adjacency positions 2-26)
+          - X[:, 25:] = zero padding (no adjacency correspondence)
+        
+        The ordering of features in X follows sorted(scm.dag.nodes()) after excluding
+        the treatment and outcome nodes. Feature dropout may reduce the number of 
+        features, but the ordering of kept features is preserved.
+        
+        Matrix entry adj_matrix[i,j] = 1.0 indicates a directed edge from the 
+        variable at position i to the variable at position j.
+        
+        Examples:
+        - adj_matrix[0, 1] = 1.0 means treatment T causes outcome Y
+        - adj_matrix[2, 1] = 1.0 means feature X[:,0] causes outcome Y
+        - adj_matrix[0, 3] = 1.0 means treatment T causes feature X[:,1]
+        - adj_matrix[2, 3] = 1.0 means feature X[:,0] causes feature X[:,1]
+        
     Examples
     --------
     >>> scm_config = {
@@ -68,6 +108,9 @@ class InterventionalDataset(Dataset):
     >>> dataset = InterventionalDataset(scm_config, preprocessing_config, dataset_config)
     >>> X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adj = dataset[0]
     >>> print(adj.shape)  # torch.Size([num_nodes, num_nodes])
+    >>> # adj[0,1] tells if treatment causes outcome
+    >>> # adj[2,1] tells if first feature (X[:,0]) causes outcome
+    >>> # adj[0,2] tells if treatment causes first feature
     """
     
     # Expected preprocessing hyperparameters
@@ -513,13 +556,58 @@ class InterventionalDataset(Dataset):
             if len(processed) == 4:
                 X_obs, Y_obs, X_intv, Y_intv = processed
                 result = (X_obs, Y_obs, X_intv, Y_intv)
+                has_treatment = False
             else:
                 X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = processed
                 result = (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
+                has_treatment = True
             
-            # Optionally add adjacency matrix
+            # Optionally add adjacency matrix with proper node ordering
             if self.return_adjacency_matrix:
-                adj_matrix = scm.get_adjacency_matrix()
+                # Construct adjacency matrix with specific ordering to match data layout:
+                # Position 0: Treatment variable (intervention_node)
+                # Position 1: Outcome variable (processor.selected_target_feature) 
+                # Position 2+: Feature variables that were KEPT after dropout (in sorted order)
+                #
+                # This ordering aligns with the REAL (non-padded) columns in the returned tensors:
+                # - T_obs/T_intv correspond to position 0 in adjacency matrix
+                # - Y_obs/Y_intv correspond to position 1 in adjacency matrix  
+                # - X_obs/X_intv[:, i] corresponds to position 2+i in adjacency matrix
+                #   FOR i < len(kept_features) (i.e., before padding starts)
+                #
+                # CRITICAL: The Preprocessor may pad X to max_n_features with zero columns.
+                # The adjacency matrix size is (2 + len(kept_features)) x (2 + len(kept_features)),
+                # which may be SMALLER than X.shape[1] + 2 if padding was applied.
+                #
+                # Example: If SCM has 32 nodes, treatment='X5', outcome='X10', and 25 features kept:
+                #   - Adjacency matrix is 27x27 (1 treatment + 1 outcome + 25 features)
+                #   - X might be padded to shape (N, 50)
+                #   - X[:, :25] correspond to real SCM nodes (positions 2-26 in adjacency)
+                #   - X[:, 25:] are padded zeros with no correspondence to adjacency matrix
+                #
+                # The adjacency matrix entry [i,j] = 1.0 indicates a directed edge from 
+                # variable at position i to variable at position j in this ordering.
+                
+                if has_treatment:
+                    # Get the target feature and kept features from BasicProcessing
+                    target_node = processor.selected_target_feature
+                    kept_features = processor.kept_feature_indices  # Node names after dropout
+                    
+                    # Build ordered list: [treatment, outcome, kept features in sorted order...]
+                    ordered_nodes = [intervention_node, target_node]
+                    
+                    # Add kept features in sorted order (they're already tracked by BasicProcessing)
+                    # Sort them to ensure consistent ordering
+                    ordered_nodes.extend(sorted(kept_features))
+                    
+                    # Get adjacency matrix with this specific ordering
+                    # This will be size (2 + len(kept_features)) x (2 + len(kept_features))
+                    # which may be smaller than (X.shape[1] + 2) if padding was applied
+                    adj_matrix = scm.get_adjacency_matrix(node_order=ordered_nodes)
+                else:
+                    # No treatment variable case - just use default topological ordering
+                    adj_matrix = scm.get_adjacency_matrix()
+                
                 result = result + (adj_matrix,)
             
             # Save latest result so we can return even if rejection keeps failing
