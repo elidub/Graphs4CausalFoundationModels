@@ -18,10 +18,11 @@ from utils import FixedSampler, TorchDistributionSampler, CategoricalSampler, Di
 
 class InterventionalDataset(Dataset):
     """
-    Dataset for purely observational causal data (no interventions).
+    Dataset for interventional causal data with optional adjacency matrix output.
     
     This class directly accepts SCM, preprocessing, and dataset configurations,
     internally creating SCMSampler and sampling hyperparameters on-the-fly.
+    Supports returning the causal graph's adjacency matrix alongside the data.
     
     Parameters
     ----------
@@ -36,8 +37,21 @@ class InterventionalDataset(Dataset):
         Configuration for data preprocessing hyperparameters
     dataset_config : Dict[str, Any]
         Configuration for dataset parameters (size, max samples, etc.)
+        Special keys:
+        - return_adjacency_matrix (bool): If True, include adjacency matrix in output
     seed : Optional[int], default None
         Random seed for reproducibility
+    
+    Returns
+    -------
+    When return_adjacency_matrix=False (default):
+        (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv) or
+        (X_obs, Y_obs, X_intv, Y_intv) depending on treatment variable inclusion
+        
+    When return_adjacency_matrix=True:
+        Same as above plus adjacency matrix as the last element:
+        (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adj_matrix) or
+        (X_obs, Y_obs, X_intv, Y_intv, adj_matrix)
         
     Examples
     --------
@@ -46,7 +60,14 @@ class InterventionalDataset(Dataset):
     ...     "endo_p_zero": {"value": 0.3},  # 30% of endogenous noise is zero
     ...     # ... other parameters
     ... }
-    >>> dataset = ObservationalDataset(scm_config, preprocessing_config, dataset_config)
+    >>> dataset_config = {
+    ...     "dataset_size": {"value": 100},
+    ...     "return_adjacency_matrix": {"value": True},  # Enable adjacency matrix output
+    ...     # ... other parameters
+    ... }
+    >>> dataset = InterventionalDataset(scm_config, preprocessing_config, dataset_config)
+    >>> X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adj = dataset[0]
+    >>> print(adj.shape)  # torch.Size([num_nodes, num_nodes])
     """
     
     # Expected preprocessing hyperparameters
@@ -146,6 +167,9 @@ class InterventionalDataset(Dataset):
         self.min_target_variance = _get_cfg_value(self.dataset_config, "min_target_variance", None)
         # Prevent infinite loops: cap the number of re-sampling attempts
         self.max_resample_attempts = int(_get_cfg_value(self.dataset_config, "max_resample_attempts", 10) or 10)
+        
+        # Option to return adjacency matrix
+        self.return_adjacency_matrix = _get_cfg_value(self.dataset_config, "return_adjacency_matrix", False)
         
         # Build samplers for preprocessing and dataset parameters
         self.preprocessing_samplers = self._build_samplers(
@@ -492,6 +516,11 @@ class InterventionalDataset(Dataset):
             else:
                 X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = processed
                 result = (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
+            
+            # Optionally add adjacency matrix
+            if self.return_adjacency_matrix:
+                adj_matrix = scm.get_adjacency_matrix()
+                result = result + (adj_matrix,)
             
             # Save latest result so we can return even if rejection keeps failing
             last_result = result

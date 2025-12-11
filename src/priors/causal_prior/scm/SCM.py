@@ -400,6 +400,58 @@ class SCM:
         self._recompute_structure()
 
     # ----------------------------------------------------------------------
+    # Graph structure access
+    # ----------------------------------------------------------------------
+    
+    def get_adjacency_matrix(self, node_order: Optional[List[str]] = None) -> torch.Tensor:
+        """
+        Return the adjacency matrix of the causal DAG.
+        
+        The adjacency matrix A has entry A[i,j] = 1 if there is a directed edge
+        from node i to node j, and 0 otherwise.
+        
+        Parameters
+        ----------
+        node_order : Optional[List[str]], default=None
+            Order of nodes for the rows/columns of the adjacency matrix.
+            If None, uses the topological order of the DAG.
+            
+        Returns
+        -------
+        torch.Tensor
+            Adjacency matrix of shape (num_nodes, num_nodes) with dtype torch.float32.
+            Entry [i,j] is 1.0 if there's an edge from node i to node j, 0.0 otherwise.
+            
+        Examples
+        --------
+        >>> # Get adjacency matrix in topological order
+        >>> adj = scm.get_adjacency_matrix()
+        >>> adj.shape
+        torch.Size([5, 5])
+        
+        >>> # Get adjacency matrix with custom node order
+        >>> nodes = ['X0', 'X1', 'X2', 'X3', 'X4']
+        >>> adj = scm.get_adjacency_matrix(node_order=nodes)
+        """
+        if node_order is None:
+            node_order = self._topo
+        
+        n = len(node_order)
+        adj_matrix = torch.zeros((n, n), dtype=torch.float32, device=self.device)
+        
+        # Create mapping from node name to index
+        node_to_idx = {node: idx for idx, node in enumerate(node_order)}
+        
+        # Fill in the adjacency matrix
+        for child in node_order:
+            child_idx = node_to_idx[child]
+            for parent in self._parents[child]:
+                parent_idx = node_to_idx[parent]
+                adj_matrix[parent_idx, child_idx] = 1.0
+        
+        return adj_matrix
+
+    # ----------------------------------------------------------------------
     # Noise sampling
     # ----------------------------------------------------------------------
 
