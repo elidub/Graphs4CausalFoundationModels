@@ -607,7 +607,14 @@ def main():
         
         save_dir = training_config.get("checkpoint_dir")
         save_every = training_config.get("save_every", 0)
+        # Respect both 'use_amp' and a 'precision' flag ("16" -> enable AMP)
         use_amp = training_config.get("use_amp", False)
+        precision_flag = training_config.get("precision", None)
+        if precision_flag in ("16", 16):
+            use_amp = True
+            # Ensure CUDA device when 16-bit requested
+            if str(device).lower() == "cpu":
+                print("WARNING: 16-bit precision requested but device is CPU. Falling back to float32. Set device: 'cuda' for AMP.")
         gradient_clip_val = training_config.get("gradient_clip_val", 0.0)
         
         # Print mixed precision training status

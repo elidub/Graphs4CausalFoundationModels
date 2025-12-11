@@ -404,9 +404,9 @@ training_config:
   device:
     value: "cuda"
   use_amp:  # Enable automatic mixed precision (float16) for faster training on GPU
-    value: false
-  precision: # precision for training. 16 has not been tested yet.
-    value: "32"
+    value: true
+  precision: # precision for training. 
+    value: "16"
 
   # Experiment Organization
   experiment_name: # name of the experiment, used for logging 

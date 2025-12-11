@@ -147,7 +147,8 @@ class Trainer:
         # Setup mixed precision training
         self.use_amp = use_amp and torch.cuda.is_available()  # Only enable if CUDA available
         if self.use_amp:
-            self.scaler = torch.amp.GradScaler('cuda')
+            # Use CUDA AMP GradScaler; constructor does not take a device argument
+            self.scaler = torch.cuda.amp.GradScaler(enabled=True)
             print(f"Mixed precision training ENABLED (float16)")
         else:
             self.scaler = None
@@ -991,7 +992,7 @@ class Trainer:
                 X_train, y_train, X_test, y_test = batch_data
 
             # Forward + loss
-            with torch.amp.autocast('cuda', enabled=self.use_amp, dtype=torch.float16):
+            with torch.cuda.amp.autocast(enabled=self.use_amp, dtype=torch.float16):
                 if len(batch_data) == 6:
                     # InterventionalPFN forward
                     output = self.model(X_obs, T_obs, Y_obs, X_intv, T_intv)
