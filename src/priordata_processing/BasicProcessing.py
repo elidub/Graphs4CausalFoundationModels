@@ -158,6 +158,7 @@ class BasicProcessing:
 
         # Target selection (exclude features with zero variance)
         target_feat = self._select_target_feature(feature_indices, data_tensor)
+        self.selected_target_feature = target_feat  # Store for later access
         target_col = feature_indices.index(target_feat)
         target_values = data_tensor[:, target_col]
 
@@ -176,6 +177,9 @@ class BasicProcessing:
         
         # Enforce requested n_features (truncate if surplus)
         kept_cols = kept_cols[: self.n_features]
+        
+        # Store the feature indices (node names) that were kept for later access
+        self.kept_feature_indices = [feature_indices[col] for col in kept_cols]
 
         X_no_target = data_tensor[:, kept_cols]  # (N, n_features)
         Y_tensor = target_values.unsqueeze(-1)

@@ -405,33 +405,56 @@ class SCM:
     
     def get_adjacency_matrix(self, node_order: Optional[List[str]] = None) -> torch.Tensor:
         """
-        Return the adjacency matrix of the causal DAG.
+        Return the adjacency matrix of the causal DAG with specified node ordering.
         
-        The adjacency matrix A has entry A[i,j] = 1 if there is a directed edge
-        from node i to node j, and 0 otherwise.
+        The adjacency matrix A represents directed edges in the causal graph:
+        - Entry A[i,j] = 1.0 indicates a directed edge from node i to node j
+        - Entry A[i,j] = 0.0 indicates no edge from node i to node j
+        - The diagonal is always zero (no self-loops)
+        
+        The node ordering determines which nodes correspond to which matrix positions.
+        Row i and column i both correspond to the same node (node_order[i]).
         
         Parameters
         ----------
         node_order : Optional[List[str]], default=None
             Order of nodes for the rows/columns of the adjacency matrix.
-            If None, uses the topological order of the DAG.
+            - If None: uses topological order of the DAG
+            - If provided: must contain exactly the nodes in the DAG
+            
+            The order determines the mapping:
+            - node_order[0] ↔ row 0 and column 0
+            - node_order[1] ↔ row 1 and column 1
+            - etc.
             
         Returns
         -------
         torch.Tensor
             Adjacency matrix of shape (num_nodes, num_nodes) with dtype torch.float32.
-            Entry [i,j] is 1.0 if there's an edge from node i to node j, 0.0 otherwise.
+            - Entry [i,j] = 1.0: directed edge from node_order[i] to node_order[j]
+            - Entry [i,j] = 0.0: no edge from node_order[i] to node_order[j]
+            
+        Notes
+        -----
+        This method is particularly useful when you need the adjacency matrix to align
+        with a specific data layout. For example, in InterventionalDataset, the order
+        is set to [treatment, outcome, features...] to match the returned tensors
+        (T, Y, X).
             
         Examples
         --------
-        >>> # Get adjacency matrix in topological order
+        >>> # Get adjacency matrix in topological order (default)
         >>> adj = scm.get_adjacency_matrix()
         >>> adj.shape
         torch.Size([5, 5])
         
         >>> # Get adjacency matrix with custom node order
-        >>> nodes = ['X0', 'X1', 'X2', 'X3', 'X4']
+        >>> # Here we want: treatment node first, outcome node second, then others
+        >>> nodes = [intervention_node, target_node, 'X0', 'X1', 'X2']
         >>> adj = scm.get_adjacency_matrix(node_order=nodes)
+        >>> # Now adj[0,1] tells if treatment causes outcome
+        >>> # adj[2,1] tells if feature X0 causes outcome
+        >>> # adj[0,2] tells if treatment causes feature X0
         """
         if node_order is None:
             node_order = self._topo
