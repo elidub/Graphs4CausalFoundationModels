@@ -4,6 +4,12 @@ Sklearn-like wrapper for InterventionalPFN with ensemble and adaptive clustering
 This module provides a scikit-learn-style interface for InterventionalPFN, inheriting
 most functionality from SimplePFNSklearn and adapting it for interventional causal data.
 
+The InterventionalPFN architecture includes modern improvements:
+- SwiGLU activation instead of GELU for better performance
+- Pre-layer normalization for improved training stability
+- Separate train/test attention without masking (memory efficient)
+- Optional attention sinks for stability
+
 Key differences from SimplePFNSklearn:
 - predict() expects (X_obs, T_obs, Y_obs, X_intv, T_intv) instead of (X_train, y_train, X_test)
 - All ensemble/clustering logic is inherited and adapted for interventional format
@@ -36,17 +42,18 @@ import torch
 from pathlib import Path
 import sys
 
-# Robust import
+# Robust import - try without 'src.' prefix first, then with 'src.' prefix
 try:
-    from src.models.SimplePFN_sklearn import SimplePFNSklearn
-    from src.models.InterventionalPFN import InterventionalPFN
+    from models.SimplePFN_sklearn import SimplePFNSklearn
+    from models.InterventionalPFN import InterventionalPFN
 except Exception:
     try:
-        from models.SimplePFN_sklearn import SimplePFNSklearn
-        from models.InterventionalPFN import InterventionalPFN
+        from src.models.SimplePFN_sklearn import SimplePFNSklearn
+        from src.models.InterventionalPFN import InterventionalPFN
     except Exception:
         repo_root = Path(__file__).resolve().parents[2]
-        sys.path.append(str(repo_root))
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
         from src.models.SimplePFN_sklearn import SimplePFNSklearn
         from src.models.InterventionalPFN import InterventionalPFN
 
@@ -64,8 +71,18 @@ class InterventionalPFNSklearn(SimplePFNSklearn):
     The main difference is that predict() expects interventional data format:
     (X_obs, T_obs, Y_obs, X_intv, T_intv) instead of (X_train, y_train, X_test).
     
+    The InterventionalPFN architecture now includes:
+    - SwiGLU activation for improved performance
+    - Pre-layer normalization for training stability
+    - Separate train/test attention (no masking, memory efficient)
+    - Optional attention sinks for stability
+    
     Parameters:
         Same as SimplePFNSklearn, but model will be InterventionalPFN instead of SimplePFN.
+        Additional model parameters available via config:
+        - use_same_row_mlp: Whether to share row MLP between train and test (default: True)
+        - n_sample_attention_sink_rows: Number of learnable sink rows (default: 0)
+        - n_feature_attention_sink_cols: Number of learnable sink columns (default: 0)
     """
     
     def load(self, override_kwargs: Optional[dict[str, Any]] = None) -> "InterventionalPFNSklearn":
@@ -113,6 +130,9 @@ class InterventionalPFNSklearn(SimplePFNSklearn):
                     "output_dim": get_config_value(model_cfg, "output_dim", 1),
                     "hidden_mult": get_config_value(model_cfg, "hidden_mult", 4),
                     "normalize_features": get_config_value(model_cfg, "normalize_features", True),
+                    "use_same_row_mlp": get_config_value(model_cfg, "use_same_row_mlp", True),
+                    "n_sample_attention_sink_rows": get_config_value(model_cfg, "n_sample_attention_sink_rows", 0),
+                    "n_feature_attention_sink_cols": get_config_value(model_cfg, "n_feature_attention_sink_cols", 0),
                 }
                 
                 if self.verbose:
@@ -122,7 +142,10 @@ class InterventionalPFNSklearn(SimplePFNSklearn):
                 use_bar = get_config_value(model_cfg, "use_bar_distribution", False)
                 if use_bar:
                     self.use_bar_distribution = True
-                    from src.Losses.BarDistribution import BarDistribution
+                    try:
+                        from Losses.BarDistribution import BarDistribution
+                    except ImportError:
+                        from src.Losses.BarDistribution import BarDistribution
                     self.bar_distribution = BarDistribution(
                         num_bars=get_config_value(model_cfg, "num_bars", 50),
                         min_width=float(get_config_value(model_cfg, "min_width", 0.01)),
@@ -150,6 +173,9 @@ class InterventionalPFNSklearn(SimplePFNSklearn):
                     "output_dim": 1,
                     "hidden_mult": 4,
                     "normalize_features": True,
+                    "use_same_row_mlp": True,
+                    "n_sample_attention_sink_rows": 0,
+                    "n_feature_attention_sink_cols": 0,
                 }
         else:
             self.model_kwargs = {
@@ -162,6 +188,9 @@ class InterventionalPFNSklearn(SimplePFNSklearn):
                 "output_dim": 1,
                 "hidden_mult": 4,
                 "normalize_features": True,
+                "use_same_row_mlp": True,
+                "n_sample_attention_sink_rows": 0,
+                "n_feature_attention_sink_cols": 0,
             }
 
         # Apply overrides
@@ -198,6 +227,44 @@ class InterventionalPFNSklearn(SimplePFNSklearn):
             
             # Load BarDistribution parameters if present
             if self.use_bar_distribution and "bar_distribution" in state:
+                if self.bar_distribution is None:
+                    # Create BarDistribution if it doesn't exist yet
+                    try:
+                        from Losses.BarDistribution import BarDistribution
+                    except ImportError:
+                        from src.Losses.BarDistribution import BarDistribution
+                    bar_state = state["bar_distribution"]
+                    self.bar_distribution = BarDistribution(
+                        num_bars=bar_state.get("num_bars", 11),
+                        min_width=bar_state.get("min_width", 1e-6),
+                        scale_floor=bar_state.get("scale_floor", 1e-6),
+                        device=self.device,
+                        max_fit_items=bar_state.get("max_fit_items", None),
+                        log_prob_clip_min=bar_state.get("log_prob_clip_min", -50.0),
+                        log_prob_clip_max=bar_state.get("log_prob_clip_max", 50.0),
+                    )
+                self._load_bar_distribution_parameters(state["bar_distribution"])
+                if self.verbose:
+                    print(f"[InterventionalPFNSklearn] Loaded BarDistribution parameters from checkpoint")
+            elif "bar_distribution" in state and not self.use_bar_distribution:
+                # Checkpoint has bar_distribution but config doesn't - auto-enable it
+                if self.verbose:
+                    print(f"[InterventionalPFNSklearn] Found BarDistribution in checkpoint, enabling it")
+                try:
+                    from Losses.BarDistribution import BarDistribution
+                except ImportError:
+                    from src.Losses.BarDistribution import BarDistribution
+                bar_state = state["bar_distribution"]
+                self.use_bar_distribution = True
+                self.bar_distribution = BarDistribution(
+                    num_bars=bar_state.get("num_bars", 11),
+                    min_width=bar_state.get("min_width", 1e-6),
+                    scale_floor=bar_state.get("scale_floor", 1e-6),
+                    device=self.device,
+                    max_fit_items=bar_state.get("max_fit_items", None),
+                    log_prob_clip_min=bar_state.get("log_prob_clip_min", -50.0),
+                    log_prob_clip_max=bar_state.get("log_prob_clip_max", 50.0),
+                )
                 self._load_bar_distribution_parameters(state["bar_distribution"])
                 if self.verbose:
                     print(f"[InterventionalPFNSklearn] Loaded BarDistribution parameters from checkpoint")

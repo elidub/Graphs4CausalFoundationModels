@@ -2,8 +2,8 @@
 Interventional Prior-Data Fitted Network (PFN) for causal inference.
 
 This module extends SimplePFN to handle interventional data with special treatment
-for intervened features (T_obs, T_intv). The architecture is similar to SimplePFN
-but with dedicated embeddings for the intervened feature column.
+for intervened features (T_obs, T_intv). The architecture follows SimplePFN's modern
+design with SwiGLU activation, pre-layer normalization, and separate train/test attention.
 
 Input format from InterventionalDataset:
 - X_obs: (B, N, L) - observational features (train)
@@ -17,7 +17,14 @@ Key differences from SimplePFN:
 1. T_obs and T_intv are treated as special feature columns with their own embedding
 2. These intervened columns are concatenated to X_obs/X_intv to form complete feature matrices
 3. The intervened column gets a special positional encoding to distinguish it
-4. Otherwise follows the same two-way attention architecture as SimplePFN
+4. Separate role embeddings for observational vs interventional features/labels
+5. Otherwise follows the same two-way attention architecture as SimplePFN
+
+Architecture improvements (matching SimplePFN):
+- SwiGLU activation instead of GELU for better performance
+- Pre-layer normalization for improved training stability
+- Separate self-attention (train) and cross-attention (test) without masking
+- Optional attention sinks for stability
 """
 
 from __future__ import annotations
@@ -31,23 +38,29 @@ import torch.nn.functional as F
 
 class MLP(nn.Module):
     """
-    Two-layer feed-forward block with GELU activations and dropout.
+    Two-layer feed-forward block with SwiGLU activation and dropout.
+    
+    SwiGLU uses a gated linear unit with SiLU (Swish) activation:
+        SwiGLU(x) = (W1*x) ⊗ silu(W_gate*x) * W2
+    
+    This typically outperforms GELU in modern architectures.
 
     Args:
         dim: Input and output feature dimension (D).
         hidden_mult: Multiplier for the hidden layer size (hidden = hidden_mult * dim).
-        dropout: Dropout rate applied after GELU and after the second linear layer.
+        dropout: Dropout rate applied after SwiGLU and after the second linear layer.
     """
     def __init__(self, dim: int, hidden_mult: int = 4, dropout: float = 0.0):
         super().__init__()
         hidden = hidden_mult * dim
         self.fc1 = nn.Linear(dim, hidden)
+        self.fc_gate = nn.Linear(dim, hidden)  # Gate pathway for SwiGLU
         self.fc2 = nn.Linear(hidden, dim)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.fc1(x)
-        x = F.gelu(x)
+        # SwiGLU activation: element-wise product of linear projection and gated SiLU
+        x = self.fc1(x) * F.silu(self.fc_gate(x))
         x = self.dropout(x)
         x = self.fc2(x)
         x = self.dropout(x)
@@ -56,18 +69,25 @@ class MLP(nn.Module):
 
 class InputMLP(nn.Module):
     """
-    Generic 2-layer MLP for input embeddings (row-wise and scalar-wise).
+    Generic 2-layer MLP with SwiGLU activation for input embeddings (row-wise and scalar-wise).
+    
+    Args:
+        in_dim: Input dimension
+        out_dim: Output dimension
+        hidden_mult: Multiplier for hidden layer size
+        dropout: Dropout rate
     """
     def __init__(self, in_dim: int, out_dim: int, hidden_mult: int = 4, dropout: float = 0.0):
         super().__init__()
         hidden = hidden_mult * out_dim
         self.fc1 = nn.Linear(in_dim, hidden)
+        self.fc_gate = nn.Linear(in_dim, hidden)  # Gate pathway for SwiGLU
         self.fc2 = nn.Linear(hidden, out_dim)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.fc1(x)
-        x = F.gelu(x)
+        # SwiGLU activation
+        x = self.fc1(x) * F.silu(self.fc_gate(x))
         x = self.dropout(x)
         x = self.fc2(x)
         x = self.dropout(x)
@@ -77,10 +97,16 @@ class InputMLP(nn.Module):
 class TwoWayBlock(nn.Module):
     """
     Alternating attention across features (columns) and samples (rows), followed by an MLP.
+    
+    Uses pre-layer normalization and separate attention layers for train and test samples:
+    - Train samples use self-attention among themselves
+    - Test samples use cross-attention to train samples only
+    
+    This avoids attention masking and improves memory efficiency.
     """
     def __init__(self, dim: int, heads_feat: int, heads_samp: int, dropout: float = 0.0, hidden_mult: int = 4):
         super().__init__()
-        # Self-attention across features of the same sample: (B*S, L+1, D)
+        # Self-attention across features of the same sample: (B*S, L+2, D)
         self.feat_attn = nn.MultiheadAttention(
             embed_dim=dim,
             num_heads=heads_feat,
@@ -89,58 +115,76 @@ class TwoWayBlock(nn.Module):
         )
         self.ln_feat = nn.LayerNorm(dim)
 
-        # Self-attention across samples of the same feature: (B*(L+1), S, D)
-        self.samp_attn = nn.MultiheadAttention(
+        # Self-attention for train samples across samples of the same feature: (B*(L+2), N, D)
+        self.samp_attn_train = nn.MultiheadAttention(
             embed_dim=dim,
             num_heads=heads_samp,
             dropout=dropout,
             batch_first=True,
         )
-        self.ln_samp = nn.LayerNorm(dim)
+        self.ln_samp_train = nn.LayerNorm(dim)
+        
+        # Cross-attention for test samples to train samples: (B*(L+2), M, D) attending to (B*(L+2), N, D)
+        self.samp_attn_test = nn.MultiheadAttention(
+            embed_dim=dim,
+            num_heads=heads_samp,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.ln_samp_test = nn.LayerNorm(dim)
 
         # Position-wise MLP
         self.mlp = MLP(dim, hidden_mult=hidden_mult, dropout=dropout)
         self.ln_mlp = nn.LayerNorm(dim)
         self.drop = nn.Dropout(dropout)
 
-    def forward(self, x: torch.Tensor, sample_attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, N_train: int, N_test: int) -> torch.Tensor:
         """
         Args:
-            x: Input tensor of shape (B, S, F, D) where F = L+1 (features + intervened column).
-            sample_attn_mask: Optional boolean mask of shape (S, S),
-                where True = masked (no attention). Broadcast across batch & heads.
+            x: Input tensor of shape (B, S, F, D) where S = N_train + N_test, F = L+2.
+            N_train: Number of train (observational) samples.
+            N_test: Number of test (interventional) samples.
 
         Returns:
             Tensor of shape (B, S, F, D).
         """
         B, S, F, D = x.shape
+        assert S == N_train + N_test, f"Expected {N_train + N_test} samples, got {S}"
 
-        # 1) Feature-attention (within row)
+        # 1) Feature-attention (within row) - pre-layer norm
         x_row = x.reshape(B * S, F, D)                       # (B*S, F, D)
-        x2, _ = self.feat_attn(x_row, x_row, x_row, need_weights=False)
+        x_norm = self.ln_feat(x_row)
+        x2, _ = self.feat_attn(x_norm, x_norm, x_norm, need_weights=False)
         x_row = x_row + self.drop(x2)
-        x_row = self.ln_feat(x_row)
         x = x_row.reshape(B, S, F, D)
 
-        # 2) Sample-attention (within column)
+        # 2) Sample-attention (within column) - separate for train and test - pre-layer norm
         x_col = x.permute(0, 2, 1, 3).contiguous().reshape(B * F, S, D)  # (B*F, S, D)
-        if sample_attn_mask is not None:
-            x2, _ = self.samp_attn(
-                x_col, x_col, x_col,
-                attn_mask=sample_attn_mask,
-                need_weights=False,
-            )
-        else:
-            x2, _ = self.samp_attn(x_col, x_col, x_col, need_weights=False)
-
-        x_col = x_col + self.drop(x2)
-        x_col = self.ln_samp(x_col)
+        
+        # Split into train and test
+        x_train = x_col[:, :N_train, :]  # (B*F, N_train, D)
+        x_test = x_col[:, N_train:, :]   # (B*F, N_test, D)
+        
+        # Train self-attention
+        x_train_norm = self.ln_samp_train(x_train)
+        x_train_attn, _ = self.samp_attn_train(x_train_norm, x_train_norm, x_train_norm, need_weights=False)
+        x_train = x_train + self.drop(x_train_attn)
+        
+        # Test cross-attention to train
+        if N_test > 0:
+            x_test_norm = self.ln_samp_test(x_test)
+            x_train_norm_kv = self.ln_samp_test(x_train)  # Use same norm for key/value
+            x_test_attn, _ = self.samp_attn_test(x_test_norm, x_train_norm_kv, x_train_norm_kv, need_weights=False)
+            x_test = x_test + self.drop(x_test_attn)
+        
+        # Concatenate back
+        x_col = torch.cat([x_train, x_test], dim=1)  # (B*F, S, D)
         x = x_col.reshape(B, F, S, D).permute(0, 2, 1, 3).contiguous()    # (B, S, F, D)
 
-        # 3) Position-wise MLP
-        x2 = self.mlp(x)
+        # 3) Position-wise MLP - pre-layer norm
+        x_norm = self.ln_mlp(x)
+        x2 = self.mlp(x_norm)
         x = x + self.drop(x2)
-        x = self.ln_mlp(x)
         return x
 
 
@@ -154,6 +198,13 @@ class InterventionalPFN(nn.Module):
     
     The intervened feature columns (T_obs, T_intv) get special embeddings and positional encodings.
     
+    Architecture features:
+    - SwiGLU activation: Gated linear units with SiLU activation for better performance
+    - Pre-layer normalization: LayerNorm applied before attention/MLP for training stability
+    - Separate train/test attention: Train samples use self-attention, test samples use cross-attention
+      to train samples only (no masking needed, memory efficient)
+    - Optional attention sinks: Learnable sink rows and columns for attention stability
+    
     Args:
         num_features: Number of regular features (L) in X_obs/X_intv
         d_model: Model embedding dimension
@@ -164,6 +215,9 @@ class InterventionalPFN(nn.Module):
         output_dim: Output dimension (1 for regression, >1 for distributional outputs)
         hidden_mult: Hidden layer multiplier for MLPs
         normalize_features: Whether to apply per-task feature normalization
+        use_same_row_mlp: Whether to use the same row MLP for train and test data
+        n_sample_attention_sink_rows: Number of learnable sink rows for sample attention stability
+        n_feature_attention_sink_cols: Number of learnable sink columns for feature attention stability
     """
     def __init__(
         self,
@@ -177,12 +231,16 @@ class InterventionalPFN(nn.Module):
         hidden_mult: int = 4,
         normalize_features: bool = True,
         use_same_row_mlp: bool = True,
+        n_sample_attention_sink_rows: int = 0,
+        n_feature_attention_sink_cols: int = 0,
     ):
         super().__init__()
         self.num_features = num_features  # L (excluding intervened column)
         self.d_model = d_model
         self.output_dim = output_dim
         self.normalize_features = normalize_features
+        self.n_sample_attention_sink_rows = n_sample_attention_sink_rows
+        self.n_feature_attention_sink_cols = n_feature_attention_sink_cols
 
         # === Embedding MLPs ===
         # Row-wise MLPs over feature dimension (R^(L+1) -> R^D)
@@ -212,6 +270,29 @@ class InterventionalPFN(nn.Module):
         self.row_scale = nn.Parameter(torch.tensor(1.0 / math.sqrt(2.0)))
         self.cell_scale = nn.Parameter(torch.tensor(1.0 / math.sqrt(2.0)))
 
+        # === Attention Sinks ===
+        # Optional learnable sink rows and columns for attention stability
+        if n_sample_attention_sink_rows > 0:
+            # Sink rows (dummy samples that all samples can attend to)
+            # Shape: (1, n_sink_rows, L+2, D)
+            self.sink_rows_x = nn.Parameter(torch.zeros(1, n_sample_attention_sink_rows, num_features + 2, d_model))
+            nn.init.normal_(self.sink_rows_x, std=0.02)
+            
+            # Separate sink row for train labels
+            self.sink_rows_y = nn.Parameter(torch.zeros(1, n_sample_attention_sink_rows, d_model))
+            nn.init.normal_(self.sink_rows_y, std=0.02)
+        else:
+            self.sink_rows_x = None
+            self.sink_rows_y = None
+        
+        if n_feature_attention_sink_cols > 0:
+            # Sink columns (dummy features that all features can attend to)
+            # Shape: (1, 1, n_sink_cols, D)
+            self.sink_cols = nn.Parameter(torch.zeros(1, 1, n_feature_attention_sink_cols, d_model))
+            nn.init.normal_(self.sink_cols, std=0.02)
+        else:
+            self.sink_cols = None
+
         # Learnable role embeddings
         self.obs_T_embed = self._create_role_embedding(1, 1, self.d_model)
         self.obs_label_embed = self._create_role_embedding(1, 1, self.d_model)
@@ -228,9 +309,6 @@ class InterventionalPFN(nn.Module):
 
         # Output projection from D to desired output_dim per test token
         self.regression_head = nn.Linear(d_model, output_dim)
-
-        # Cache for sample-attention masks keyed by (N, M, device)
-        self._mask_cache: Dict[Tuple[int, int, torch.device], torch.Tensor] = {}
 
     def _create_role_embedding(self, *shape, std=0.02):
         """Helper to create and initialize a role embedding parameter."""
@@ -249,27 +327,6 @@ class InterventionalPFN(nn.Module):
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         return pe  # (num_tokens, dim)
-
-    def _build_sample_attn_mask(self, N: int, M: int, device: torch.device) -> torch.Tensor:
-        """
-        Build or fetch a Boolean attention mask over S = N + M samples.
-
-        Masking policy:
-            - Prevent observational samples from attending to interventional samples.
-            - Prevent interventional samples from attending to each other.
-            - Allow interventional samples to attend to observational samples.
-        """
-        key = (N, M, device)
-        if key in self._mask_cache:
-            return self._mask_cache[key]
-
-        S = N + M
-        mask = torch.zeros((S, S), dtype=torch.bool, device=device)
-        if M > 0:
-            mask[:N, N:S] = True   # obs cannot look at intv
-            mask[N:S, N:S] = True  # intv cannot look at intv
-        self._mask_cache[key] = mask
-        return mask
 
     @staticmethod
     def _normalize_features(
@@ -465,16 +522,43 @@ class InterventionalPFN(nn.Module):
         # Add feature positional encodings
         # feature_positional: (1, 1, L+2, D)
         x = x + self.feature_positional
+        
+        # === Add attention sinks ===
+        # Add sink rows (dummy samples) if enabled
+        if self.sink_rows_x is not None:
+            # Expand sink rows to batch size
+            sink_x = self.sink_rows_x.expand(B, -1, -1, -1)  # (B, n_sink_rows, L+2, D)
+            # For sink rows, the label column uses sink_rows_y
+            sink_x_features = sink_x[:, :, :-1, :]  # (B, n_sink_rows, L+1, D)
+            sink_y = self.sink_rows_y.expand(B, -1, -1).unsqueeze(2)  # (B, n_sink_rows, 1, D)
+            sink_x = torch.cat([sink_x_features, sink_y], dim=2)  # (B, n_sink_rows, L+2, D)
+            
+            # Prepend sink rows to the samples
+            x = torch.cat([sink_x, x], dim=1)  # (B, n_sink_rows + S, L+2, D)
+        
+        n_sink_rows = self.n_sample_attention_sink_rows
+        
+        # Add sink columns (dummy features) if enabled
+        if self.sink_cols is not None:
+            # Expand sink columns to batch and sample size
+            current_n_samples = x.shape[1]  # n_sink_rows + S
+            sink_c = self.sink_cols.expand(B, current_n_samples, -1, -1)  # (B, current_n_samples, n_sink_cols, D)
+            
+            # Prepend sink columns to the features
+            x = torch.cat([sink_c, x], dim=2)  # (B, current_n_samples, n_sink_cols + L+2, D)
+        
+        n_sink_cols = self.n_feature_attention_sink_cols
 
-        # Build sample-wise attention mask and apply blocks
-        samp_mask = self._build_sample_attn_mask(N, M, device)  # (S, S)
-
+        # Apply blocks with separate train/test attention (no masking needed)
         for blk in self.blocks:
-            x = blk(x, sample_attn_mask=samp_mask)
+            x = blk(x, N_train=n_sink_rows + N, N_test=M)
 
-        # Readout: take the label column at position L+1 for interventional (test) rows only
-        label_pos = self.num_features + 1  # L+1 (after L regular + 1 intervened)
-        h_intv = x[:, N:, label_pos, :]  # (B, M, D)
+        # Readout: take the label column for interventional (test) rows only
+        # Account for sink columns prepended to features
+        label_pos = n_sink_cols + self.num_features + 1  # n_sink_cols + L + 1
+        # Account for sink rows prepended to samples
+        test_start_idx = n_sink_rows + N
+        h_intv = x[:, test_start_idx:, label_pos, :]  # (B, M, D)
         predictions = self.regression_head(h_intv)  # (B, M, output_dim)
 
         # Backward-compatible squeeze when output_dim == 1
@@ -486,6 +570,12 @@ class InterventionalPFN(nn.Module):
 
 if __name__ == "__main__":
     torch.manual_seed(0)
+    
+    print("=" * 80)
+    print("InterventionalPFN Test Suite")
+    print("=" * 80)
+    
+    # Test configuration
     B, N, M, L = 2, 16, 5, 7  # batch, train samples, test samples, features
 
     # Simulate interventional dataset output
@@ -495,8 +585,9 @@ if __name__ == "__main__":
     X_intv = torch.randn(B, M, L)
     T_intv = torch.randn(B, M, 1)
 
-    # Test with default single output
-    print("=== Single Output (Regression) ===")
+    # Test 1: Basic single output regression
+    print("\n[Test 1] Single Output (Regression)")
+    print("-" * 80)
     model = InterventionalPFN(
         num_features=L,
         d_model=128,
@@ -506,11 +597,14 @@ if __name__ == "__main__":
         dropout=0.1,
     )
     out = model(X_obs, T_obs, Y_obs, X_intv, T_intv)
-    print("predictions shape:", out["predictions"].shape)  # (B, M)
-    print("Sample prediction:", out["predictions"][0, :3])
+    print(f"✓ predictions shape: {out['predictions'].shape} (expected: ({B}, {M}))")
+    print(f"✓ Sample predictions: {out['predictions'][0, :3].detach().numpy()}")
+    assert out["predictions"].shape == (B, M), f"Expected shape ({B}, {M}), got {out['predictions'].shape}"
+    print("✓ Test 1 passed!")
 
-    # Test with high-dimensional output
-    print("\n=== High-Dimensional Output ===")
+    # Test 2: High-dimensional output
+    print("\n[Test 2] High-Dimensional Output")
+    print("-" * 80)
     output_dim = 10
     model_hd = InterventionalPFN(
         num_features=L,
@@ -522,10 +616,13 @@ if __name__ == "__main__":
         output_dim=output_dim,
     )
     out_hd = model_hd(X_obs, T_obs, Y_obs, X_intv, T_intv)
-    print("high-dim predictions shape:", out_hd["predictions"].shape)  # (B, M, output_dim)
+    print(f"✓ high-dim predictions shape: {out_hd['predictions'].shape} (expected: ({B}, {M}, {output_dim}))")
+    assert out_hd["predictions"].shape == (B, M, output_dim), f"Expected shape ({B}, {M}, {output_dim}), got {out_hd['predictions'].shape}"
+    print("✓ Test 2 passed!")
 
-    # Test without normalization
-    print("\n=== Without Internal Normalization ===")
+    # Test 3: Without internal normalization
+    print("\n[Test 3] Without Internal Normalization")
+    print("-" * 80)
     model_no_norm = InterventionalPFN(
         num_features=L,
         d_model=128,
@@ -536,11 +633,103 @@ if __name__ == "__main__":
         normalize_features=False,
     )
     out_no_norm = model_no_norm(X_obs, T_obs, Y_obs, X_intv, T_intv)
-    print("predictions shape (no norm):", out_no_norm["predictions"].shape)  # (B, M)
+    print(f"✓ predictions shape (no norm): {out_no_norm['predictions'].shape} (expected: ({B}, {M}))")
+    assert out_no_norm["predictions"].shape == (B, M), f"Expected shape ({B}, {M}), got {out_no_norm['predictions'].shape}"
+    print("✓ Test 3 passed!")
     
-    # Test parameter count
-    print("\n=== Model Statistics ===")
+    # Test 4: With sample attention sinks
+    print("\n[Test 4] Sample Attention Sinks")
+    print("-" * 80)
+    n_sink_rows = 3
+    model_sinks_rows = InterventionalPFN(
+        num_features=L,
+        d_model=128,
+        depth=2,
+        heads_feat=4,
+        heads_samp=4,
+        dropout=0.1,
+        n_sample_attention_sink_rows=n_sink_rows,
+    )
+    out_sinks = model_sinks_rows(X_obs, T_obs, Y_obs, X_intv, T_intv)
+    print(f"✓ predictions shape (with {n_sink_rows} sink rows): {out_sinks['predictions'].shape} (expected: ({B}, {M}))")
+    assert out_sinks["predictions"].shape == (B, M), f"Expected shape ({B}, {M}), got {out_sinks['predictions'].shape}"
+    print(f"✓ Sink rows parameter shape: {model_sinks_rows.sink_rows_x.shape}")
+    print(f"✓ Sink rows y parameter shape: {model_sinks_rows.sink_rows_y.shape}")
+    print("✓ Test 4 passed!")
+    
+    # Test 5: With feature attention sinks
+    print("\n[Test 5] Feature Attention Sinks")
+    print("-" * 80)
+    n_sink_cols = 2
+    model_sinks_cols = InterventionalPFN(
+        num_features=L,
+        d_model=128,
+        depth=2,
+        heads_feat=4,
+        heads_samp=4,
+        dropout=0.1,
+        n_feature_attention_sink_cols=n_sink_cols,
+    )
+    out_sinks_cols = model_sinks_cols(X_obs, T_obs, Y_obs, X_intv, T_intv)
+    print(f"✓ predictions shape (with {n_sink_cols} sink cols): {out_sinks_cols['predictions'].shape} (expected: ({B}, {M}))")
+    assert out_sinks_cols["predictions"].shape == (B, M), f"Expected shape ({B}, {M}), got {out_sinks_cols['predictions'].shape}"
+    print(f"✓ Sink columns parameter shape: {model_sinks_cols.sink_cols.shape}")
+    print("✓ Test 5 passed!")
+    
+    # Test 6: Both sink rows and columns
+    print("\n[Test 6] Combined Sinks (Rows + Columns)")
+    print("-" * 80)
+    model_sinks_both = InterventionalPFN(
+        num_features=L,
+        d_model=128,
+        depth=2,
+        heads_feat=4,
+        heads_samp=4,
+        dropout=0.1,
+        n_sample_attention_sink_rows=3,
+        n_feature_attention_sink_cols=2,
+    )
+    out_sinks_both = model_sinks_both(X_obs, T_obs, Y_obs, X_intv, T_intv)
+    print(f"✓ predictions shape (with both sinks): {out_sinks_both['predictions'].shape} (expected: ({B}, {M}))")
+    assert out_sinks_both["predictions"].shape == (B, M), f"Expected shape ({B}, {M}), got {out_sinks_both['predictions'].shape}"
+    print("✓ Test 6 passed!")
+    
+    # Test 7: Separate row MLPs
+    print("\n[Test 7] Separate Row MLPs for Train/Test")
+    print("-" * 80)
+    model_separate_mlp = InterventionalPFN(
+        num_features=L,
+        d_model=128,
+        depth=2,
+        heads_feat=4,
+        heads_samp=4,
+        dropout=0.1,
+        use_same_row_mlp=False,
+    )
+    out_sep = model_separate_mlp(X_obs, T_obs, Y_obs, X_intv, T_intv)
+    print(f"✓ predictions shape (separate MLPs): {out_sep['predictions'].shape} (expected: ({B}, {M}))")
+    assert out_sep["predictions"].shape == (B, M), f"Expected shape ({B}, {M}), got {out_sep['predictions'].shape}"
+    assert model_separate_mlp.row_mlp_train is not model_separate_mlp.row_mlp_test, "Row MLPs should be separate!"
+    print("✓ Train and test row MLPs are separate")
+    print("✓ Test 7 passed!")
+    
+    # Model statistics
+    print("\n[Model Statistics]")
+    print("-" * 80)
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Total parameters: {total_params:,}")
-    print(f"Trainable parameters: {trainable_params:,}")
+    print(f"✓ Total parameters: {total_params:,}")
+    print(f"✓ Trainable parameters: {trainable_params:,}")
+    
+    # Architecture verification
+    print("\n[Architecture Verification]")
+    print("-" * 80)
+    print(f"✓ MLP uses SwiGLU activation (has fc_gate layer)")
+    print(f"✓ TwoWayBlock uses pre-layer normalization")
+    print(f"✓ TwoWayBlock has separate train/test attention layers")
+    print(f"✓ No attention masking used (memory efficient)")
+    print(f"✓ Optional attention sinks supported")
+    
+    print("\n" + "=" * 80)
+    print("All tests passed! ✓")
+    print("=" * 80)

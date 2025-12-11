@@ -80,6 +80,11 @@ try:
 except ImportError:
     from src.priordata_processing.Preprocessor import Preprocessor
 
+try:
+    from models.InterventionalPFN_sklearn import InterventionalPFNSklearn
+except ImportError:
+    from src.models.InterventionalPFN_sklearn import InterventionalPFNSklearn
+
 
 class Benchmark:
     def __init__(
@@ -713,12 +718,6 @@ class Benchmark:
         results: List[Dict[str, Any]] = []
         models = self._get_baseline_models(baseline_set)
 
-        # lazy import of PFN wrapper
-        try:
-            from models.SimplePFN_sklearn import SimplePFNSklearn
-        except ImportError:
-            from src.models.SimplePFN_sklearn import SimplePFNSklearn
-
         use_device = self.device
 
         if not self.quiet:
@@ -804,7 +803,9 @@ class Benchmark:
                             model_cfg = cfg.get("model_config", {}) if isinstance(cfg, dict) else {}
                             use_bar_distribution = model_cfg.get("use_bar_distribution", {}).get("value", False)
 
-                            pfn = SimplePFNSklearn(
+                            # Use InterventionalPFNSklearn for interventional models
+                            # (trained with InterventionalPFN, which has treatment input)
+                            pfn = InterventionalPFNSklearn(
                                 config_path=self.config_path,
                                 checkpoint_path=checkpoint_path,
                                 device=use_device,
@@ -836,7 +837,11 @@ class Benchmark:
                                     raise ValueError("BarDistribution expected from config but not found in loaded model. "
                                                    "The model checkpoint should include fitted BarDistribution parameters.")
                             
-                            y_pred_pfn = pfn.predict(X_train, y_train, X_test)
+                            # For interventional models, create dummy treatment columns (all zeros for observational data)
+                            T_train = np.zeros((X_train.shape[0], 1), dtype=np.float32)
+                            T_test = np.zeros((X_test.shape[0], 1), dtype=np.float32)
+                            
+                            y_pred_pfn = pfn.predict(X_train, T_train, y_train, X_test, T_test)
 
                             if np.isnan(y_pred_pfn).any():
                                 print(f"y_pred_pfn contains NaN values for task {tid} repeat {rep}. Skipping PFN evaluation.")
@@ -847,7 +852,10 @@ class Benchmark:
                             r2_pfn = float(r2_score(y_test, y_pred_pfn))
                         except Exception as e:
                             if not self.quiet:
+                                import traceback
                                 print(f"[Benchmark] PFN failed on task {tid} repeat {rep}: {e}")
+                                print(f"[Benchmark] Full traceback:")
+                                traceback.print_exc()
                     if mse_pfn is not None:
                         metrics_row["mse_pfn"] = mse_pfn
                         metrics_row["r2_pfn"] = r2_pfn

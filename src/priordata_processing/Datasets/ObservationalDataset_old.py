@@ -9,14 +9,12 @@ import os
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from priors.causal_prior.noise_distributions.ResamplingDist import ResamplingDist
-
 from priors.causal_prior.scm.SCMSampler import SCMSampler
 from priordata_processing.BasicProcessing import BasicProcessing
 from utils import FixedSampler, TorchDistributionSampler, CategoricalSampler, DiscreteUniformSampler
 
 
-class InterventionalDataset(Dataset):
+class ObservationalDataset(Dataset):
     """
     Dataset for purely observational causal data (no interventions).
     
@@ -68,15 +66,10 @@ class InterventionalDataset(Dataset):
     EXPECTED_DATASET_HYPERPARAMETERS = {
         "dataset_size": int,
         "max_number_features": int,
-        # New config scheme: caps and total per dataset
-        "max_number_samples_per_dataset": int,
-        "max_number_train_samples_per_dataset": int,
-        "max_number_test_samples_per_dataset": int,
-        # Per-dataset sampling distributions (classic naming kept for compatibility)
+        "max_number_train_samples": int,
+        "max_number_test_samples": int,
         "number_train_samples_per_dataset": (torch.distributions.Distribution, int),
         "number_test_samples_per_dataset": (torch.distributions.Distribution, int),
-        # Optional new key to drive collator; we accept it but don't use directly here
-        "n_test_samples_per_dataset": (torch.distributions.Distribution, int),
     }
     
     # Distribution factories for building samplers
@@ -135,18 +128,6 @@ class InterventionalDataset(Dataset):
         self.dataset_config = dataset_config
         self.seed = seed
         
-        # Helper to extract value from config entries that may be plain or dicts with {'value': ...}
-        def _get_cfg_value(cfg: Dict[str, Any], key: str, default: Any):
-            raw = cfg.get(key, default)
-            if isinstance(raw, dict) and "value" in raw:
-                return raw["value"]
-            return raw
-
-        # Rejection sampling settings (optional)
-        self.min_target_variance = _get_cfg_value(self.dataset_config, "min_target_variance", None)
-        # Prevent infinite loops: cap the number of re-sampling attempts
-        self.max_resample_attempts = int(_get_cfg_value(self.dataset_config, "max_resample_attempts", 10) or 10)
-        
         # Build samplers for preprocessing and dataset parameters
         self.preprocessing_samplers = self._build_samplers(
             self.preprocessing_config, 
@@ -183,24 +164,12 @@ class InterventionalDataset(Dataset):
         
         # Extract only the dataset size (fixed for whole dataset)
         self.size = dataset_params["dataset_size"]
-
+        
         # Store max values as attributes (these should be fixed)
-        self.max_number_features = dataset_params.get("max_number_features")
-        # Backward compatibility: accept both old and new keys
-        self.max_number_train_samples = dataset_params.get(
-            "max_number_train_samples_per_dataset",
-            dataset_params.get("max_number_train_samples", 0),
-        )
-        self.max_number_test_samples = dataset_params.get(
-            "max_number_test_samples_per_dataset",
-            dataset_params.get("max_number_test_samples", 0),
-        )
-        # New total cap (not strictly needed inside this Dataset, but recorded for reference)
-        self.max_number_samples_per_dataset = dataset_params.get(
-            "max_number_samples_per_dataset",
-            self.max_number_train_samples + self.max_number_test_samples,
-        )
-
+        self.max_number_features = dataset_params["max_number_features"]
+        self.max_number_train_samples = dataset_params["max_number_train_samples"]
+        self.max_number_test_samples = dataset_params["max_number_test_samples"]
+        
         # Don't store the distributions - they will be sampled per item in __getitem__
     
     def _build_samplers(self, config: Dict[str, Any], expected_params: Dict[str, Any], 
@@ -256,20 +225,6 @@ class InterventionalDataset(Dataset):
         sampled_params = {}
         
         for param_name, sampler in samplers.items():
-            # If the parameter is not part of the expected types, sample it loosely and skip validation.
-            if param_name not in expected_types:
-                # Handle samplers that are FixedSampler-like or torch distributions
-                if hasattr(sampler, 'sample'):
-                    try:
-                        value = sampler.sample(generator)
-                    except TypeError:
-                        # Some samplers may not accept a generator
-                        value = sampler.sample()
-                else:
-                    value = sampler
-                sampled_params[param_name] = value
-                continue
-
             if param_name in ["number_train_samples_per_dataset", "number_test_samples_per_dataset"]:
                 # Special case: handle FixedSampler, PyTorch distribution, or int directly
                 if isinstance(sampler, FixedSampler):
@@ -314,37 +269,11 @@ class InterventionalDataset(Dataset):
     def __len__(self):
         return self.size
     
-    def _contains_nan(self, *tensors):
-        """Check if any of the provided tensors contains NaN values."""
-        for tensor in tensors:
-            if tensor is not None and torch.isnan(tensor).any():
-                return True
-        return False
-    
     def __getitem__(self, idx):
-        """Get item with retry logic if NaN values are detected."""
         if idx < 0 or idx >= self.size:
             raise IndexError(f"Index {idx} out of range for dataset of size {self.size}")
         
-        max_retries = 10
-        for attempt in range(max_retries):
-            result = self._get_item_internal(idx, attempt)
-            
-            # Check if result contains NaN
-            if not self._contains_nan(*result):
-                return result
-            
-            # NaN detected, print warning and retry
-            print(f"[InterventionalDataset] Warning: NaN detected in sample {idx} (attempt {attempt + 1}/{max_retries}). Resampling...")
-        
-        # If we've exhausted retries, raise an error
-        raise RuntimeError(f"Failed to generate valid sample for index {idx} after {max_retries} attempts (NaN persists)")
-    
-    def _get_item_internal(self, idx, attempt=0):
-        """Internal method to generate a single item."""
-        # Use attempt number to vary the seed for retries
         seed = self.seed + idx if self.seed is not None else idx
-        seed = seed + attempt * 1000000  # Offset seed by attempt number
         torch.manual_seed(seed)
         
         # Create a generator for this specific item
@@ -366,13 +295,6 @@ class InterventionalDataset(Dataset):
             "dataset",
             item_generator
         )
-
-        if "number_train_samples_per_dataset" not in dataset_params: 
-            train_dist = self.dataset_config["max_number_train_samples_per_dataset"]["value"]
-            dataset_params["number_train_samples_per_dataset"] = train_dist
-        if "number_test_samples_per_dataset" not in dataset_params:
-            test_dist = self.dataset_config["max_number_test_samples_per_dataset"]["value"]
-            dataset_params["number_test_samples_per_dataset"] = test_dist
         
         # Extract sample counts from dataset params
         train_dist = dataset_params["number_train_samples_per_dataset"]
@@ -393,137 +315,50 @@ class InterventionalDataset(Dataset):
         else:
             number_test_samples = int(test_dist.sample(item_generator) if hasattr(test_dist, 'sample') else test_dist)
         
-        # Rejection strategy: resample if target variances are too small
-        # We re-run SCM sampling up to max_resample_attempts
-        retry_attempt = 0
-        last_result = None
-        while True:
-            # Sample an SCM
-            scm = self.scm_sampler.sample(seed=seed + retry_attempt)
-            
-            # sample the observational data first
-            scm.sample_exogenous(num_samples=number_train_samples)
-            scm.sample_endogenous(num_samples=number_train_samples)
-
-            obs0_raw = scm.propagate(num_samples=number_train_samples)
-            # Reshape from (N,) to (N,1) for BasicProcessing compatibility
-            obs0 = {k: v.reshape(-1, 1) if v.dim() == 1 else v for k, v in obs0_raw.items()}
-
-            # now, do interventional sampling
-            # for interventional sampling, first determine intervention node
-            intervention_node = torch.randint(0, len(scm.dag.nodes()), (1,)).item() # select random node for intervention
-
-            scm.sample_exogenous(num_samples=number_test_samples) #sample observational data again. 
-            scm.sample_endogenous(num_samples=number_test_samples) #sample observational data again. 
-
-            obs1_raw = scm.propagate(num_samples=number_test_samples)  # fresh observational batch (test-size)
-
-            # Collect observational samples for the chosen intervention node (marginal)
-            intervention_samples = obs1_raw[intervention_node]
-
-            # Resampling distribution over observational marginal (without replacement)
-            interventional_dist = ResamplingDist(intervention_samples)
-
-            scm.intervene(node = intervention_node) # intervene on the chosen node
-
-            # Replace the noise distribution for the intervened node with its observational marginal
-            if intervention_node in scm.dag.endogenous_variables():
-                scm.endogenous_noise[intervention_node] = interventional_dist
-            if intervention_node in scm.dag.exogenous_variables():
-                scm.exogenous_noise[intervention_node] = interventional_dist
-
-            # Sample new noise for interventional scenario
-            scm.sample_exogenous(num_samples=number_test_samples)
-            scm.sample_endogenous(num_samples=number_test_samples)
-
-            interv1_raw = scm.propagate(num_samples=number_test_samples)  # interventional data (post-intervention)
-            # Reshape from (N,) to (N,1) for BasicProcessing compatibility
-            interv1 = {k: v.reshape(-1, 1) if v.dim() == 1 else v for k, v in interv1_raw.items()}
-            
-            # Create BasicProcessing instance with sampled preprocessing parameters
-            # Map legacy combined flags to new split flags with sensible defaults
-            _feature_standardize = preprocessing_params.get("feature_standardize",
-                                                           preprocessing_params.get("standardize", True))
-            _feature_neg11 = preprocessing_params.get("feature_negative_one_one_scaling",
-                                                      False if _feature_standardize else preprocessing_params.get("negative_one_one_scaling", True))
-            _target_neg11 = preprocessing_params.get("target_negative_one_one_scaling",
-                                                     preprocessing_params.get("negative_one_one_scaling", True))
-
-            processor = BasicProcessing(
-                n_features=self.max_number_features,
-                max_n_features=self.max_number_features,
-                n_train_samples=number_train_samples,
-                max_n_train_samples=self.max_number_train_samples,
-                n_test_samples=number_test_samples,
-                max_n_test_samples=self.max_number_test_samples,
-                dropout_prob=preprocessing_params["dropout_prob"],
-                target_feature=preprocessing_params["target_feature"],
-                intervened_feature=intervention_node,
-                random_seed=preprocessing_params["random_seed"],
-                # Legacy flags retained, but split flags take precedence internally
-                negative_one_one_scaling=preprocessing_params.get("negative_one_one_scaling", True),
-                standardize=preprocessing_params.get("standardize", True),
-                # New split flags
-                feature_standardize=_feature_standardize,
-                feature_negative_one_one_scaling=_feature_neg11,
-                target_negative_one_one_scaling=_target_neg11,
-                yeo_johnson=preprocessing_params["yeo_johnson"],
-                remove_outliers=preprocessing_params["remove_outliers"],
-                outlier_quantile=preprocessing_params["outlier_quantile"],
-                shuffle_samples=preprocessing_params["shuffle_data"],
-                shuffle_features=False,  # Default
-                y_clip_quantile=preprocessing_params.get("y_clip_quantile"),
-                eps=preprocessing_params.get("eps", 1e-8),
-                device=None,  # Default
-                dtype=None,  # Default
-            )
-            
-            # Process observational (train) and interventional (test) splits separately
-            processed = processor.process_from_splits(
-                train_dataset=obs0,
-                test_dataset=interv1,
-                mode='fast'
-            )
-            
-            # Unpack results
-            if len(processed) == 4:
-                X_obs, Y_obs, X_intv, Y_intv = processed
-                result = (X_obs, Y_obs, X_intv, Y_intv)
-            else:
-                X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = processed
-                result = (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
-            
-            # Save latest result so we can return even if rejection keeps failing
-            last_result = result
-            
-            # If no threshold provided, accept immediately
-            if self.min_target_variance is None:
-                break
-            
-            # Compute variances on the target for observational (train) and interventional (test)
-            # Y_* may have shape (N, 1); use flatten for variance computation
-            var_obs = torch.var(Y_obs.reshape(-1))
-            var_intv = torch.var(Y_intv.reshape(-1))
-            
-            # Normalize threshold to float if provided as str in YAML
-            threshold = self.min_target_variance
-            if threshold is not None and isinstance(threshold, str):
-                try:
-                    threshold = float(threshold)
-                except ValueError:
-                    # If parsing fails, disable rejection to avoid crashing
-                    threshold = None
-            
-            # Check threshold
-            if threshold is None:
-                break  # Accept since no valid threshold
-            
-            if (var_obs.item() >= threshold) and (var_intv.item() >= threshold):
-                break  # Accept
-            
-            retry_attempt += 1
-            if retry_attempt >= self.max_resample_attempts:
-                # Give up and return the last sampled data to avoid infinite loop
-                break
+        # Sample an SCM
+        scm = self.scm_sampler.sample(seed=seed)
         
-        return last_result
+        # Total samples needed
+        total_samples = number_train_samples + number_test_samples
+        
+        # Generate data from SCM
+        scm.sample_exogenous(num_samples=total_samples)
+        scm.sample_endogenous(num_samples=total_samples)
+        scm_data = scm.propagate(num_samples=total_samples)
+        
+        # Convert to format expected by BasicProcessing
+        # SCM returns {node_id: tensor with shape [num_samples, *node_shape]}
+        # BasicProcessing expects {feature_id: tensor with shape [num_samples, 1]}
+        dataset = {}
+        for key, value in scm_data.items():
+            # Reshape to [num_samples, 1] regardless of original node_shape
+            dataset[key] = value.reshape(total_samples, -1)
+        
+        # Create BasicProcessing instance with sampled preprocessing parameters
+        processor = BasicProcessing(
+            n_features=self.max_number_features,
+            max_n_features=self.max_number_features,
+            n_train_samples=number_train_samples,
+            max_n_train_samples=self.max_number_train_samples,
+            n_test_samples=number_test_samples,
+            max_n_test_samples=self.max_number_test_samples,
+            dropout_prob=preprocessing_params["dropout_prob"],
+            target_feature=preprocessing_params["target_feature"],
+            random_seed=preprocessing_params["random_seed"],
+            negative_one_one_scaling=preprocessing_params["negative_one_one_scaling"],
+            standardize=preprocessing_params["standardize"],
+            yeo_johnson=preprocessing_params["yeo_johnson"],
+            remove_outliers=preprocessing_params["remove_outliers"],
+            outlier_quantile=preprocessing_params["outlier_quantile"],
+            shuffle_samples=preprocessing_params["shuffle_data"],
+            shuffle_features=True,  # Default
+            y_clip_quantile=preprocessing_params.get("y_clip_quantile"),
+            eps=preprocessing_params.get("eps", 1e-8),
+            device=None,  # Default
+            dtype=None,  # Default
+        )
+        
+        # Process the data
+        X_train, Y_train, X_test, Y_test = processor.process(dataset)
+        
+        return X_train, Y_train, X_test, Y_test

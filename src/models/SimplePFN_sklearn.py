@@ -13,18 +13,19 @@ from pathlib import Path
 from sklearn.cluster import KMeans
 # Removed sklearn preprocessing imports - using identity preprocessing only
 
-# Robust import: try package-style, then relative, then add repo root to sys.path
+# Robust import: try without 'src.' prefix first, then with 'src.' prefix, then add to path
 try:
-    from src.models.SimplePFN import SimplePFNRegressor
-    from src.Losses.BarDistribution import BarDistribution
+    from models.SimplePFN import SimplePFNRegressor
+    from Losses.BarDistribution import BarDistribution
 except Exception:
     try:
-        from models.SimplePFN import SimplePFNRegressor
-        from Losses.BarDistribution import BarDistribution
+        from src.models.SimplePFN import SimplePFNRegressor
+        from src.Losses.BarDistribution import BarDistribution
     except Exception:
         import sys
         repo_root = Path(__file__).resolve().parents[2]
-        sys.path.append(str(repo_root))
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
         from src.models.SimplePFN import SimplePFNRegressor
         from src.Losses.BarDistribution import BarDistribution
 
