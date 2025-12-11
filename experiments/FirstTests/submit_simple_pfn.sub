@@ -12,7 +12,7 @@ when_to_transfer_output = ON_EXIT
 environment = "HOME=/tmp/wandb_home WANDB_API_KEY=e5ba90a037256650557e4644545bd281151588c8 CUDA_VISIBLE_DEVICES="
 
 request_gpus   = 1
-request_memory = 64GB
+request_memory = 128GB
 request_cpus   = 70
 request_disk   = 128GB
 
