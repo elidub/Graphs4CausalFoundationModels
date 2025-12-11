@@ -47,7 +47,8 @@ class Trainer:
         benchmark_final_fidelity: Optional[str] = None,  # Run benchmark at end with this fidelity
         benchmark: Optional[object] = None,  # Benchmark instance constructed by run.py
         # Mixed precision training
-        use_amp: bool = False,  # Enable automatic mixed precision (float16)
+        use_amp: bool = False,  # Enable automatic mixed precision
+        amp_dtype: Optional[str] = None,  # 'fp16' or 'bf16' to select autocast dtype
         gradient_clip_val: float = 0.0,  # Gradient clipping value (0.0 to disable)
         schedule_name: Optional[str] = None,  # curriculum schedule name for logging
     ):
@@ -146,10 +147,19 @@ class Trainer:
         
         # Setup mixed precision training
         self.use_amp = use_amp and torch.cuda.is_available()  # Only enable if CUDA available
+        # Select autocast dtype
+        if amp_dtype == 'bf16':
+            self._autocast_dtype = torch.bfloat16
+        elif amp_dtype == 'fp16' or amp_dtype is None:
+            self._autocast_dtype = torch.float16
+        else:
+            self._autocast_dtype = torch.float16
+
         if self.use_amp:
-            # Use CUDA AMP GradScaler; constructor does not take a device argument
-            self.scaler = torch.cuda.amp.GradScaler(enabled=True)
-            print(f"Mixed precision training ENABLED (float16)")
+            # Use new torch.amp API (device_type='cuda') to avoid deprecation warnings
+            self.scaler = torch.amp.GradScaler('cuda', enabled=True)
+            dtype_name = 'bfloat16' if self._autocast_dtype == torch.bfloat16 else 'float16'
+            print(f"Mixed precision training ENABLED ({dtype_name})")
         else:
             self.scaler = None
             if use_amp and not torch.cuda.is_available():
@@ -992,7 +1002,8 @@ class Trainer:
                 X_train, y_train, X_test, y_test = batch_data
 
             # Forward + loss
-            with torch.cuda.amp.autocast(enabled=self.use_amp, dtype=torch.float16):
+            # Use new torch.amp.autocast API with explicit device type and configurable dtype
+            with torch.amp.autocast('cuda', enabled=self.use_amp, dtype=self._autocast_dtype):
                 if len(batch_data) == 6:
                     # InterventionalPFN forward
                     output = self.model(X_obs, T_obs, Y_obs, X_intv, T_intv)

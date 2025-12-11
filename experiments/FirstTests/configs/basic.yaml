@@ -406,7 +406,7 @@ training_config:
   use_amp:  # Enable automatic mixed precision (float16) for faster training on GPU
     value: true
   precision: # precision for training. 
-    value: "16"
+    value: "bf16"
 
   # Experiment Organization
   experiment_name: # name of the experiment, used for logging 

@@ -615,12 +615,20 @@ def main():
             # Ensure CUDA device when 16-bit requested
             if str(device).lower() == "cpu":
                 print("WARNING: 16-bit precision requested but device is CPU. Falling back to float32. Set device: 'cuda' for AMP.")
+        # Allow user to request bf16 via precision flag string "bf16" or explicit amp_dtype
+        amp_dtype = None
+        if isinstance(precision_flag, str) and precision_flag.strip().lower() == 'bf16':
+            amp_dtype = 'bf16'
+            use_amp = True
+        elif training_config.get('amp_dtype', None) in ['bf16', 'fp16']:
+            amp_dtype = training_config.get('amp_dtype')
         gradient_clip_val = training_config.get("gradient_clip_val", 0.0)
         
         # Print mixed precision training status
         print(f"\nMIXED PRECISION TRAINING:")
         if use_amp:
-            print(f"   Status: ENABLED (float16)")
+            dtype_name = 'bfloat16' if amp_dtype == 'bf16' else 'float16'
+            print(f"   Status: ENABLED ({dtype_name})")
             print(f"   Expected speedup: 1.5-2x on modern GPUs (requires CUDA)")
             print(f"   Memory usage: ~50% reduction")
         else:
@@ -780,6 +788,7 @@ def main():
             benchmark=benchmark,
             # Mixed precision training
             use_amp=use_amp,
+            amp_dtype=amp_dtype,
             gradient_clip_val=gradient_clip_val,
             schedule_name=interp_name if has_curriculum else "none",
         )

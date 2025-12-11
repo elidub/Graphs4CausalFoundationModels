@@ -393,7 +393,9 @@ class BarDistribution(PosteriorPredictive):
             z = (yL - edges[0]) / sL_sel  # negative values
             log_gauss = self._log_norm_const - torch.log(sL_sel) - 0.5 * z * z
             log_pdf_left = torch.log(torch.tensor(2.0, device=device, dtype=dtype)) + log_pL[left_mask] + log_gauss
-            logpdf[left_mask] = torch.clamp(log_pdf_left, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
+            log_pdf_left = torch.clamp(log_pdf_left, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
+            # Ensure dtype matches destination (important under AMP)
+            logpdf[left_mask] = log_pdf_left.to(dtype=logpdf.dtype)
 
         # Right half-Gaussian
         if right_mask.any():
@@ -402,7 +404,9 @@ class BarDistribution(PosteriorPredictive):
             z = (yR - edges[-1]) / sR_sel  # nonnegative
             log_gauss = self._log_norm_const - torch.log(sR_sel) - 0.5 * z * z
             log_pdf_right = torch.log(torch.tensor(2.0, device=device, dtype=dtype)) + log_pR[right_mask] + log_gauss
-            logpdf[right_mask] = torch.clamp(log_pdf_right, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
+            log_pdf_right = torch.clamp(log_pdf_right, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
+            # Ensure dtype matches destination
+            logpdf[right_mask] = log_pdf_right.to(dtype=logpdf.dtype)
 
         # Bars (constant density within bar): log f(y) = log p_k - log width_k for the active bar
         if mid_mask.any():
@@ -413,7 +417,8 @@ class BarDistribution(PosteriorPredictive):
             # Gather log p_k for active bar
             log_pk = log_pBars_all.gather(dim=-1, index=k.view(-1, 1)).squeeze(-1)
             log_dens_mid = log_pk - torch.log(widths_k)
-            logpdf[mid_mask] = torch.clamp(log_dens_mid, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
+            log_dens_mid = torch.clamp(log_dens_mid, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
+            logpdf[mid_mask] = log_dens_mid.to(dtype=logpdf.dtype)
 
         # Final clamp for safety
         return torch.clamp(logpdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
@@ -620,20 +625,20 @@ class BarDistribution(PosteriorPredictive):
         mid_mask = ~(left_mask | right_mask)
 
         # Left half-Gaussian: f(y) = 2 pL * N(y; edge_left, sL)
-        if left_mask.any():
-            yL = y[left_mask]
-            sL_sel = sL[left_mask]
-            z = (yL - edges[0]) / sL_sel  # negative values
-            # log N = log_norm_const - log s - 0.5 z^2
-            log_gauss = self._log_norm_const - torch.log(sL_sel) - 0.5 * z * z
-            log_pdf = torch.log(torch.tensor(2.0, device=device, dtype=dtype)) + torch.log(pL[left_mask]) + log_gauss
-            clamped_log = torch.clamp(log_pdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
-            pdf[left_mask] = torch.exp(clamped_log).to(dtype=pdf.dtype)
-
-        # Right half-Gaussian
-        if right_mask.any():
-            yR = y[right_mask]
-            sR_sel = sR[right_mask]
+        if mid_mask.any():
+            internal = edges[1:-1]  # (K-1,)
+            k = torch.bucketize(y[mid_mask], internal, right=False)  # (num_mid,), values in [0, K-1]
+            widths_k = widths[k]  # (num_mid,)
+            
+            # log f(y in bar k) = log pBar_k - log width_k
+            # Gather the active bar probability for each y using k as index
+            idx = k.view(-1, 1)
+            p_mid = pBars[mid_mask]
+            log_p_active = torch.gather(torch.log(p_mid), dim=1, index=idx).squeeze(-1)
+            log_density_mid = log_p_active - torch.log(widths_k)
+            log_density_mid = torch.clamp(log_density_mid, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
+            # Ensure dtype matches destination
+            logpdf[mid_mask] = log_density_mid.to(dtype=logpdf.dtype)
             z = (yR - edges[-1]) / sR_sel  # nonnegative
             log_gauss = self._log_norm_const - torch.log(sR_sel) - 0.5 * z * z
             log_pdf = torch.log(torch.tensor(2.0, device=device, dtype=dtype)) + torch.log(pR[right_mask]) + log_gauss
