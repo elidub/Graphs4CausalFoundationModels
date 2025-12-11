@@ -251,47 +251,67 @@ class Trainer:
 
     def _process_batch(self, batch):
         """
-        Process a batch for SimplePFN training.
+        Process a batch for InterventionalPFN training.
         
-        DataLoader returns a list of 4 tensors:
+        DataLoader can return two formats:
+        
+        Format 1 (ObservationalDataset - 4 tensors):
         - batch[0]: X_train (batch_size, n_train, features)
         - batch[1]: y_train (batch_size, n_train, 1)
         - batch[2]: X_test (batch_size, n_test, features)
         - batch[3]: y_test (batch_size, n_test, 1)
         
-        SimplePFN expects the same format. We now process the full batch.
+        Format 2 (InterventionalDataset - 6 tensors):
+        - batch[0]: X_obs (batch_size, n_train, features)
+        - batch[1]: T_obs (batch_size, n_train, 1) - intervened feature column
+        - batch[2]: Y_obs (batch_size, n_train) or (batch_size, n_train, 1)
+        - batch[3]: X_intv (batch_size, n_test, features)
+        - batch[4]: T_intv (batch_size, n_test, 1) - intervened feature column
+        - batch[5]: Y_intv (batch_size, n_test) or (batch_size, n_test, 1) [not used in forward]
+        
+        Returns appropriate format for the model being used.
         """
-        if isinstance(batch, list) and (len(batch) == 4 or len(batch) == 6):
-            X_train, y_train, X_test, y_test = batch[:4]
-            # If t, alpha present, record first values for logging
-            if len(batch) >= 6:
-                t_batch, a_batch = batch[4], batch[5]
-                try:
-                    t0 = float(t_batch[0].item()) if hasattr(t_batch, 'shape') else float(t_batch)
-                    a0 = float(a_batch[0].item()) if hasattr(a_batch, 'shape') else float(a_batch)
-                except Exception:
-                    # best effort fallback
-                    try:
-                        t0 = float(t_batch)
-                        a0 = float(a_batch)
-                    except Exception:
-                        t0, a0 = float('nan'), float('nan')
-                self._latest_schedule_info['train/t0'] = t0
-                self._latest_schedule_info['train/alpha0'] = a0
-            
-            # Move to device
-            X_train = X_train.to(self.device)
-            y_train = y_train.to(self.device)
-            X_test = X_test.to(self.device)
-            y_test = y_test.to(self.device)
-            
-            # Flatten y_test for loss computation while keeping batch dimension
-            # y_test: (batch_size, n_test, 1) -> (batch_size, n_test)
-            y_test = y_test.squeeze(-1)
-            
-            return X_train, y_train, X_test, y_test
+        if isinstance(batch, list):
+            if len(batch) == 6:
+                # Interventional format
+                X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = batch
+                
+                # Move to device
+                X_obs = X_obs.to(self.device)
+                T_obs = T_obs.to(self.device)
+                Y_obs = Y_obs.to(self.device)
+                X_intv = X_intv.to(self.device)
+                T_intv = T_intv.to(self.device)
+                Y_intv = Y_intv.to(self.device)
+                
+                # Ensure Y shapes are consistent (flatten if needed)
+                if Y_obs.dim() == 3:
+                    Y_obs = Y_obs.squeeze(-1)  # (B, N, 1) -> (B, N)
+                if Y_intv.dim() == 3:
+                    Y_intv = Y_intv.squeeze(-1)  # (B, M, 1) -> (B, M)
+                
+                # Return interventional format: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
+                return X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv
+                
+            elif len(batch) == 4:
+                # Observational format (backward compatibility)
+                X_train, y_train, X_test, y_test = batch
+                
+                # Move to device
+                X_train = X_train.to(self.device)
+                y_train = y_train.to(self.device)
+                X_test = X_test.to(self.device)
+                y_test = y_test.to(self.device)
+                
+                # Flatten y_test for loss computation while keeping batch dimension
+                if y_test.dim() == 3:
+                    y_test = y_test.squeeze(-1)  # (B, M, 1) -> (B, M)
+                
+                return X_train, y_train, X_test, y_test
+            else:
+                raise ValueError(f"Expected list of 4 or 6 tensors, got {len(batch)}")
         else:
-            raise ValueError(f"Expected list of 4 tensors, got {type(batch)} with length {len(batch) if hasattr(batch, '__len__') else 'unknown'}")
+            raise ValueError(f"Expected list, got {type(batch)}")
 
     def save_model(self, filename=None, metadata=None):
         """Save model to disk.
@@ -644,10 +664,20 @@ class Trainer:
                     if batch_idx >= self.eval_batches:
                         break
 
-                    X_train, y_train, X_test, y_test = self._process_batch(batch)
-
-                    # Forward pass
-                    output = self.model(X_train, y_train, X_test)
+                    batch_data = self._process_batch(batch)
+                    
+                    # Check if interventional or observational format
+                    if len(batch_data) == 6:
+                        # Interventional format
+                        X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = batch_data
+                        y_test = Y_intv  # Ground truth for loss
+                        # Forward pass for InterventionalPFN
+                        output = self.model(X_obs, T_obs, Y_obs, X_intv, T_intv)
+                    else:
+                        # Observational format (backward compatibility)
+                        X_train, y_train, X_test, y_test = batch_data
+                        # Forward pass for SimplePFN
+                        output = self.model(X_train, y_train, X_test)
 
                     # Extract predictions
                     if isinstance(output, dict) and 'predictions' in output:
@@ -905,14 +935,22 @@ class Trainer:
         
         # Print initial batch info
         sample_batch = next(iter(self.dataloader))
-        if isinstance(sample_batch, list) and (len(sample_batch) == 4 or len(sample_batch) == 6):
+        if isinstance(sample_batch, list):
             batch_size = sample_batch[0].shape[0]
-            n_train = sample_batch[0].shape[1]
-            n_test = sample_batch[2].shape[1]
-            features = sample_batch[0].shape[2]
-            print(f"Batch structure: {batch_size} samples, {n_train} train points, {n_test} test points, {features} features")
-            # If t/alpha present, print the first values seen
-            if len(sample_batch) >= 6:
+            if len(sample_batch) == 6:
+                # Interventional format: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
+                n_train = sample_batch[0].shape[1]
+                n_test = sample_batch[3].shape[1]
+                features = sample_batch[0].shape[2]
+                print(f"Batch structure (Interventional): {batch_size} samples, {n_train} obs points, {n_test} intv points, {features} features")
+            elif len(sample_batch) == 4:
+                # Observational format: (X_train, y_train, X_test, y_test)
+                n_train = sample_batch[0].shape[1]
+                n_test = sample_batch[2].shape[1]
+                features = sample_batch[0].shape[2]
+                print(f"Batch structure (Observational): {batch_size} samples, {n_train} train points, {n_test} test points, {features} features")
+            # Legacy: If t/alpha present in old curriculum format (not used in interventional)
+            if len(sample_batch) >= 6 and sample_batch[4].dim() == 0:
                 try:
                     t0 = float(sample_batch[4][0].item())
                     a0 = float(sample_batch[5][0].item())
@@ -940,15 +978,108 @@ class Trainer:
             if micro_count % self.accumulate_grad_batches == 0:
                 self.optimizer.zero_grad()
 
-            X_train, y_train, X_test, y_test = self._process_batch(batch)
+            batch_data = self._process_batch(batch)
+            
+            # Check if interventional or observational format
+            if len(batch_data) == 6:
+                # Interventional format
+                X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = batch_data
+                y_test = Y_intv  # Ground truth for loss
+                X_train = X_obs  # For logging
+            else:
+                # Observational format (backward compatibility)
+                X_train, y_train, X_test, y_test = batch_data
 
             # Forward + loss
             with torch.amp.autocast('cuda', enabled=self.use_amp, dtype=torch.float16):
-                output = self.model(X_train, y_train, X_test)
+                if len(batch_data) == 6:
+                    # InterventionalPFN forward
+                    output = self.model(X_obs, T_obs, Y_obs, X_intv, T_intv)
+                else:
+                    # SimplePFN forward
+                    output = self.model(X_train, y_train, X_test)
+                    
                 if isinstance(output, dict) and 'predictions' in output:
                     predictions = output['predictions']
                 else:
                     predictions = output
+
+                # Check for NaN predictions and raise error with full input details
+                if torch.isnan(predictions).any():
+                    print("\n" + "="*80)
+                    print("ERROR: Model produced NaN predictions!")
+                    print("="*80)
+                    print(f"\nPredictions shape: {predictions.shape}")
+                    print(f"Number of NaN values: {torch.isnan(predictions).sum().item()}")
+                    print(f"\nPredictions:\n{predictions}")
+                    
+                    if len(batch_data) == 6:
+                        print("\n" + "-"*80)
+                        print("INTERVENTIONAL FORMAT INPUT TENSORS:")
+                        print("-"*80)
+                        
+                        # X_obs: compute variance per batch element per feature
+                        print(f"\nX_obs (observational features) shape: {X_obs.shape}")
+                        print(f"X_obs:\n{X_obs}")
+                        print(f"\nX_obs variance per batch element per feature:")
+                        for b in range(X_obs.shape[0]):
+                            var_per_feature = torch.var(X_obs[b], dim=0)  # Variance across samples for each feature
+                            print(f"  Batch element {b}: {var_per_feature}")
+                        
+                        # T_obs: compute variance per batch element
+                        print(f"\nT_obs (observational intervention targets) shape: {T_obs.shape}")
+                        print(f"T_obs:\n{T_obs}")
+                        print(f"\nT_obs variance per batch element:")
+                        for b in range(T_obs.shape[0]):
+                            var = torch.var(T_obs[b])
+                            print(f"  Batch element {b}: {var.item()}")
+                        
+                        # Y_obs: compute variance per batch element
+                        print(f"\nY_obs (observational targets) shape: {Y_obs.shape}")
+                        print(f"Y_obs:\n{Y_obs}")
+                        print(f"\nY_obs variance per batch element:")
+                        for b in range(Y_obs.shape[0]):
+                            var = torch.var(Y_obs[b])
+                            print(f"  Batch element {b}: {var.item()}")
+                        
+                        # X_intv: compute variance per batch element per feature
+                        print(f"\nX_intv (intervention features) shape: {X_intv.shape}")
+                        print(f"X_intv:\n{X_intv}")
+                        print(f"\nX_intv variance per batch element per feature:")
+                        for b in range(X_intv.shape[0]):
+                            var_per_feature = torch.var(X_intv[b], dim=0)  # Variance across samples for each feature
+                            print(f"  Batch element {b}: {var_per_feature}")
+                        
+                        # T_intv: compute variance per batch element
+                        print(f"\nT_intv (intervention targets) shape: {T_intv.shape}")
+                        print(f"T_intv:\n{T_intv}")
+                        print(f"\nT_intv variance per batch element:")
+                        for b in range(T_intv.shape[0]):
+                            var = torch.var(T_intv[b])
+                            print(f"  Batch element {b}: {var.item()}")
+                        
+                        # Y_intv: compute variance per batch element
+                        print(f"\nY_intv (ground truth) shape: {Y_intv.shape}")
+                        print(f"Y_intv:\n{Y_intv}")
+                        print(f"\nY_intv variance per batch element:")
+                        for b in range(Y_intv.shape[0]):
+                            var = torch.var(Y_intv[b])
+                            print(f"  Batch element {b}: {var.item()}")
+                    else:
+                        print("\n" + "-"*80)
+                        print("OBSERVATIONAL FORMAT INPUT TENSORS:")
+                        print("-"*80)
+                        print(f"\nX_train shape: {X_train.shape}")
+                        print(f"X_train:\n{X_train}")
+                        print(f"\ny_train shape: {y_train.shape}")
+                        print(f"y_train:\n{y_train}")
+                        print(f"\nX_test shape: {X_test.shape}")
+                        print(f"X_test:\n{X_test}")
+                        print(f"\ny_test shape: {y_test.shape}")
+                        print(f"y_test:\n{y_test}")
+                    
+                    print("\n" + "="*80)
+                    raise RuntimeError("Model produced NaN predictions. See full tensor dump above.")
 
                 if self.bar_distribution is not None:
                     if len(predictions.shape) == 2:

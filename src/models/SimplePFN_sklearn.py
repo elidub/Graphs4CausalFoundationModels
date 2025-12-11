@@ -1355,6 +1355,190 @@ class SimplePFNSklearn:
         else:
             raise ValueError(f"Unknown aggregate method: {aggregate}")
 
+    def predict_variance(self, X_train: Any, y_train: Any, X_test: Any, 
+                        num_samples: int = 1000,
+                        aggregate: Literal["mean", "median", "none"] = "mean") -> np.ndarray:
+        """
+        Estimate the predictive variance using Monte Carlo sampling.
+        
+        Computes Var[y] = E[y²] - E[y]² by drawing samples from the posterior distribution.
+        Requires BarDistribution to be enabled.
+        
+        Args:
+            X_train: Training features
+            y_train: Training targets
+            X_test: Test features
+            num_samples: Number of Monte Carlo samples to draw (default: 1000)
+            aggregate: How to aggregate ensemble predictions if n_estimators > 1
+                - "mean": Average variance across ensemble members (default)
+                - "median": Median variance across ensemble members
+                - "none": Return all variances with shape (n_estimators, M)
+                
+        Returns:
+            Predictive variance for each test sample (M,) or (n_estimators, M) if aggregate="none"
+            
+        Raises:
+            ValueError: If BarDistribution is not enabled
+        """
+        if not self.use_bar_distribution:
+            raise ValueError("predict_variance() requires BarDistribution to be enabled in config")
+        
+        # Draw samples from the posterior: shape (M, num_samples) or (n_estimators, M, num_samples)
+        samples = self.predict(X_train, y_train, X_test, 
+                              prediction_type="sample", 
+                              num_samples=num_samples,
+                              aggregate="none")  # Always get individual ensemble members first
+        
+        # Handle ensemble dimension
+        if self.use_ensemble and self.n_estimators > 1:
+            # samples shape: (n_estimators, num_samples, M) -> need to transpose to (n_estimators, M, num_samples)
+            # Wait, let's check the actual output shape from predict with sample type
+            if samples.ndim == 3:
+                # Could be (n_estimators, num_samples, M) or (n_estimators, M, num_samples)
+                # Based on _predict_ensemble_batched implementation, it should be (n_estimators, num_samples, M)
+                # So we transpose to (n_estimators, M, num_samples)
+                samples = samples.transpose(0, 2, 1)
+            # Now samples shape: (n_estimators, M, num_samples)
+            
+            # Compute variance for each ensemble member: Var[y] = E[y²] - E[y]²
+            mean_samples = np.mean(samples, axis=2)  # (n_estimators, M)
+            mean_squared_samples = np.mean(samples**2, axis=2)  # (n_estimators, M)
+            variances = mean_squared_samples - mean_samples**2  # (n_estimators, M)
+            
+            # Aggregate across ensemble members
+            if aggregate == "none":
+                return variances  # (n_estimators, M)
+            elif aggregate == "mean":
+                return np.mean(variances, axis=0)  # (M,)
+            elif aggregate == "median":
+                return np.median(variances, axis=0)  # (M,)
+            else:
+                raise ValueError(f"Unknown aggregate method: {aggregate}")
+        else:
+            # Single model: samples shape should be (M, num_samples)
+            if samples.ndim == 3:
+                # squeeze out singleton ensemble dimension if present
+                samples = samples.squeeze(0)
+            
+            # Compute variance: Var[y] = E[y²] - E[y]²
+            mean_samples = np.mean(samples, axis=1)  # (M,)
+            mean_squared_samples = np.mean(samples**2, axis=1)  # (M,)
+            variance = mean_squared_samples - mean_samples**2  # (M,)
+            
+            return variance
+
+    def predict_entropy(self, X_train: Any, y_train: Any, X_test: Any, 
+                       num_samples: int = 1000,
+                       aggregate: Literal["mean", "median", "none"] = "mean") -> np.ndarray:
+        """
+        Estimate the predictive entropy using Monte Carlo sampling.
+        
+        Computes H[p(y)] ≈ -E[log p(y)] by drawing samples and evaluating log probabilities.
+        Higher entropy indicates higher uncertainty in predictions.
+        Requires BarDistribution to be enabled.
+        
+        Args:
+            X_train: Training features
+            y_train: Training targets
+            X_test: Test features
+            num_samples: Number of Monte Carlo samples to draw (default: 1000)
+            aggregate: How to aggregate ensemble predictions if n_estimators > 1
+                - "mean": Average entropy across ensemble members (default)
+                - "median": Median entropy across ensemble members
+                - "none": Return all entropies with shape (n_estimators, M)
+                
+        Returns:
+            Predictive entropy for each test sample (M,) or (n_estimators, M) if aggregate="none"
+            
+        Raises:
+            ValueError: If BarDistribution is not enabled
+        """
+        if not self.use_bar_distribution:
+            raise ValueError("predict_entropy() requires BarDistribution to be enabled in config")
+        
+        if self.model is None:
+            raise RuntimeError("Model not built. Call load() before predict_entropy().")
+        
+        # Convert inputs
+        if hasattr(X_train, "values"):
+            X_train = X_train.values
+        if hasattr(X_test, "values"):
+            X_test = X_test.values
+        if hasattr(y_train, "values"):
+            y_train = y_train.values
+        
+        X_train_np = np.asarray(X_train, dtype=np.float32)
+        X_test_np = np.asarray(X_test, dtype=np.float32)
+        y_train_np = np.asarray(y_train, dtype=np.float32)
+        
+        # Handle ensemble/clustering routing to get raw model outputs
+        # We need to get the distribution parameters to compute log probabilities
+        
+        # For simplicity, we'll draw samples and estimate entropy as -E[log p(y)]
+        # where we approximate p(y) using kernel density estimation on the samples
+        from scipy.stats import gaussian_kde
+        
+        # Draw samples: shape (M, num_samples) or (n_estimators, M, num_samples)
+        samples = self.predict(X_train_np, y_train_np, X_test_np,
+                              prediction_type="sample",
+                              num_samples=num_samples,
+                              aggregate="none")
+        
+        # Handle ensemble dimension
+        if self.use_ensemble and self.n_estimators > 1:
+            if samples.ndim == 3:
+                # samples shape: (n_estimators, num_samples, M) -> transpose to (n_estimators, M, num_samples)
+                samples = samples.transpose(0, 2, 1)
+            # Now samples shape: (n_estimators, M, num_samples)
+            
+            entropies = np.zeros((self.n_estimators, samples.shape[1]))
+            
+            for ens_idx in range(self.n_estimators):
+                for test_idx in range(samples.shape[1]):
+                    sample_set = samples[ens_idx, test_idx, :]
+                    
+                    # Use KDE to estimate the density
+                    try:
+                        kde = gaussian_kde(sample_set)
+                        log_probs = kde.logpdf(sample_set)
+                        # Entropy: H = -E[log p(y)]
+                        entropies[ens_idx, test_idx] = -np.mean(log_probs)
+                    except:
+                        # If KDE fails (e.g., all samples identical), use zero entropy
+                        entropies[ens_idx, test_idx] = 0.0
+            
+            # Aggregate across ensemble members
+            if aggregate == "none":
+                return entropies  # (n_estimators, M)
+            elif aggregate == "mean":
+                return np.mean(entropies, axis=0)  # (M,)
+            elif aggregate == "median":
+                return np.median(entropies, axis=0)  # (M,)
+            else:
+                raise ValueError(f"Unknown aggregate method: {aggregate}")
+        else:
+            # Single model: samples shape should be (M, num_samples)
+            if samples.ndim == 3:
+                samples = samples.squeeze(0)
+            
+            M = samples.shape[0]
+            entropies = np.zeros(M)
+            
+            for test_idx in range(M):
+                sample_set = samples[test_idx, :]
+                
+                # Use KDE to estimate the density
+                try:
+                    kde = gaussian_kde(sample_set)
+                    log_probs = kde.logpdf(sample_set)
+                    # Entropy: H = -E[log p(y)]
+                    entropies[test_idx] = -np.mean(log_probs)
+                except:
+                    # If KDE fails (e.g., all samples identical), use zero entropy
+                    entropies[test_idx] = 0.0
+            
+            return entropies
+
 
 if __name__ == "__main__":
     # Run a small end-to-end inference test using the project config and checkpoint

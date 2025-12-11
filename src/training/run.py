@@ -25,9 +25,11 @@ if str(src_dir) not in sys.path:
 
 # AFTER the preamble, do project imports
 from priordata_processing.Datasets.ObservationalDataset import ObservationalDataset
+from priordata_processing.Datasets.InterventionalDataset import InterventionalDataset
 # Import interpolated curriculum dataset (for t0/t1 curriculum configs)
 from priordata_processing.Datasets.InterpolatedObservationalDataset import InterpolatedObservationalDataset
 from models.SimplePFN import SimplePFNRegressor
+from models.InterventionalPFN import InterventionalPFN
 
 # Import our training modules
 from trainer import Trainer
@@ -266,7 +268,7 @@ def main():
             )
             print(f"   Interpolated curriculum dataset created with {len(dataset)} samples")
         else:
-            print("   Creating observational dataset (classic)...")
+            print("   Creating interventional dataset (classic)...")
             # Auto-compute dataset_size when configured as None for classic config too
             try:
                 max_steps = int(training_config.get('max_steps', 10))
@@ -301,7 +303,7 @@ def main():
                         'config/max_steps': max_steps,
                         'config/batch_size': batch_size_cfg,
                     })
-            dataset = ObservationalDataset(
+            dataset = InterventionalDataset(
                 scm_config=scm_config,
                 preprocessing_config=preprocessing_config,
                 dataset_config=dataset_config,
@@ -503,9 +505,9 @@ def main():
             print(f"\n   Using standard MSE loss (no BarDistribution)")
             output_dim = model_config.get("output_dim", 1)
         
-        # Create SimplePFN model
+        # Create InterventionalPFN model
         print(f"\nMODEL CREATION:")
-        model = SimplePFNRegressor(
+        model = InterventionalPFN(
             num_features=num_features,
             d_model=model_config.get("d_model", 8),
             depth=model_config.get("depth", 1), 
@@ -523,7 +525,7 @@ def main():
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"   Total parameters: {total_params:,}")
         print(f"   Trainable parameters: {trainable_params:,}")
-        print(f"   SimplePFN model created")
+        print(f"   InterventionalPFN model created")
         
         # Print attention sink configuration
         n_sink_rows = model_config.get("n_sample_attention_sink_rows", 0)

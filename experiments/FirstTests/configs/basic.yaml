@@ -37,13 +37,16 @@ scm_config:
       - 0.2
       - 0.3
       probabilities:
-      - 0.9
-      - 0.1
-      - 0.01
-      - 0.001
-        #- 0.8
-        #- 0.1
-        #- 0.1
+      #- 0.9
+      #- 0.1
+      #- 0.01
+      #- 0.001
+      #- 1.0
+      #- 0.0
+      #- 0.0
+      #- 0.0
+
+
   mechanism_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -338,6 +341,13 @@ model_config:
     value: 0
   n_feature_attention_sink_cols:  # number of fixed random columns to prepend as attention sinks (0 = disabled)
     value: 0
+    value: false
+  
+  # Attention Sink Configuration
+  n_sample_attention_sink_rows:  # number of fixed random rows to prepend as attention sinks (0 = disabled)
+    value: 5
+  n_feature_attention_sink_cols:  # number of fixed random columns to prepend as attention sinks (0 = disabled)
+    value: 5
 
   # BarDistribution Configuration (used to model the output distribution)
   use_bar_distribution:

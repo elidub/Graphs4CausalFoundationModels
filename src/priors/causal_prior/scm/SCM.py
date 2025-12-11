@@ -13,6 +13,7 @@ if str(src_path) not in sys.path:
 from priors.causal_prior.causal_graph.CausalDAG import CausalDAG
 from priors.causal_prior.mechanisms.BaseMechanism import BaseMechanism
 from priors.causal_prior.noise_distributions.DistributionInterface import Distribution
+from priors.causal_prior.mechanisms.InterventionMechanism import InterventionMechanism
 
 
 class SCM:
@@ -228,6 +229,175 @@ class SCM:
         self._fixed_exogenous = None
         self._fixed_endogenous = None
         self._fixed_batch = None
+
+    # ------------------------------------------------------------------
+    # Mechanism management
+    # ------------------------------------------------------------------
+    def set_mechanism(self, node: str, mechanism: BaseMechanism) -> None:
+        """Replace the structural mechanism for a given node.
+
+        Simplified version: always skips validation, never resets cached noise,
+        and always recomputes structure bookkeeping.
+
+        Parameters
+        ----------
+        node : str
+            Name of the node in the DAG whose mechanism should be replaced.
+        mechanism : BaseMechanism
+            New mechanism instance. Its ``node_shape`` defines the node's output shape.
+        """
+        if node not in self.dag.nodes():
+            raise KeyError(f"Node '{node}' not found in DAG.")
+
+        self.mechanisms[node] = mechanism
+        # Always recompute to keep slices consistent if shape changed.
+        self._recompute_structure()
+
+    def set_dag(self, dag: CausalDAG) -> None:
+        """Replace the causal DAG with a new one.
+
+        Updates the graph structure and recomputes all topology-dependent
+        bookkeeping (parent relationships, topological order, root/non-root
+        classification, noise orderings, slices).
+
+        Parameters
+        ----------
+        dag : CausalDAG
+            New directed acyclic graph. Node names should match existing
+            mechanism keys, or you may need to update mechanisms separately.
+
+        Notes
+        -----
+        - Does NOT validate that mechanisms match new graph nodes.
+        - Does NOT reset cached noise; if node count or exo/endo split changes,
+          caller must re-sample before propagate().
+        - Recomputes all internal topology structures.
+        """
+        self.dag = dag
+        self._recompute_topology()
+
+    def intervene(self, node: str) -> None:
+        """Perform a do-intervention on a specific node.
+
+        Implements Pearl's do-operator by:
+        1. Removing all incoming edges to the intervened node (graph surgery)
+        2. Replacing the node's mechanism with an identity function that
+           simply outputs the noise term
+
+        This makes the node independent of its former parents and directly
+        determined by its assigned noise distribution.
+
+        Parameters
+        ----------
+        node : str
+            Name of the node to intervene on. Must exist in the DAG.
+
+        Notes
+        -----
+        - Modifies the DAG structure (removes incoming edges)
+        - Replaces the mechanism with InterventionMechanism (identity on noise)
+        - Automatically recomputes topology and structure bookkeeping
+        - Does NOT reset cached noise; existing noise samples remain valid
+        - The intervened node becomes exogenous (root) if it wasn't already
+
+        Examples
+        --------
+        >>> # Perform intervention do(X2 = noise)
+        >>> scm.intervene('X2')
+        >>> # X2 is now independent of its former parents
+        >>> # Sample noise and propagate as usual
+        >>> scm.sample_exogenous(100)
+        >>> scm.sample_endogenous(100)
+        >>> samples = scm.propagate(100)
+        """
+        if node not in self.dag.nodes():
+            raise KeyError(f"Node '{node}' not found in DAG.")
+
+        
+
+        # Step 1: Remove all incoming edges (graph surgery)
+        parents = self.dag.parents(node)
+        for parent in parents:
+            self.dag.g.remove_edge(parent, node)
+
+        # Step 2: Replace mechanism with identity (output = noise)
+        # InterventionMechanism has input_dim=0 and preserves node_shape
+        original_shape = self._node_shape.get(node, ())
+        intervention_mechanism = InterventionMechanism(node_shape=original_shape)
+        
+        # Directly set the mechanism (topology recomputation happens next)
+        self.mechanisms[node] = intervention_mechanism
+
+        # Step 3: Recompute topology (node is now a root)
+        self._recompute_topology()
+
+    # Internal: recompute node shapes + slices (extracted from __init__ logic)
+    def _recompute_structure(self) -> None:
+        """Recompute per-node shapes, flattened dims, parent slices, and noise slices.
+
+        Safe to call after a mechanism output shape change.
+        """
+        # Node shapes
+        for v in self._topo:
+            if v in self.mechanisms:
+                self._node_shape[v] = tuple(self.mechanisms[v].node_shape)
+            elif self._is_root[v]:
+                self._node_shape[v] = tuple(self._user_node_shapes.get(v, ()))
+            else:
+                self._node_shape[v] = tuple(self._user_node_shapes.get(v, ()))
+
+        self._flat_dim = {
+            v: (int(torch.tensor(self._node_shape[v]).prod().item()) if self._node_shape[v] else 1)
+            for v in self._topo
+        }
+
+        # Parent feature slices
+        self._parent_slices = {}
+        self._parent_total_dim = {}
+        for v in self._topo:
+            off, slices = 0, []
+            for p in self._parents[v]:
+                d = self._flat_dim[p]
+                slices.append((p, off, off + d))
+                off += d
+            self._parent_slices[v] = slices
+            self._parent_total_dim[v] = off
+
+        # Noise ordering slices (exo)
+        exo_off = 0
+        self._exo_slices = {}
+        for v in self._exo_order:
+            d = 1 if self.use_exogenous_mechanisms else self._flat_dim[v]
+            self._exo_slices[v] = (exo_off, exo_off + d)
+            exo_off += d
+        self._total_exo_dim = exo_off
+
+        # Noise ordering slices (endo)
+        endo_off = 0
+        self._endo_slices = {}
+        for v in self._endo_order:
+            d = self._flat_dim[v]
+            self._endo_slices[v] = (endo_off, endo_off + d)
+            endo_off += d
+        self._total_endo_dim = endo_off
+
+    def _recompute_topology(self) -> None:
+        """Recompute topology, parent relationships, and all derived structures.
+
+        Called by set_dag() when the graph is replaced.
+        """
+        # Recompute topology & parents
+        self._topo = self.dag.topo_order()
+        self._parents = {v: self.dag.parents(v) for v in self._topo}
+        self._is_root = {v: (len(self._parents[v]) == 0) for v in self._topo}
+
+        # Update exo/endo orders
+        roots = [v for v in self._topo if self._is_root[v]]
+        self._exo_order = roots
+        self._endo_order = [v for v in self._topo if not self._is_root[v]]
+
+        # Recompute all structure (shapes, slices, etc.)
+        self._recompute_structure()
 
     # ----------------------------------------------------------------------
     # Noise sampling
