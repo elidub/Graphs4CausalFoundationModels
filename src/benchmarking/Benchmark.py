@@ -85,6 +85,11 @@ try:
 except ImportError:
     from src.models.InterventionalPFN_sklearn import InterventionalPFNSklearn
 
+try:
+    from models.SimplePFN_sklearn import SimplePFNSklearn
+except ImportError:
+    from src.models.SimplePFN_sklearn import SimplePFNSklearn
+
 
 class Benchmark:
     def __init__(
@@ -802,18 +807,38 @@ class Benchmark:
                                 cfg = yaml.safe_load(f)
                             model_cfg = cfg.get("model_config", {}) if isinstance(cfg, dict) else {}
                             use_bar_distribution = model_cfg.get("use_bar_distribution", {}).get("value", False)
+                            
+                            # Read mode from config to determine which model to use
+                            mode = cfg.get("mode", "interventional").lower()
+                            if mode not in ["predictive", "interventional"]:
+                                raise ValueError(f"Invalid mode '{mode}' in config. Must be 'predictive' or 'interventional'")
 
-                            # Use InterventionalPFNSklearn for interventional models
-                            # (trained with InterventionalPFN, which has treatment input)
-                            pfn = InterventionalPFNSklearn(
-                                config_path=self.config_path,
-                                checkpoint_path=checkpoint_path,
-                                device=use_device,
-                                verbose=not self.quiet,
-                                n_estimators=self.n_estimators,
-                                norm_methods=self.norm_methods,
-                                outlier_strategies=self.outlier_strategies,
-                            )
+                            # Create the appropriate model based on mode
+                            if mode == "predictive":
+                                if not self.quiet:
+                                    print(f"[Benchmark] Using SimplePFNSklearn (predictive mode)")
+                                pfn = SimplePFNSklearn(
+                                    config_path=self.config_path,
+                                    checkpoint_path=checkpoint_path,
+                                    device=use_device,
+                                    verbose=not self.quiet,
+                                    n_estimators=self.n_estimators,
+                                    norm_methods=self.norm_methods,
+                                    outlier_strategies=self.outlier_strategies,
+                                )
+                            else:  # interventional
+                                if not self.quiet:
+                                    print(f"[Benchmark] Using InterventionalPFNSklearn (interventional mode)")
+                                pfn = InterventionalPFNSklearn(
+                                    config_path=self.config_path,
+                                    checkpoint_path=checkpoint_path,
+                                    device=use_device,
+                                    verbose=not self.quiet,
+                                    n_estimators=self.n_estimators,
+                                    norm_methods=self.norm_methods,
+                                    outlier_strategies=self.outlier_strategies,
+                                )
+                            
                             mkwargs = {
                                 "num_features": int(self.max_n_features or X_train.shape[1]),
                             }
@@ -837,11 +862,15 @@ class Benchmark:
                                     raise ValueError("BarDistribution expected from config but not found in loaded model. "
                                                    "The model checkpoint should include fitted BarDistribution parameters.")
                             
-                            # For interventional models, create dummy treatment columns (all zeros for observational data)
-                            T_train = np.zeros((X_train.shape[0], 1), dtype=np.float32)
-                            T_test = np.zeros((X_test.shape[0], 1), dtype=np.float32)
-                            
-                            y_pred_pfn = pfn.predict(X_train, T_train, y_train, X_test, T_test)
+                            # Call predict with the appropriate signature based on mode
+                            if mode == "predictive":
+                                # SimplePFN: no treatment variables
+                                y_pred_pfn = pfn.predict(X_train, y_train, X_test)
+                            else:  # interventional
+                                # InterventionalPFN: create dummy treatment columns (all zeros for observational data)
+                                T_train = np.zeros((X_train.shape[0], 1), dtype=np.float32)
+                                T_test = np.zeros((X_test.shape[0], 1), dtype=np.float32)
+                                y_pred_pfn = pfn.predict(X_train, T_train, y_train, X_test, T_test)
 
                             if np.isnan(y_pred_pfn).any():
                                 print(f"y_pred_pfn contains NaN values for task {tid} repeat {rep}. Skipping PFN evaluation.")

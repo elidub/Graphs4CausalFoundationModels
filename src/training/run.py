@@ -89,6 +89,18 @@ def main():
         print(json.dumps(config, indent=2, default=str))
         print("-" * 40)
 
+        # Extract mode flag (predictive or interventional)
+        mode = config.get('mode', 'interventional').lower()
+        if mode not in ['predictive', 'interventional']:
+            raise ValueError(f"Invalid mode '{mode}'. Must be 'predictive' or 'interventional'")
+        
+        print(f"\nMODE:")
+        print(f"   Training mode: {mode.upper()}")
+        if mode == 'predictive':
+            print(f"   Using: ObservationalDataset + SimplePFN")
+        else:
+            print(f"   Using: InterventionalDataset + InterventionalPFN")
+
         # Detect curriculum setup (t0/t1) vs classic single-config
         has_curriculum = ('scm_config_t0' in config and 'scm_config_t1' in config and
                           'dataset_config_t0' in config and 'dataset_config_t1' in config)
@@ -268,7 +280,12 @@ def main():
             )
             print(f"   Interpolated curriculum dataset created with {len(dataset)} samples")
         else:
-            print("   Creating interventional dataset (classic)...")
+            # Classic (non-curriculum) mode: use mode flag to select dataset type
+            if mode == 'predictive':
+                print("   Creating observational dataset (predictive mode)...")
+            else:
+                print("   Creating interventional dataset (interventional mode)...")
+            
             # Auto-compute dataset_size when configured as None for classic config too
             try:
                 max_steps = int(training_config.get('max_steps', 10))
@@ -303,9 +320,19 @@ def main():
                         'config/max_steps': max_steps,
                         'config/batch_size': batch_size_cfg,
                     })
-            dataset = InterventionalDataset(
-                scm_config=scm_config,
-                preprocessing_config=preprocessing_config,
+            
+            # Create dataset based on mode
+            if mode == 'predictive':
+                dataset = ObservationalDataset(
+                    scm_config=scm_config,
+                    preprocessing_config=preprocessing_config,
+                    dataset_config=dataset_config,
+                    seed=42,
+                )
+            else:
+                dataset = InterventionalDataset(
+                    scm_config=scm_config,
+                    preprocessing_config=preprocessing_config,
                 dataset_config=dataset_config,
                 seed=42,
             )
@@ -505,27 +532,46 @@ def main():
             print(f"\n   Using standard MSE loss (no BarDistribution)")
             output_dim = model_config.get("output_dim", 1)
         
-        # Create InterventionalPFN model
+        # Create model based on mode
         print(f"\nMODEL CREATION:")
-        model = InterventionalPFN(
-            num_features=num_features,
-            d_model=model_config.get("d_model", 8),
-            depth=model_config.get("depth", 1), 
-            heads_feat=model_config.get("heads_feat", 2),
-            heads_samp=model_config.get("heads_samp", 2),
-            dropout=model_config.get("dropout", 0.1),
-            hidden_mult=model_config.get("hidden_mult", 4),
-            output_dim=output_dim,  # Use calculated output dimension
-            normalize_features=model_config.get("normalize_features", True),  # Apply normalization (default: True)
-            n_sample_attention_sink_rows=model_config.get("n_sample_attention_sink_rows", 0),  # Attention sink rows
-            n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
-        )
+        if mode == 'predictive':
+            print(f"   Creating SimplePFN model (predictive mode)...")
+            model = SimplePFNRegressor(
+                num_features=num_features,
+                d_model=model_config.get("d_model", 8),
+                depth=model_config.get("depth", 1), 
+                heads_feat=model_config.get("heads_feat", 2),
+                heads_samp=model_config.get("heads_samp", 2),
+                dropout=model_config.get("dropout", 0.1),
+                hidden_mult=model_config.get("hidden_mult", 4),
+                output_dim=output_dim,  # Use calculated output dimension
+                normalize_features=model_config.get("normalize_features", True),  # Apply normalization (default: True)
+                n_sample_attention_sink_rows=model_config.get("n_sample_attention_sink_rows", 0),  # Attention sink rows
+                n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
+            )
+        else:
+            print(f"   Creating InterventionalPFN model (interventional mode)...")
+            model = InterventionalPFN(
+                num_features=num_features,
+                d_model=model_config.get("d_model", 8),
+                depth=model_config.get("depth", 1), 
+                heads_feat=model_config.get("heads_feat", 2),
+                heads_samp=model_config.get("heads_samp", 2),
+                dropout=model_config.get("dropout", 0.1),
+                hidden_mult=model_config.get("hidden_mult", 4),
+                output_dim=output_dim,  # Use calculated output dimension
+                normalize_features=model_config.get("normalize_features", True),  # Apply normalization (default: True)
+                n_sample_attention_sink_rows=model_config.get("n_sample_attention_sink_rows", 0),  # Attention sink rows
+                n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
+            )
+        
         # Count parameters
         total_params = sum(p.numel() for p in model.parameters())
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"   Total parameters: {total_params:,}")
         print(f"   Trainable parameters: {trainable_params:,}")
-        print(f"   InterventionalPFN model created")
+        model_type = "SimplePFN" if mode == 'predictive' else "InterventionalPFN"
+        print(f"   {model_type} model created")
         
         # Print attention sink configuration
         n_sink_rows = model_config.get("n_sample_attention_sink_rows", 0)
