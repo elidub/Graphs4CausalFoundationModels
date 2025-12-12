@@ -12,7 +12,7 @@
 experiment_name: "early_test2"
 description: "First pipeline test. debug scale with fixed seeds for reproducibility"
 
-mode: "interventional" # determine whether to train in predictive or interventional mode via "predictive" or "interventional"
+mode: "predictive" # determine whether to train in predictive or interventional mode via "predictive" or "interventional"
 
 scm_config:
   num_nodes:
@@ -311,6 +311,23 @@ preprocessing_config:
     value: 0.99
   yeo_johnson:
     value: false
+
+  increase_treatment_scale: 
+    distribution: "categorical"
+    distribution_parameters:
+      choices:
+        - true
+        - false
+      probabilities:
+        - 0.5
+        - 0.5
+  distribution_rescale_factor: 
+    distribution: "beta"
+    distribution_parameters:
+      alpha: 2.0
+      beta: 3.0
+  
+  
   random_seed:
     distribution: "discrete_uniform"
     distribution_parameters:

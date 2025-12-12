@@ -10,6 +10,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from priors.causal_prior.noise_distributions.ResamplingDist import ResamplingDist
+from priors.causal_prior.noise_distributions.RescaledResamplingDist import RescaledResamplingDist
 
 from priors.causal_prior.scm.SCMSampler import SCMSampler
 from priordata_processing.BasicProcessing import BasicProcessing
@@ -126,6 +127,8 @@ class InterventionalDataset(Dataset):
         "standardize": bool,
         "y_clip_quantile": (float, type(None)),
         "eps": float,
+        "increase_treatment_scale": bool,
+        "distribution_rescale_factor": float,
     }
     
     # Expected dataset configuration parameters
@@ -488,8 +491,20 @@ class InterventionalDataset(Dataset):
             # Collect observational samples for the chosen intervention node (marginal)
             intervention_samples = obs1_raw[intervention_node]
 
-            # Resampling distribution over observational marginal (without replacement)
-            interventional_dist = ResamplingDist(intervention_samples)
+            # Determine whether to apply rescaling based on sampled preprocessing parameters
+            increase_scale = preprocessing_params.get("increase_treatment_scale", False)
+            rescale_factor = preprocessing_params.get("distribution_rescale_factor", 0.0)
+            
+            # Create resampling distribution (with or without rescaling)
+            if increase_scale and rescale_factor != 0.0:
+                # Use rescaled distribution to increase treatment variable scale
+                interventional_dist = RescaledResamplingDist(
+                    intervention_samples,
+                    rescale_factor=rescale_factor
+                )
+            else:
+                # Use standard resampling distribution (no rescaling)
+                interventional_dist = ResamplingDist(intervention_samples)
 
             scm.intervene(node = intervention_node) # intervene on the chosen node
 
