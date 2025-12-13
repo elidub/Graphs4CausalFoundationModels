@@ -31,6 +31,7 @@ from priordata_processing.Datasets.InterpolatedObservationalDataset import Inter
 from models.SimplePFN import SimplePFNRegressor
 from models.InterventionalPFN import InterventionalPFN
 from models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
+from models.SoftGraphConditionedInterventionalPFN import SoftGraphConditionedInterventionalPFN
 
 # Import our training modules
 from trainer import Trainer
@@ -108,9 +109,15 @@ def main():
         if mode == 'predictive':
             print(f"   Using: ObservationalDataset + SimplePFN")
         else:
-            print(f"   Using: InterventionalDataset + {'GraphConditionedInterventionalPFN' if use_graph_conditioning else 'InterventionalPFN'}")
+            model_type_str = 'InterventionalPFN'
             if use_graph_conditioning:
-                print(f"   Graph conditioning: ENABLED (mode={graph_conditioning_mode})")
+                if graph_conditioning_mode == 'soft_learned_bias':
+                    model_type_str = 'SoftGraphConditionedInterventionalPFN (learned biases)'
+                else:
+                    model_type_str = 'GraphConditionedInterventionalPFN (hard masking)'
+            print(f"   Using: InterventionalDataset + {model_type_str}")
+            if use_graph_conditioning:
+                print(f"   Graph conditioning mode: {graph_conditioning_mode}")
             else:
                 print(f"   Graph conditioning: DISABLED")
 
@@ -573,21 +580,41 @@ def main():
                 n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
             )
         elif use_graph_conditioning:
-            print(f"   Creating GraphConditionedInterventionalPFN model (interventional mode with graph conditioning)...")
-            print(f"   Graph conditioning mode: {graph_conditioning_mode}")
-            model = GraphConditionedInterventionalPFN(
-                num_features=num_features,
-                d_model=model_config.get("d_model", 8),
-                depth=model_config.get("depth", 1), 
-                heads_feat=model_config.get("heads_feat", 2),
-                heads_samp=model_config.get("heads_samp", 2),
-                dropout=model_config.get("dropout", 0.1),
-                hidden_mult=model_config.get("hidden_mult", 4),
-                output_dim=output_dim,  # Use calculated output dimension
-                normalize_features=model_config.get("normalize_features", True),  # Apply normalization (default: True)
-                n_sample_attention_sink_rows=model_config.get("n_sample_attention_sink_rows", 0),  # Attention sink rows
-                n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
-            )
+            if graph_conditioning_mode == 'soft_learned_bias':
+                print(f"   Creating SoftGraphConditionedInterventionalPFN model (interventional mode with soft graph conditioning)...")
+                print(f"   Graph conditioning mode: {graph_conditioning_mode} (learned biases)")
+                graph_bias_init = model_config.get("graph_bias_init", -5.0)
+                print(f"   Graph bias initialization: {graph_bias_init}")
+                model = SoftGraphConditionedInterventionalPFN(
+                    num_features=num_features,
+                    d_model=model_config.get("d_model", 8),
+                    depth=model_config.get("depth", 1), 
+                    heads_feat=model_config.get("heads_feat", 2),
+                    heads_samp=model_config.get("heads_samp", 2),
+                    dropout=model_config.get("dropout", 0.1),
+                    hidden_mult=model_config.get("hidden_mult", 4),
+                    output_dim=output_dim,  # Use calculated output dimension
+                    normalize_features=model_config.get("normalize_features", True),  # Apply normalization (default: True)
+                    n_sample_attention_sink_rows=model_config.get("n_sample_attention_sink_rows", 0),  # Attention sink rows
+                    n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
+                    graph_bias_init=graph_bias_init,  # Initial bias for non-edges
+                )
+            else:
+                print(f"   Creating GraphConditionedInterventionalPFN model (interventional mode with hard graph conditioning)...")
+                print(f"   Graph conditioning mode: {graph_conditioning_mode} (hard attention masking)")
+                model = GraphConditionedInterventionalPFN(
+                    num_features=num_features,
+                    d_model=model_config.get("d_model", 8),
+                    depth=model_config.get("depth", 1), 
+                    heads_feat=model_config.get("heads_feat", 2),
+                    heads_samp=model_config.get("heads_samp", 2),
+                    dropout=model_config.get("dropout", 0.1),
+                    hidden_mult=model_config.get("hidden_mult", 4),
+                    output_dim=output_dim,  # Use calculated output dimension
+                    normalize_features=model_config.get("normalize_features", True),  # Apply normalization (default: True)
+                    n_sample_attention_sink_rows=model_config.get("n_sample_attention_sink_rows", 0),  # Attention sink rows
+                    n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
+                )
         else:
             print(f"   Creating InterventionalPFN model (interventional mode)...")
             model = InterventionalPFN(
@@ -612,7 +639,10 @@ def main():
         if mode == 'predictive':
             model_type = "SimplePFN"
         elif use_graph_conditioning:
-            model_type = "GraphConditionedInterventionalPFN"
+            if graph_conditioning_mode == 'soft_learned_bias':
+                model_type = "SoftGraphConditionedInterventionalPFN"
+            else:
+                model_type = "GraphConditionedInterventionalPFN"
         else:
             model_type = "InterventionalPFN"
         print(f"   {model_type} model created")

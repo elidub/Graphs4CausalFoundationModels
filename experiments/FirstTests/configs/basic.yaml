@@ -369,8 +369,10 @@ model_config:
   # Graph Conditioning Configuration (only applies when mode="interventional")
   use_graph_conditioning:  # whether to condition on causal graph structure
     value: true
-  graph_conditioning_mode:  # how to apply graph conditioning ("hard_attention_only" for attention masking)
-    value: "hard_attention_only"
+  graph_conditioning_mode:  # how to apply graph conditioning ("hard_attention_only" for hard masking, "soft_learned_bias" for learned biases)
+    value: "soft_learned_bias"
+  graph_bias_init:  # initial bias value for non-edges in soft mode (negative = discourage attention)
+    value: -5.0
   
   # Attention Sink Configuration
   n_sample_attention_sink_rows:  # number of fixed random rows to prepend as attention sinks (0 = disabled)
