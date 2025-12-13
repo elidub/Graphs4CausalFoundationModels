@@ -20,8 +20,8 @@ import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 
 # Import custom modules
-from InterventionalPFN_sklearn import InterventionalPFNSklearn
-from SimplePFN_sklearn import SimplePFNSklearn
+from src.models.InterventionalPFN_sklearn import InterventionalPFNSklearn
+from src.models.SimplePFN_sklearn import SimplePFNSklearn
 from src.priordata_processing.BasicProcessing import BasicProcessing
 from src.priors.causal_prior.causal_graph.GraphSampler import GraphSampler
 from src.priors.causal_prior.causal_graph.CausalDAG import CausalDAG
