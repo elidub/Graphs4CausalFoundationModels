@@ -668,3 +668,112 @@ class BarDistribution(PosteriorPredictive):
     def num_params(self) -> int:
         """Number of parameters your model must output per test point."""
         return self.num_bars + 4
+
+    def plot(
+        self,
+        pred: Tensor,
+        idx: int = 0,
+        y_range: Optional[Tuple[float, float]] = None,
+        num_points: int = 500,
+        ax=None,
+        show_edges: bool = True,
+        show_probabilities: bool = True,
+        title: Optional[str] = None,
+        **kwargs
+    ):
+        """
+        Plot the bar distribution for a single prediction.
+
+        Args:
+            pred: Prediction tensor of shape (B, num_params) or (num_params,)
+            idx: Which prediction to plot if pred is batched (default: 0)
+            y_range: Tuple (y_min, y_max) for plotting range. If None, uses edges ± 3*max_tail_scale
+            num_points: Number of points to evaluate the PDF
+            ax: Matplotlib axis object. If None, creates a new figure
+            show_edges: Whether to show vertical lines at bar edges
+            show_probabilities: Whether to annotate bar and tail probabilities
+            title: Optional title for the plot
+            **kwargs: Additional kwargs passed to ax.plot() for the PDF curve
+
+        Returns:
+            ax: The matplotlib axis object
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError("matplotlib is required for plotting. Install with: pip install matplotlib")
+
+        # Ensure pred has proper shape for BarDistribution methods
+        # Expected shape: (B, M, num_params) where B=batch, M=number of test points
+        if pred.dim() == 1:
+            # (num_params,) -> (1, 1, num_params)
+            pred = pred.unsqueeze(0).unsqueeze(0)
+        elif pred.dim() == 2:
+            # (M, num_params) -> (1, M, num_params)
+            pred = pred.unsqueeze(0)
+        
+        if idx >= pred.shape[1]:
+            raise ValueError(f"idx={idx} out of range for M={pred.shape[1]} test points")
+
+        # Extract single prediction: (1, 1, num_params)
+        pred_single = pred[:, idx:idx+1, :]  # (B=1, M=1, num_params)
+
+        # Unpack prediction parameters
+        device, dtype = self._adopt_pred_ctx(pred_single)
+        w_logits, sL_raw, sR_raw = self._unpack(pred_single)
+        probs = torch.softmax(w_logits, dim=-1)  # (1, 1, K+2)
+        pLeft = probs[0, 0, 0].item()
+        pBars = probs[0, 0, 1:-1]  # (K,)
+        pRight = probs[0, 0, -1].item()
+
+        sL = self._safe_scale(self.base_s_left.to(device, dtype), sL_raw[0, 0], device, dtype).item()
+        sR = self._safe_scale(self.base_s_right.to(device, dtype), sR_raw[0, 0], device, dtype).item()
+
+        edges = self.edges.to(device=device, dtype=dtype)
+
+        # Determine plotting range
+        if y_range is None:
+            edge_left = edges[0].item()
+            edge_right = edges[-1].item()
+            max_scale = max(sL, sR)
+            y_min = edge_left - 3 * max_scale
+            y_max = edge_right + 3 * max_scale
+        else:
+            y_min, y_max = y_range
+
+        # Create y values
+        y_vals = torch.linspace(y_min, y_max, num_points, device=device, dtype=dtype)
+
+        # Evaluate PDF by exponentiating log PDF
+        pred_repeated = pred_single.expand(1, num_points, -1)
+        
+        with torch.no_grad():
+            # Use _logpdf_from_pred which is properly implemented
+            logpdf_vals = self._logpdf_from_pred(pred_repeated, y_vals.unsqueeze(0))  # (1, num_points)
+            pdf_vals = torch.exp(logpdf_vals[0]).cpu().numpy()  # (num_points,)
+            y_vals_np = y_vals.cpu().numpy()
+            edges_np = edges.cpu().numpy()
+            pBars_np = pBars.cpu().numpy()
+
+        # Create plot
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(10, 6))
+
+        # Plot PDF
+        plot_kwargs = {'linewidth': 2, 'color': 'blue'}
+        plot_kwargs.update(kwargs)
+        ax.plot(y_vals_np, pdf_vals, label='PDF', **plot_kwargs)
+
+        # Show bar edges (only outer edges by default to avoid clutter)
+        if show_edges:
+            # Only show first and last edge to avoid visual clutter with many bars
+            ax.axvline(edges_np[0], color='gray', linestyle='--', alpha=0.5, linewidth=1, label='Bar boundaries')
+            ax.axvline(edges_np[-1], color='gray', linestyle='--', alpha=0.5, linewidth=1)
+
+        ax.set_xlabel('y', fontsize=12)
+        ax.set_ylabel('Density', fontsize=12)
+        ax.set_title(title if title else 'Bar Distribution', fontsize=14)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        return ax

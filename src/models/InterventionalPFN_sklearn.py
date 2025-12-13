@@ -472,6 +472,20 @@ class InterventionalPFNSklearn(SimplePFNSklearn):
             # Raw output
             return raw_preds.squeeze(0).cpu().numpy()  # (M,)
         
+        # Check if BarDistribution needs to be fitted
+        if self.bar_distribution.centers is None:
+            if self.verbose:
+                print("[InterventionalPFNSklearn] BarDistribution not fitted. Fitting on provided observational data...")
+            # Create a simple dataloader from the observational data
+            # Concatenate X_obs and T_obs for the full feature set
+            X_obs_full = torch.cat([X_obs_t, T_obs_t], dim=2)  # (1, N, L+1)
+            Y_obs_full = Y_obs_t.unsqueeze(2)  # (1, N, 1)
+            # Use observational data for both train and test in fitting
+            simple_dataloader = [(X_obs_full, Y_obs_full, X_obs_full, Y_obs_full)]
+            self.bar_distribution.fit(simple_dataloader)
+            if self.verbose:
+                print("[InterventionalPFNSklearn] BarDistribution fitted successfully.")
+        
         # BarDistribution predictions
         if prediction_type == "mode":
             preds = self.bar_distribution.mode(raw_preds)
@@ -837,6 +851,410 @@ class InterventionalPFNSklearn(SimplePFNSklearn):
             variance = mean_of_squares - mean ** 2  # (M,)
             
             return variance.astype(np.float32)
+
+    def predict_log_likelihood(
+        self,
+        X_obs: Any,
+        T_obs: Any,
+        Y_obs: Any,
+        X_intv: Any,
+        T_intv: Any,
+        Y_intv: Any,
+        aggregate: Literal["mean", "median", "none"] = "mean",
+    ) -> np.ndarray:
+        """
+        Compute the log-likelihood of interventional targets under the model's predictive distribution.
+        
+        Evaluates log p(Y_intv | X_obs, T_obs, Y_obs, X_intv, T_intv) for each test sample.
+        Higher log-likelihood indicates better fit of the predictive distribution to the observed values.
+        Requires BarDistribution to be enabled.
+        
+        Args:
+            X_obs: Observational features (N, L)
+            T_obs: Observational intervened feature (N,) or (N, 1)
+            Y_obs: Observational targets (N,) or (N, 1)
+            X_intv: Interventional features (M, L)
+            T_intv: Interventional intervened feature (M,) or (M, 1)
+            Y_intv: Interventional targets to evaluate (M,) or (M, 1)
+            aggregate: How to aggregate ensemble predictions if n_estimators > 1
+                - "mean": Average log-likelihood across ensemble members (default)
+                - "median": Median log-likelihood across ensemble members
+                - "none": Return all log-likelihoods with shape (n_estimators, M)
+                
+        Returns:
+            Log-likelihood for each test sample (M,) or (n_estimators, M) if aggregate="none"
+            
+        Raises:
+            ValueError: If BarDistribution is not enabled
+            ValueError: If Y_intv shape doesn't match X_intv
+        """
+        if not self.use_bar_distribution:
+            raise ValueError("[InterventionalPFNSklearn] predict_log_likelihood() requires BarDistribution")
+        
+        if self.model is None:
+            raise RuntimeError("[InterventionalPFNSklearn] Model not loaded. Call load() first.")
+        
+        # Convert inputs
+        if hasattr(X_obs, "values"):
+            X_obs = X_obs.values
+        if hasattr(T_obs, "values"):
+            T_obs = T_obs.values
+        if hasattr(Y_obs, "values"):
+            Y_obs = Y_obs.values
+        if hasattr(X_intv, "values"):
+            X_intv = X_intv.values
+        if hasattr(T_intv, "values"):
+            T_intv = T_intv.values
+        if hasattr(Y_intv, "values"):
+            Y_intv = Y_intv.values
+        
+        X_obs_np = np.asarray(X_obs, dtype=np.float32)
+        T_obs_np = np.asarray(T_obs, dtype=np.float32)
+        Y_obs_np = np.asarray(Y_obs, dtype=np.float32)
+        X_intv_np = np.asarray(X_intv, dtype=np.float32)
+        T_intv_np = np.asarray(T_intv, dtype=np.float32)
+        Y_intv_np = np.asarray(Y_intv, dtype=np.float32)
+        
+        # Ensure T arrays are 2D
+        if T_obs_np.ndim == 1:
+            T_obs_np = T_obs_np.reshape(-1, 1)
+        if T_intv_np.ndim == 1:
+            T_intv_np = T_intv_np.reshape(-1, 1)
+        
+        # Ensure Y_intv is 1D
+        if Y_intv_np.ndim == 2 and Y_intv_np.shape[1] == 1:
+            Y_intv_np = Y_intv_np.squeeze(1)
+        elif Y_intv_np.ndim > 1:
+            raise ValueError(f"Y_intv must be (M,) or (M, 1), got shape {Y_intv_np.shape}")
+        
+        # Ensure Y_obs is 1D
+        if Y_obs_np.ndim == 2 and Y_obs_np.shape[1] == 1:
+            Y_obs_np = Y_obs_np.squeeze(1)
+        
+        # Check shapes match
+        if X_intv_np.shape[0] != Y_intv_np.shape[0]:
+            raise ValueError(f"X_intv has {X_intv_np.shape[0]} samples but Y_intv has {Y_intv_np.shape[0]}")
+        
+        # Handle ensemble vs single model
+        if self.use_ensemble and self.n_estimators > 1:
+            # Get ensemble data variants
+            if self.ensemble_preprocessor is None or not self.ensemble_preprocessor.fitted:
+                raise RuntimeError("[InterventionalPFNSklearn] Ensemble preprocessors not fitted. Call fit() before predict().")
+            
+            # Combine X and T for preprocessing
+            X_obs_combined = np.hstack([X_obs_np, T_obs_np])  # (N, L+1)
+            X_intv_combined = np.hstack([X_intv_np, T_intv_np])  # (M, L+1)
+            
+            ensemble_data = self.ensemble_preprocessor.transform(X_obs_combined, Y_obs_np, X_intv_combined)
+            
+            log_likelihoods = np.zeros((self.n_estimators, X_intv_np.shape[0]))
+            
+            for ens_idx in range(self.n_estimators):
+                X_obs_var, Y_obs_var, X_intv_var = ensemble_data[ens_idx]
+                
+                # Split back into X and T
+                X_obs_v = X_obs_var[:, :-1]  # (N, L)
+                T_obs_v = X_obs_var[:, -1:]  # (N, 1)
+                X_intv_v = X_intv_var[:, :-1]  # (M, L)
+                T_intv_v = X_intv_var[:, -1:]  # (M, 1)
+                
+                # Get model predictions (distribution parameters)
+                with torch.no_grad():
+                    X_obs_t = torch.from_numpy(X_obs_v).unsqueeze(0).to(self.device)
+                    T_obs_t = torch.from_numpy(T_obs_v).unsqueeze(0).to(self.device)
+                    Y_obs_t = torch.from_numpy(Y_obs_var).unsqueeze(0).to(self.device)
+                    X_intv_t = torch.from_numpy(X_intv_v).unsqueeze(0).to(self.device)
+                    T_intv_t = torch.from_numpy(T_intv_v).unsqueeze(0).to(self.device)
+                    
+                    out = self.model(X_obs_t, T_obs_t, Y_obs_t, X_intv_t, T_intv_t)
+                    pred_raw = out["predictions"]  # (1, M, num_params)
+                    
+                    # Compute log-likelihood using BarDistribution
+                    Y_intv_t = torch.from_numpy(Y_intv_np).unsqueeze(0).to(self.device)  # (1, M)
+                    
+                    # Get per-sample log-likelihoods
+                    logpdf = self.bar_distribution._logpdf_from_pred(pred_raw, Y_intv_t)  # (1, M)
+                    log_likelihoods[ens_idx, :] = logpdf.squeeze(0).cpu().numpy()
+            
+            # Aggregate across ensemble members
+            if aggregate == "none":
+                return log_likelihoods  # (n_estimators, M)
+            elif aggregate == "mean":
+                return np.mean(log_likelihoods, axis=0)  # (M,)
+            elif aggregate == "median":
+                return np.median(log_likelihoods, axis=0)  # (M,)
+            else:
+                raise ValueError(f"Unknown aggregate method: {aggregate}")
+        
+        else:
+            # Single model prediction
+            with torch.no_grad():
+                X_obs_t = torch.from_numpy(X_obs_np).unsqueeze(0).to(self.device)
+                T_obs_t = torch.from_numpy(T_obs_np).unsqueeze(0).to(self.device)
+                Y_obs_t = torch.from_numpy(Y_obs_np).unsqueeze(0).to(self.device)
+                X_intv_t = torch.from_numpy(X_intv_np).unsqueeze(0).to(self.device)
+                T_intv_t = torch.from_numpy(T_intv_np).unsqueeze(0).to(self.device)
+                
+                out = self.model(X_obs_t, T_obs_t, Y_obs_t, X_intv_t, T_intv_t)
+                pred_raw = out["predictions"]  # (1, M, num_params)
+                
+                # Compute log-likelihood using BarDistribution
+                Y_intv_t = torch.from_numpy(Y_intv_np).unsqueeze(0).to(self.device)  # (1, M)
+                
+                # Get per-sample log-likelihoods
+                logpdf = self.bar_distribution._logpdf_from_pred(pred_raw, Y_intv_t)  # (1, M)
+                
+                return logpdf.squeeze(0).cpu().numpy()  # (M,)
+
+    def get_raw_predictions(
+        self,
+        X_obs: Any,
+        T_obs: Any,
+        Y_obs: Any,
+        X_intv: Any,
+        T_intv: Any,
+        aggregate: Literal["mean", "median", "none"] = "none",
+    ) -> torch.Tensor:
+        """
+        Get raw model predictions (BarDistribution parameters) without aggregation.
+        
+        This method is useful for visualization and custom post-processing of the 
+        predictive distribution. For BarDistribution models, returns the raw parameters
+        that can be passed to BarDistribution methods like plot().
+        
+        Args:
+            X_obs: Observational features (N, L)
+            T_obs: Observational intervened feature (N,) or (N, 1)
+            Y_obs: Observational targets (N,) or (N, 1)
+            X_intv: Interventional features (M, L)
+            T_intv: Interventional intervened feature (M,) or (M, 1)
+            aggregate: How to aggregate ensemble predictions if n_estimators > 1
+                - "none": Return all predictions with shape (n_estimators, M, num_params) (default)
+                - "mean": Average parameters across ensemble members (M, num_params)
+                - "median": Median parameters across ensemble members (M, num_params)
+                
+        Returns:
+            Raw model predictions as torch.Tensor:
+            - Single model: shape (M, num_params) where num_params = K+4 for BarDistribution
+            - Ensemble with aggregate="none": shape (n_estimators, M, num_params)
+            - Ensemble with aggregation: shape (M, num_params)
+            
+        Example:
+            >>> # Get raw predictions for a single test point
+            >>> raw_pred = model.get_raw_predictions(X_obs, T_obs, Y_obs, X_intv[[0]], T_intv[[0]])
+            >>> # Plot the predictive distribution
+            >>> bar_dist = model.bar_distribution
+            >>> bar_dist.plot(raw_pred, idx=0, title="Predictive Distribution")
+        """
+        if self.model is None:
+            raise RuntimeError("[InterventionalPFNSklearn] Model not loaded. Call load() first.")
+        
+        # Convert inputs
+        if hasattr(X_obs, "values"):
+            X_obs = X_obs.values
+        if hasattr(T_obs, "values"):
+            T_obs = T_obs.values
+        if hasattr(Y_obs, "values"):
+            Y_obs = Y_obs.values
+        if hasattr(X_intv, "values"):
+            X_intv = X_intv.values
+        if hasattr(T_intv, "values"):
+            T_intv = T_intv.values
+        
+        X_obs_np = np.asarray(X_obs, dtype=np.float32)
+        T_obs_np = np.asarray(T_obs, dtype=np.float32)
+        Y_obs_np = np.asarray(Y_obs, dtype=np.float32)
+        X_intv_np = np.asarray(X_intv, dtype=np.float32)
+        T_intv_np = np.asarray(T_intv, dtype=np.float32)
+        
+        # Ensure T arrays are 2D
+        if T_obs_np.ndim == 1:
+            T_obs_np = T_obs_np.reshape(-1, 1)
+        if T_intv_np.ndim == 1:
+            T_intv_np = T_intv_np.reshape(-1, 1)
+        
+        # Ensure Y_obs is 1D
+        if Y_obs_np.ndim == 2 and Y_obs_np.shape[1] == 1:
+            Y_obs_np = Y_obs_np.squeeze(1)
+        
+        # Handle ensemble vs single model
+        if self.use_ensemble and self.n_estimators > 1:
+            # Get ensemble data variants
+            if self.ensemble_preprocessor is None or not self.ensemble_preprocessor.fitted:
+                raise RuntimeError("[InterventionalPFNSklearn] Ensemble preprocessors not fitted. Call fit() before get_raw_predictions().")
+            
+            # Combine X and T for preprocessing
+            X_obs_combined = np.hstack([X_obs_np, T_obs_np])  # (N, L+1)
+            X_intv_combined = np.hstack([X_intv_np, T_intv_np])  # (M, L+1)
+            
+            ensemble_data = self.ensemble_preprocessor.transform(X_obs_combined, Y_obs_np, X_intv_combined)
+            
+            # Collect predictions from each ensemble member
+            all_preds = []
+            
+            for ens_idx in range(self.n_estimators):
+                X_obs_var, Y_obs_var, X_intv_var = ensemble_data[ens_idx]
+                
+                # Split back into X and T
+                X_obs_v = X_obs_var[:, :-1]  # (N, L)
+                T_obs_v = X_obs_var[:, -1:]  # (N, 1)
+                X_intv_v = X_intv_var[:, :-1]  # (M, L)
+                T_intv_v = X_intv_var[:, -1:]  # (M, 1)
+                
+                with torch.no_grad():
+                    X_obs_t = torch.from_numpy(X_obs_v).unsqueeze(0).to(self.device)
+                    T_obs_t = torch.from_numpy(T_obs_v).unsqueeze(0).to(self.device)
+                    Y_obs_t = torch.from_numpy(Y_obs_var).unsqueeze(0).to(self.device)
+                    X_intv_t = torch.from_numpy(X_intv_v).unsqueeze(0).to(self.device)
+                    T_intv_t = torch.from_numpy(T_intv_v).unsqueeze(0).to(self.device)
+                    
+                    out = self.model(X_obs_t, T_obs_t, Y_obs_t, X_intv_t, T_intv_t)
+                    pred_raw = out["predictions"]  # (1, M, num_params)
+                    all_preds.append(pred_raw.squeeze(0))  # (M, num_params)
+            
+            # Stack ensemble predictions
+            all_preds = torch.stack(all_preds, dim=0)  # (n_estimators, M, num_params)
+            
+            # Aggregate if requested
+            if aggregate == "none":
+                return all_preds
+            elif aggregate == "mean":
+                return torch.mean(all_preds, dim=0)
+            elif aggregate == "median":
+                return torch.median(all_preds, dim=0).values
+            else:
+                raise ValueError(f"Unknown aggregate method: {aggregate}")
+        
+        else:
+            # Single model prediction
+            with torch.no_grad():
+                X_obs_t = torch.from_numpy(X_obs_np).unsqueeze(0).to(self.device)
+                T_obs_t = torch.from_numpy(T_obs_np).unsqueeze(0).to(self.device)
+                Y_obs_t = torch.from_numpy(Y_obs_np).unsqueeze(0).to(self.device)
+                X_intv_t = torch.from_numpy(X_intv_np).unsqueeze(0).to(self.device)
+                T_intv_t = torch.from_numpy(T_intv_np).unsqueeze(0).to(self.device)
+                
+                out = self.model(X_obs_t, T_obs_t, Y_obs_t, X_intv_t, T_intv_t)
+                pred_raw = out["predictions"]  # (1, M, num_params)
+                
+                return pred_raw.squeeze(0)  # (M, num_params)
+
+    def log_likelihood(
+        self,
+        X_obs: Any,
+        T_obs: Any,
+        Y_obs: Any,
+        X_intv: Any,
+        T_intv: Any,
+        Y_intv: Any,
+    ) -> np.ndarray:
+        """
+        Compute the log-likelihood of Y_intv values under the model's predicted distribution.
+        
+        This method evaluates how well the model's predicted distribution matches the observed
+        interventional targets. It uses the BarDistribution's log-likelihood method when enabled,
+        or falls back to MSE-based approximation (assuming Gaussian with fixed variance) when not.
+        
+        Args:
+            X_obs: Observational features (N, L)
+            T_obs: Observational intervened feature (N,) or (N, 1)
+            Y_obs: Observational targets (N,) or (N, 1)
+            X_intv: Interventional features (M, L)
+            T_intv: Interventional intervened feature (M,) or (M, 1)
+            Y_intv: Interventional targets to evaluate log-likelihood for (M,) or (M, 1)
+            
+        Returns:
+            Log-likelihood values of shape (M,)
+            - With BarDistribution: exact log p(Y_intv | X_intv, T_intv, X_obs, T_obs, Y_obs)
+            - Without BarDistribution: approximate log-likelihood assuming Gaussian with unit variance
+            
+        Raises:
+            RuntimeError: If model not loaded
+            
+        Notes:
+            - When BarDistribution is enabled, this computes the exact log-likelihood under
+              the learned piecewise-uniform + Gaussian tail distribution
+            - When BarDistribution is disabled, falls back to Gaussian approximation:
+              log p(y|x) ≈ -0.5 * (y - pred)^2 - 0.5*log(2π) (assumes unit variance)
+            - This is the interventional version - evaluates likelihood of interventional outcomes
+        """
+        if self.model is None:
+            raise RuntimeError("[InterventionalPFNSklearn] Model not loaded. Call load() first.")
+        
+        # Convert to numpy and ensure correct shapes
+        if hasattr(X_obs, "values"):
+            X_obs = X_obs.values
+        if hasattr(T_obs, "values"):
+            T_obs = T_obs.values
+        if hasattr(Y_obs, "values"):
+            Y_obs = Y_obs.values
+        if hasattr(X_intv, "values"):
+            X_intv = X_intv.values
+        if hasattr(T_intv, "values"):
+            T_intv = T_intv.values
+        if hasattr(Y_intv, "values"):
+            Y_intv = Y_intv.values
+        
+        X_obs = np.asarray(X_obs, dtype=np.float32)
+        T_obs = np.asarray(T_obs, dtype=np.float32)
+        Y_obs = np.asarray(Y_obs, dtype=np.float32)
+        X_intv = np.asarray(X_intv, dtype=np.float32)
+        T_intv = np.asarray(T_intv, dtype=np.float32)
+        Y_intv = np.asarray(Y_intv, dtype=np.float32)
+        
+        # Ensure T arrays are 2D
+        if T_obs.ndim == 1:
+            T_obs = T_obs.reshape(-1, 1)
+        if T_intv.ndim == 1:
+            T_intv = T_intv.reshape(-1, 1)
+        if Y_obs.ndim == 2 and Y_obs.shape[1] == 1:
+            Y_obs = Y_obs.squeeze(1)
+        if Y_intv.ndim == 2 and Y_intv.shape[1] == 1:
+            Y_intv = Y_intv.squeeze(1)
+        
+        M = X_intv.shape[0]
+        
+        # Check if BarDistribution is available and ready
+        if not self.use_bar_distribution:
+            if self.verbose:
+                print("[InterventionalPFNSklearn] BarDistribution not enabled. Using Gaussian approximation for log-likelihood.")
+        elif not self._bar_distribution_is_ready():
+            if self.verbose:
+                print("[InterventionalPFNSklearn] BarDistribution not fitted. Using Gaussian approximation for log-likelihood.")
+        
+        # Convert to torch tensors
+        X_obs_t = torch.from_numpy(X_obs).unsqueeze(0).to(self.device)  # (1, N, L)
+        T_obs_t = torch.from_numpy(T_obs).unsqueeze(0).to(self.device)  # (1, N, 1)
+        Y_obs_t = torch.from_numpy(Y_obs).unsqueeze(0).to(self.device)  # (1, N)
+        X_intv_t = torch.from_numpy(X_intv).unsqueeze(0).to(self.device)  # (1, M, L)
+        T_intv_t = torch.from_numpy(T_intv).unsqueeze(0).to(self.device)  # (1, M, 1)
+        Y_intv_t = torch.from_numpy(Y_intv).unsqueeze(0).to(self.device)  # (1, M)
+        
+        # Forward pass to get distribution parameters
+        self.model.eval()
+        with torch.no_grad():
+            out = self.model(X_obs_t, T_obs_t, Y_obs_t, X_intv_t, T_intv_t)
+            raw_preds = out["predictions"]  # (1, M, output_dim)
+            
+            if self.use_bar_distribution and self._bar_distribution_is_ready():
+                # Use BarDistribution's exact log-likelihood
+                log_probs = self.bar_distribution._logpdf_from_pred(raw_preds, Y_intv_t)  # (1, M)
+                return log_probs.squeeze(0).cpu().numpy()  # (M,)
+            else:
+                # Fallback: Gaussian approximation with unit variance
+                # raw_preds contains point predictions (mode or mean depending on model output)
+                # For MSE models: raw_preds is the direct prediction
+                # log p(y|x) ≈ -0.5 * (y - pred)^2 - 0.5*log(2π)
+                if raw_preds.shape[-1] == 1:
+                    # Direct prediction output
+                    pred_mean = raw_preds.squeeze(-1)  # (1, M)
+                else:
+                    # Multi-parameter output - use first parameter as mean
+                    pred_mean = raw_preds[..., 0]  # (1, M)
+                
+                squared_error = (Y_intv_t - pred_mean) ** 2
+                log_likelihood = -0.5 * squared_error - 0.5 * np.log(2 * np.pi)  # (1, M)
+                return log_likelihood.squeeze(0).cpu().numpy()  # (M,)
 
 
 if __name__ == "__main__":
