@@ -365,7 +365,7 @@ model_config:
   
   # Graph Conditioning Configuration (only applies when mode="interventional")
   use_graph_conditioning:  # whether to condition on causal graph structure
-    value: false
+    value: true
   graph_conditioning_mode:  # how to apply graph conditioning ("hard_attention_only" for attention masking)
     value: "hard_attention_only"
   

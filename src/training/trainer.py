@@ -1034,14 +1034,33 @@ class Trainer:
                 X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adjacency_matrix = batch_data
                 y_test = Y_intv  # Ground truth for loss
                 X_train = X_obs  # For logging
+                
+                # Print input shapes for first few iterations
+                if self.global_step < 3:
+                    print(f"\n[Step {self.global_step}] Input shapes (Interventional + Graph):")
+                    print(f"   X_obs: {X_obs.shape}, T_obs: {T_obs.shape}, Y_obs: {Y_obs.shape}")
+                    print(f"   X_intv: {X_intv.shape}, T_intv: {T_intv.shape}, Y_intv: {Y_intv.shape}")
+                    print(f"   adjacency_matrix: {adjacency_matrix.shape}")
             elif len(batch_data) == 6:
                 # Interventional format
                 X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = batch_data
                 y_test = Y_intv  # Ground truth for loss
                 X_train = X_obs  # For logging
+                
+                # Print input shapes for first few iterations
+                if self.global_step < 3:
+                    print(f"\n[Step {self.global_step}] Input shapes (Interventional):")
+                    print(f"   X_obs: {X_obs.shape}, T_obs: {T_obs.shape}, Y_obs: {Y_obs.shape}")
+                    print(f"   X_intv: {X_intv.shape}, T_intv: {T_intv.shape}, Y_intv: {Y_intv.shape}")
             else:
                 # Observational format (backward compatibility)
                 X_train, y_train, X_test, y_test = batch_data
+                
+                # Print input shapes for first few iterations
+                if self.global_step < 3:
+                    print(f"\n[Step {self.global_step}] Input shapes (Observational):")
+                    print(f"   X_train: {X_train.shape}, y_train: {y_train.shape}")
+                    print(f"   X_test: {X_test.shape}, y_test: {y_test.shape}")
 
             # Forward + loss
             # Use new torch.amp.autocast API with explicit device type and configurable dtype
