@@ -264,7 +264,7 @@ class Trainer:
         """
         Process a batch for InterventionalPFN training.
         
-        DataLoader can return two formats:
+        DataLoader can return three formats:
         
         Format 1 (ObservationalDataset - 4 tensors):
         - batch[0]: X_train (batch_size, n_train, features)
@@ -280,10 +280,41 @@ class Trainer:
         - batch[4]: T_intv (batch_size, n_test, 1) - intervened feature column
         - batch[5]: Y_intv (batch_size, n_test) or (batch_size, n_test, 1) [not used in forward]
         
+        Format 3 (InterventionalDataset with adjacency matrix - 7 tensors):
+        - batch[0]: X_obs (batch_size, n_train, features)
+        - batch[1]: T_obs (batch_size, n_train, 1) - intervened feature column
+        - batch[2]: Y_obs (batch_size, n_train) or (batch_size, n_train, 1)
+        - batch[3]: X_intv (batch_size, n_test, features)
+        - batch[4]: T_intv (batch_size, n_test, 1) - intervened feature column
+        - batch[5]: Y_intv (batch_size, n_test) or (batch_size, n_test, 1) [not used in forward]
+        - batch[6]: adjacency_matrix (batch_size, L+2, L+2) - causal graph adjacency matrix
+        
         Returns appropriate format for the model being used.
         """
         if isinstance(batch, list):
-            if len(batch) == 6:
+            if len(batch) == 7:
+                # Interventional format with adjacency matrix (for graph conditioning)
+                X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adjacency_matrix = batch
+                
+                # Move to device
+                X_obs = X_obs.to(self.device)
+                T_obs = T_obs.to(self.device)
+                Y_obs = Y_obs.to(self.device)
+                X_intv = X_intv.to(self.device)
+                T_intv = T_intv.to(self.device)
+                Y_intv = Y_intv.to(self.device)
+                adjacency_matrix = adjacency_matrix.to(self.device)
+                
+                # Ensure Y shapes are consistent (flatten if needed)
+                if Y_obs.dim() == 3:
+                    Y_obs = Y_obs.squeeze(-1)  # (B, N, 1) -> (B, N)
+                if Y_intv.dim() == 3:
+                    Y_intv = Y_intv.squeeze(-1)  # (B, M, 1) -> (B, M)
+                
+                # Return interventional format with adjacency matrix
+                return X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adjacency_matrix
+                
+            elif len(batch) == 6:
                 # Interventional format
                 X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = batch
                 
@@ -678,7 +709,13 @@ class Trainer:
                     batch_data = self._process_batch(batch)
                     
                     # Check if interventional or observational format
-                    if len(batch_data) == 6:
+                    if len(batch_data) == 7:
+                        # Interventional format with adjacency matrix (graph conditioning)
+                        X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adjacency_matrix = batch_data
+                        y_test = Y_intv  # Ground truth for loss
+                        # Forward pass for GraphConditionedInterventionalPFN
+                        output = self.model(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix)
+                    elif len(batch_data) == 6:
                         # Interventional format
                         X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = batch_data
                         y_test = Y_intv  # Ground truth for loss
@@ -992,7 +1029,12 @@ class Trainer:
             batch_data = self._process_batch(batch)
             
             # Check if interventional or observational format
-            if len(batch_data) == 6:
+            if len(batch_data) == 7:
+                # Interventional format with adjacency matrix (graph conditioning)
+                X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adjacency_matrix = batch_data
+                y_test = Y_intv  # Ground truth for loss
+                X_train = X_obs  # For logging
+            elif len(batch_data) == 6:
                 # Interventional format
                 X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = batch_data
                 y_test = Y_intv  # Ground truth for loss
@@ -1004,7 +1046,10 @@ class Trainer:
             # Forward + loss
             # Use new torch.amp.autocast API with explicit device type and configurable dtype
             with torch.amp.autocast('cuda', enabled=self.use_amp, dtype=self._autocast_dtype):
-                if len(batch_data) == 6:
+                if len(batch_data) == 7:
+                    # GraphConditionedInterventionalPFN forward
+                    output = self.model(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix)
+                elif len(batch_data) == 6:
                     # InterventionalPFN forward
                     output = self.model(X_obs, T_obs, Y_obs, X_intv, T_intv)
                 else:

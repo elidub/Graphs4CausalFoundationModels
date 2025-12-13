@@ -30,6 +30,7 @@ from priordata_processing.Datasets.InterventionalDataset import InterventionalDa
 from priordata_processing.Datasets.InterpolatedObservationalDataset import InterpolatedObservationalDataset
 from models.SimplePFN import SimplePFNRegressor
 from models.InterventionalPFN import InterventionalPFN
+from models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
 
 # Import our training modules
 from trainer import Trainer
@@ -94,12 +95,24 @@ def main():
         if mode not in ['predictive', 'interventional']:
             raise ValueError(f"Invalid mode '{mode}'. Must be 'predictive' or 'interventional'")
         
+        # Check if graph conditioning is enabled (only for interventional mode)
+        use_graph_conditioning = False
+        graph_conditioning_mode = None
+        if mode == 'interventional':
+            model_config = config.get('model_config', {})
+            use_graph_conditioning = extract_config_values(model_config.get('use_graph_conditioning', False))
+            graph_conditioning_mode = extract_config_values(model_config.get('graph_conditioning_mode', 'hard_attention_only'))
+        
         print(f"\nMODE:")
         print(f"   Training mode: {mode.upper()}")
         if mode == 'predictive':
             print(f"   Using: ObservationalDataset + SimplePFN")
         else:
-            print(f"   Using: InterventionalDataset + InterventionalPFN")
+            print(f"   Using: InterventionalDataset + {'GraphConditionedInterventionalPFN' if use_graph_conditioning else 'InterventionalPFN'}")
+            if use_graph_conditioning:
+                print(f"   Graph conditioning: ENABLED (mode={graph_conditioning_mode})")
+            else:
+                print(f"   Graph conditioning: DISABLED")
 
         # Detect curriculum setup (t0/t1) vs classic single-config
         has_curriculum = ('scm_config_t0' in config and 'scm_config_t1' in config and
@@ -332,12 +345,17 @@ def main():
                 )
             else:
                 print("   Creating InterventionalDataset...")
+                # Enable adjacency matrix output if graph conditioning is enabled
+                if use_graph_conditioning:
+                    dataset_config['return_adjacency_matrix'] = {'value': True}
+                    print("   Adjacency matrix output: ENABLED (for graph conditioning)")
+                
                 dataset = InterventionalDataset(
                     scm_config=scm_config,
                     preprocessing_config=preprocessing_config,
-                dataset_config=dataset_config,
-                seed=42,
-            )
+                    dataset_config=dataset_config,
+                    seed=42,
+                )
         print(f"   Dataset created with {len(dataset)} samples")
 
         # Create DataLoader in main method
@@ -431,6 +449,9 @@ def main():
                     elif len(b) == 6:
                         X_tr, T_tr, Y_tr, X_te, T_te, Y_te = b
                         print(f"   [Batch {i}] interventional -> X_tr{_fmt_shape(X_tr)} T_tr{_fmt_shape(T_tr)} Y_tr{_fmt_shape(Y_tr)} | X_te{_fmt_shape(X_te)} T_te{_fmt_shape(T_te)} Y_te{_fmt_shape(Y_te)}")
+                    elif len(b) == 7:
+                        X_tr, T_tr, Y_tr, X_te, T_te, Y_te, adj = b
+                        print(f"   [Batch {i}] interventional+graph -> X_tr{_fmt_shape(X_tr)} T_tr{_fmt_shape(T_tr)} Y_tr{_fmt_shape(Y_tr)} | X_te{_fmt_shape(X_te)} T_te{_fmt_shape(T_te)} Y_te{_fmt_shape(Y_te)} | adj{_fmt_shape(adj)}")
                     else:
                         print(f"   [Batch {i}] unknown batch format len={len(b)}: shapes={[ _fmt_shape(x) for x in b ]}")
                 else:
@@ -551,6 +572,22 @@ def main():
                 n_sample_attention_sink_rows=model_config.get("n_sample_attention_sink_rows", 0),  # Attention sink rows
                 n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
             )
+        elif use_graph_conditioning:
+            print(f"   Creating GraphConditionedInterventionalPFN model (interventional mode with graph conditioning)...")
+            print(f"   Graph conditioning mode: {graph_conditioning_mode}")
+            model = GraphConditionedInterventionalPFN(
+                num_features=num_features,
+                d_model=model_config.get("d_model", 8),
+                depth=model_config.get("depth", 1), 
+                heads_feat=model_config.get("heads_feat", 2),
+                heads_samp=model_config.get("heads_samp", 2),
+                dropout=model_config.get("dropout", 0.1),
+                hidden_mult=model_config.get("hidden_mult", 4),
+                output_dim=output_dim,  # Use calculated output dimension
+                normalize_features=model_config.get("normalize_features", True),  # Apply normalization (default: True)
+                n_sample_attention_sink_rows=model_config.get("n_sample_attention_sink_rows", 0),  # Attention sink rows
+                n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
+            )
         else:
             print(f"   Creating InterventionalPFN model (interventional mode)...")
             model = InterventionalPFN(
@@ -572,7 +609,12 @@ def main():
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"   Total parameters: {total_params:,}")
         print(f"   Trainable parameters: {trainable_params:,}")
-        model_type = "SimplePFN" if mode == 'predictive' else "InterventionalPFN"
+        if mode == 'predictive':
+            model_type = "SimplePFN"
+        elif use_graph_conditioning:
+            model_type = "GraphConditionedInterventionalPFN"
+        else:
+            model_type = "InterventionalPFN"
         print(f"   {model_type} model created")
         
         # Print attention sink configuration

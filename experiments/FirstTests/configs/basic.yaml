@@ -245,6 +245,10 @@ dataset_config:
       low: 200
       high: 500
 
+  # Adjacency matrix output (only used when graph conditioning is enabled)
+  return_adjacency_matrix:  # whether to include adjacency matrix in dataset output
+    value: false  # Will be auto-enabled when use_graph_conditioning=true
+
   # Rejection sampling: ensure target variance is sufficiently large
   # If either train or test target variance falls below this threshold, resample the dataset.
   # Set to null to disable rejection.
@@ -358,6 +362,12 @@ model_config:
     value: 50  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
   normalize_features:  # whether to apply quantile transform + standard normalization internally
     value: true
+  
+  # Graph Conditioning Configuration (only applies when mode="interventional")
+  use_graph_conditioning:  # whether to condition on causal graph structure
+    value: false
+  graph_conditioning_mode:  # how to apply graph conditioning ("hard_attention_only" for attention masking)
+    value: "hard_attention_only"
   
   # Attention Sink Configuration
   n_sample_attention_sink_rows:  # number of fixed random rows to prepend as attention sinks (0 = disabled)
