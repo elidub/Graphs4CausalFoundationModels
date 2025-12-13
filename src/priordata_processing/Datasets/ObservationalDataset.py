@@ -60,6 +60,7 @@ class ObservationalDataset(Dataset):
         "standardize": bool,
         "y_clip_quantile": (float, type(None)),
         "eps": float,
+        "test_feature_mask_fraction": float,
     }
     
     # Expected dataset configuration parameters
@@ -384,6 +385,7 @@ class ObservationalDataset(Dataset):
             dropout_prob=preprocessing_params["dropout_prob"],
             target_feature=preprocessing_params["target_feature"],
             random_seed=preprocessing_params["random_seed"],
+            test_feature_mask_fraction=preprocessing_params.get("test_feature_mask_fraction", 0.0),
             # Legacy flags retained, but split flags take precedence internally
             negative_one_one_scaling=preprocessing_params.get("negative_one_one_scaling", True),
             standardize=preprocessing_params.get("standardize", True),

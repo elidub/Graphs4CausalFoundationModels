@@ -12,7 +12,7 @@
 experiment_name: "early_test2"
 description: "First pipeline test. debug scale with fixed seeds for reproducibility"
 
-mode: "interventional" # determine whether to train in predictive or interventional mode via "predictive" or "interventional"
+mode: "predictive" # determine whether to train in predictive or interventional mode via "predictive" or "interventional"
 
 scm_config:
   num_nodes:
@@ -327,6 +327,13 @@ preprocessing_config:
       alpha: 2.0
       beta: 3.0
   
+  # Test feature masking: randomly mask a fraction of features in test set only
+  # Creates distribution shift where test has fewer features than train
+  test_feature_mask_fraction:
+    distribution: "uniform"
+    distribution_parameters:
+      low: 0.0
+      high: 1.0
   
   random_seed:
     distribution: "discrete_uniform"

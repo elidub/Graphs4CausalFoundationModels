@@ -13,6 +13,7 @@ class BasicProcessing:
     This class ONLY adds:
       - Target feature selection (user-specified or random).
       - Optional feature hiding (dropout probability) excluding the target.
+      - Optional test-time feature masking to simulate distribution shift.
 
     All other preprocessing (shuffling, train/test split, outlier winsorization,
     Yeo-Johnson, standardization, optional [-1,1] scaling, padding) is done by
@@ -36,8 +37,17 @@ class BasicProcessing:
         Probability of dropping each non-target feature.
     target_feature : Optional[int]
         Fixed target feature index; if None choose randomly.
+    intervened_feature : Optional[int]
+        Index of the feature that was intervened upon. This feature is never
+        masked in the test set.
     random_seed : Optional[int]
         Reproducibility for target selection, dropout & shuffling.
+    test_feature_mask_fraction : float, default 0.0
+        Fraction of non-zero features to mask (set to zero) in the test set only.
+        This creates a distribution shift where test has fewer features than train.
+        If set to 0.5 and there are 6 non-zero features in test, 3 will be randomly
+        selected and zeroed out. The target and intervened features are never masked.
+        Must be in [0, 1). Default 0.0 means no masking.
     negative_one_one_scaling : bool
         Apply [-1,1] scaling after other transforms.
     standardize : bool
@@ -72,6 +82,7 @@ class BasicProcessing:
         target_feature: Optional[int] = None,
         intervened_feature: Optional[int] = None,
         random_seed: Optional[int] = None,
+        test_feature_mask_fraction: float = 0.0,
     # Legacy combined flags (kept for backward-compat)
     negative_one_one_scaling: bool = True,
     standardize: bool = True,
@@ -94,6 +105,7 @@ class BasicProcessing:
         self.target_feature = target_feature
         self.intervened_feature = intervened_feature
         self.random_seed = random_seed
+        self.test_feature_mask_fraction = test_feature_mask_fraction
 
         # Store Preprocessor-compatible config
         self.n_features = n_features
@@ -129,6 +141,7 @@ class BasicProcessing:
         assert n_features <= max_n_features, "n_features <= max_n_features"
         assert n_train_samples <= max_n_train_samples, "n_train_samples <= max_n_train_samples"
         assert n_test_samples <= max_n_test_samples, "n_test_samples <= max_n_test_samples"
+        assert 0.0 <= test_feature_mask_fraction < 1.0, "test_feature_mask_fraction must be in [0,1)"
 
     # ------------------------------------------------------------------
     def process(
@@ -321,6 +334,10 @@ class BasicProcessing:
         if X_test.shape[0] != self.n_test_samples:
             raise RuntimeError("Post-processing test sample count mismatch.")
 
+        # Apply test feature masking if requested
+        if self.test_feature_mask_fraction > 0.0:
+            X_test = self._apply_test_feature_masking(X_test)
+
         if self.intervened_feature is None:
             return X_train, Y_train, X_test, Y_test
         else:
@@ -456,3 +473,66 @@ class BasicProcessing:
             dropped = [d for d in dropped if d != feature_indices[remaining_cols[0]]]
 
         return kept, dropped
+
+    def _apply_test_feature_masking(self, X_test: torch.Tensor) -> torch.Tensor:
+        """Randomly mask out (zero out) a fraction of non-zero features in test set.
+        
+        This creates a distribution shift where the test set has fewer features than 
+        the training set, simulating scenarios where some features are unavailable 
+        at test time.
+        
+        The target feature and intervened feature (if present) are never masked.
+        
+        Parameters
+        ----------
+        X_test : torch.Tensor
+            Test features of shape (n_test_samples, max_n_features)
+            
+        Returns
+        -------
+        torch.Tensor
+            Test features with some columns masked (set to zero)
+            
+        Notes
+        -----
+        - Identifies non-zero columns (features that weren't already padded/dropped)
+        - Randomly selects a fraction of these to mask out
+        - Never masks the target or intervened feature columns
+        - Masking is applied by setting entire columns to zero
+        """
+        if self.test_feature_mask_fraction <= 0.0:
+            return X_test
+        
+        # Identify non-zero columns (columns that have at least one non-zero value)
+        # Use a small epsilon to account for numerical precision
+        eps = 0.0
+        column_is_nonzero = (X_test.abs().sum(dim=0) > eps)
+        nonzero_cols = torch.where(column_is_nonzero)[0].tolist()
+        
+        if len(nonzero_cols) == 0:
+            # All columns are zero, nothing to mask
+            return X_test
+        
+        # Calculate number of features to mask
+        n_to_mask = int(len(nonzero_cols) * self.test_feature_mask_fraction)
+        
+        if n_to_mask == 0:
+            # Fraction too small to mask any features
+            return X_test
+        
+        # Randomly select features to mask
+        if self.random_seed is not None:
+            # Use a derived seed for test masking to maintain reproducibility
+            # but different from dropout seed
+            torch.manual_seed(self.random_seed + 999999)
+            random.seed(self.random_seed + 999999)
+        
+        cols_to_mask = random.sample(nonzero_cols, n_to_mask)
+        
+        # Create a copy to avoid in-place modification
+        X_test_masked = X_test.clone()
+        
+        # Mask the selected columns by setting them to zero
+        X_test_masked[:, cols_to_mask] = 0.0
+        
+        return X_test_masked
