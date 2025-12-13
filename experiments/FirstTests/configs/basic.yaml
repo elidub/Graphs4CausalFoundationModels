@@ -10,7 +10,7 @@
 # ===============================================================================
 
 experiment_name: "early_test2"
-description: "First pipeline test. debug scale with fixed seeds for reproducibility"
+description: "soft attention"
 
 mode: "interventional" # determine whether to train in predictive or interventional mode via "predictive" or "interventional"
 
@@ -247,7 +247,7 @@ dataset_config:
 
   # Adjacency matrix output (only used when graph conditioning is enabled)
   return_adjacency_matrix:  # whether to include adjacency matrix in dataset output
-    value: false  # Will be auto-enabled when use_graph_conditioning=true
+    value: true  # Will be auto-enabled when use_graph_conditioning=true
 
   # Rejection sampling: ensure target variance is sufficiently large
   # If either train or test target variance falls below this threshold, resample the dataset.
@@ -443,9 +443,9 @@ training_config:
   device:
     value: "cuda"
   use_amp:  # Enable automatic mixed precision (float16) for faster training on GPU
-    value: true
+    value: false
   precision: # precision for training. 
-    value: "bf16"
+    value: "32"
 
   # Experiment Organization
   experiment_name: # name of the experiment, used for logging 
