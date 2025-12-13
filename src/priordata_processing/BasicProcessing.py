@@ -505,7 +505,7 @@ class BasicProcessing:
         
         # Identify non-zero columns (columns that have at least one non-zero value)
         # Use a small epsilon to account for numerical precision
-        eps = 0.0
+        eps = 1e-8
         column_is_nonzero = (X_test.abs().sum(dim=0) > eps)
         nonzero_cols = torch.where(column_is_nonzero)[0].tolist()
         
