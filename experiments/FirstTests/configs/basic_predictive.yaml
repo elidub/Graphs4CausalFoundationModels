@@ -12,7 +12,7 @@
 experiment_name: "early_test2"
 description: "First pipeline test. debug scale with fixed seeds for reproducibility"
 
-mode: "predictive" # determine whether to train in predictive or interventional mode via "predictive" or "interventional"
+mode: "interventional" # determine whether to train in predictive or interventional mode via "predictive" or "interventional"
 
 scm_config:
   num_nodes:
@@ -382,7 +382,7 @@ model_config:
 training_config:
   # Core Training Parameters
   learning_rate:  # usually 1e-5 - 1e-4 work well
-    value: 0.001
+    value: 0.0001
   weight_decay: # weight decay for optimizer, might not be needed
     value: 0.00001 
   max_steps:  #critial for determing training duration!
