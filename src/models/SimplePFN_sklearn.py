@@ -506,8 +506,14 @@ class SimplePFNSklearn:
                     print("[SimplePFNSklearn] Loaded checkpoint into model (partial loads allowed).")
                     
                 # Load BarDistribution parameters if available and BarDistribution is enabled
-                if self.use_bar_distribution and self.bar_distribution is not None and 'bar_distribution' in ckpt:
-                    self._load_bar_distribution_parameters(ckpt['bar_distribution'])
+                if self.use_bar_distribution and self.bar_distribution is not None:
+                    if 'bar_distribution' in ckpt:
+                        self._load_bar_distribution_parameters(ckpt['bar_distribution'])
+                    else:
+                        if self.verbose:
+                            print("[SimplePFNSklearn] WARNING: 'bar_distribution' key not found in checkpoint!")
+                            print(f"[SimplePFNSklearn] Available top-level keys: {list(ckpt.keys())}")
+                            print("[SimplePFNSklearn] BarDistribution will be fitted on first prediction call.")
                     
             except Exception as e:
                 if self.verbose:
@@ -559,8 +565,14 @@ class SimplePFNSklearn:
                                 print("[SimplePFNSklearn] Successfully rebuilt model with inferred shape and loaded checkpoint.")
                                 
                             # Load BarDistribution parameters if available and BarDistribution is enabled
-                            if self.use_bar_distribution and self.bar_distribution is not None and 'bar_distribution' in ckpt:
-                                self._load_bar_distribution_parameters(ckpt['bar_distribution'])
+                            if self.use_bar_distribution and self.bar_distribution is not None:
+                                if 'bar_distribution' in ckpt:
+                                    self._load_bar_distribution_parameters(ckpt['bar_distribution'])
+                                else:
+                                    if self.verbose:
+                                        print("[SimplePFNSklearn] WARNING: 'bar_distribution' key not found in checkpoint!")
+                                        print(f"[SimplePFNSklearn] Available top-level keys: {list(ckpt.keys())}")
+                                        print("[SimplePFNSklearn] BarDistribution will be fitted on first prediction call.")
                                 
                         except Exception as e2:
                             if self.verbose:
@@ -1186,6 +1198,27 @@ class SimplePFNSklearn:
 
         # Process predictions based on type and BarDistribution usage
         if self.use_bar_distribution:
+            # Check if BarDistribution needs to be fitted
+            # Only auto-fit if we didn't load from a checkpoint (checkpoint should have the fitted state)
+            if self.bar_distribution.centers is None:
+                if self.checkpoint_path:
+                    # This shouldn't happen - checkpoint should have bar_distribution state
+                    # But if it does, warn the user
+                    print("[SimplePFNSklearn] WARNING: BarDistribution not loaded from checkpoint!")
+                    print("[SimplePFNSklearn] This indicates the checkpoint may not have bar_distribution state saved.")
+                    print("[SimplePFNSklearn] Fitting on provided training data as fallback...")
+                else:
+                    if self.verbose:
+                        print("[SimplePFNSklearn] BarDistribution not fitted. Fitting on provided training data...")
+                
+                # Create a simple dataloader from the training data
+                # BarDistribution.fit() expects (x_train, y_train, x_test, y_test) tuples
+                # For fitting, we can use the training data as both train and test
+                simple_dataloader = [(Xtr, ytr, Xtr, ytr)]
+                self.bar_distribution.fit(simple_dataloader)
+                if self.verbose:
+                    print("[SimplePFNSklearn] BarDistribution fitted successfully.")
+            
             # Model outputs BarDistribution parameters
             if prediction_type in ["point", "mode"]:
                 result = self.bar_distribution.mode(raw_predictions).cpu().numpy()
@@ -1539,6 +1572,212 @@ class SimplePFNSklearn:
                     entropies[test_idx] = 0.0
             
             return entropies
+
+    def predict_log_likelihood(self, X_train: Any, y_train: Any, X_test: Any, y_test: Any,
+                              aggregate: Literal["mean", "median", "none"] = "mean") -> np.ndarray:
+        """
+        Compute the log-likelihood of test targets under the model's predictive distribution.
+        
+        Evaluates log p(y_test | X_train, y_train, X_test) for each test sample.
+        Higher log-likelihood indicates better fit of the predictive distribution to the observed values.
+        Requires BarDistribution to be enabled.
+        
+        Args:
+            X_train: Training features
+            y_train: Training targets
+            X_test: Test features
+            y_test: Test targets to evaluate (M,) or (M, 1)
+            aggregate: How to aggregate ensemble predictions if n_estimators > 1
+                - "mean": Average log-likelihood across ensemble members (default)
+                - "median": Median log-likelihood across ensemble members
+                - "none": Return all log-likelihoods with shape (n_estimators, M)
+                
+        Returns:
+            Log-likelihood for each test sample (M,) or (n_estimators, M) if aggregate="none"
+            
+        Raises:
+            ValueError: If BarDistribution is not enabled
+            ValueError: If y_test shape doesn't match X_test
+        """
+        if not self.use_bar_distribution:
+            raise ValueError("predict_log_likelihood() requires BarDistribution to be enabled in config")
+        
+        if self.model is None:
+            raise RuntimeError("Model not built. Call load() before predict_log_likelihood().")
+        
+        # Convert inputs
+        if hasattr(X_train, "values"):
+            X_train = X_train.values
+        if hasattr(X_test, "values"):
+            X_test = X_test.values
+        if hasattr(y_train, "values"):
+            y_train = y_train.values
+        if hasattr(y_test, "values"):
+            y_test = y_test.values
+        
+        X_train_np = np.asarray(X_train, dtype=np.float32)
+        X_test_np = np.asarray(X_test, dtype=np.float32)
+        y_train_np = np.asarray(y_train, dtype=np.float32)
+        y_test_np = np.asarray(y_test, dtype=np.float32)
+        
+        # Ensure y_test is 1D
+        if y_test_np.ndim == 2 and y_test_np.shape[1] == 1:
+            y_test_np = y_test_np.squeeze(1)
+        elif y_test_np.ndim > 1:
+            raise ValueError(f"y_test must be (M,) or (M, 1), got shape {y_test_np.shape}")
+        
+        # Check shapes match
+        if X_test_np.shape[0] != y_test_np.shape[0]:
+            raise ValueError(f"X_test has {X_test_np.shape[0]} samples but y_test has {y_test_np.shape[0]}")
+        
+        # Handle ensemble vs single model
+        if self.use_ensemble and self.n_estimators > 1:
+            # Get ensemble data variants
+            if self.ensemble_preprocessor is None or not self.ensemble_preprocessor.fitted:
+                raise RuntimeError("Ensemble preprocessors not fitted. Call fit() before predict().")
+            
+            ensemble_data = self.ensemble_preprocessor.transform(X_train_np, y_train_np, X_test_np)
+            
+            log_likelihoods = np.zeros((self.n_estimators, X_test_np.shape[0]))
+            
+            for ens_idx, (Xtr_var, ytr_var, Xte_var) in ensemble_data.items():
+                # Get model predictions (distribution parameters)
+                with torch.no_grad():
+                    Xtr_t = torch.from_numpy(Xtr_var).unsqueeze(0).to(self.device)
+                    ytr_t = torch.from_numpy(ytr_var).unsqueeze(0).unsqueeze(-1).to(self.device)  # (1, N, 1)
+                    Xte_t = torch.from_numpy(Xte_var).unsqueeze(0).to(self.device)
+                    
+                    out = self.model(Xtr_t, ytr_t, Xte_t)
+                    pred_raw = out["predictions"]  # (1, M, num_params)
+                    
+                    # Compute log-likelihood using BarDistribution
+                    yte_t = torch.from_numpy(y_test_np).unsqueeze(0).to(self.device)  # (1, M)
+                    
+                    # BarDistribution.average_log_prob returns (B,) = (1,)
+                    # But we want per-sample log-likelihoods
+                    # So we compute logpdf directly
+                    logpdf = self.bar_distribution._logpdf_from_pred(pred_raw, yte_t)  # (1, M)
+                    log_likelihoods[ens_idx, :] = logpdf.squeeze(0).cpu().numpy()
+            
+            # Aggregate across ensemble members
+            if aggregate == "none":
+                return log_likelihoods  # (n_estimators, M)
+            elif aggregate == "mean":
+                return np.mean(log_likelihoods, axis=0)  # (M,)
+            elif aggregate == "median":
+                return np.median(log_likelihoods, axis=0)  # (M,)
+            else:
+                raise ValueError(f"Unknown aggregate method: {aggregate}")
+        
+        else:
+            # Single model prediction
+            with torch.no_grad():
+                Xtr_t = torch.from_numpy(X_train_np).unsqueeze(0).to(self.device)
+                ytr_t = torch.from_numpy(y_train_np).unsqueeze(0).unsqueeze(-1).to(self.device)  # (1, N, 1)
+                Xte_t = torch.from_numpy(X_test_np).unsqueeze(0).to(self.device)
+                
+                out = self.model(Xtr_t, ytr_t, Xte_t)
+                pred_raw = out["predictions"]  # (1, M, num_params)
+                
+                # Compute log-likelihood using BarDistribution
+                yte_t = torch.from_numpy(y_test_np).unsqueeze(0).to(self.device)  # (1, M)
+                
+                # Get per-sample log-likelihoods
+                logpdf = self.bar_distribution._logpdf_from_pred(pred_raw, yte_t)  # (1, M)
+                
+                return logpdf.squeeze(0).cpu().numpy()  # (M,)
+
+    def get_raw_predictions(self, X_train: Any, y_train: Any, X_test: Any,
+                           aggregate: Literal["mean", "median", "none"] = "none") -> torch.Tensor:
+        """
+        Get raw model predictions (BarDistribution parameters) without aggregation.
+        
+        This method is useful for visualization and custom post-processing of the 
+        predictive distribution. For BarDistribution models, returns the raw parameters
+        that can be passed to BarDistribution methods like plot().
+        
+        Args:
+            X_train: Training features
+            y_train: Training targets
+            X_test: Test features
+            aggregate: How to aggregate ensemble predictions if n_estimators > 1
+                - "none": Return all predictions with shape (n_estimators, M, num_params) (default)
+                - "mean": Average parameters across ensemble members (M, num_params)
+                - "median": Median parameters across ensemble members (M, num_params)
+                
+        Returns:
+            Raw model predictions as torch.Tensor:
+            - Single model: shape (M, num_params) where num_params = K+4 for BarDistribution
+            - Ensemble with aggregate="none": shape (n_estimators, M, num_params)
+            - Ensemble with aggregation: shape (M, num_params)
+            
+        Example:
+            >>> # Get raw predictions for a single test point
+            >>> raw_pred = model.get_raw_predictions(X_train, y_train, X_test[[0]])
+            >>> # Plot the predictive distribution
+            >>> bar_dist = model.bar_distribution
+            >>> bar_dist.plot(raw_pred, idx=0, title="Predictive Distribution")
+        """
+        if self.model is None:
+            raise RuntimeError("Model not built. Call load() before get_raw_predictions().")
+        
+        # Convert inputs
+        if hasattr(X_train, "values"):
+            X_train = X_train.values
+        if hasattr(X_test, "values"):
+            X_test = X_test.values
+        if hasattr(y_train, "values"):
+            y_train = y_train.values
+        
+        X_train_np = np.asarray(X_train, dtype=np.float32)
+        X_test_np = np.asarray(X_test, dtype=np.float32)
+        y_train_np = np.asarray(y_train, dtype=np.float32)
+        
+        # Handle ensemble vs single model
+        if self.use_ensemble and self.n_estimators > 1:
+            # Get ensemble data variants
+            if self.ensemble_preprocessor is None or not self.ensemble_preprocessor.fitted:
+                raise RuntimeError("Ensemble preprocessors not fitted. Call fit() before get_raw_predictions().")
+            
+            ensemble_data = self.ensemble_preprocessor.transform(X_train_np, y_train_np, X_test_np)
+            
+            # Collect predictions from each ensemble member
+            all_preds = []
+            
+            for ens_idx, (Xtr_var, ytr_var, Xte_var) in ensemble_data.items():
+                with torch.no_grad():
+                    Xtr_t = torch.from_numpy(Xtr_var).unsqueeze(0).to(self.device)
+                    ytr_t = torch.from_numpy(ytr_var).unsqueeze(0).unsqueeze(-1).to(self.device)  # (1, N, 1)
+                    Xte_t = torch.from_numpy(Xte_var).unsqueeze(0).to(self.device)
+                    
+                    out = self.model(Xtr_t, ytr_t, Xte_t)
+                    pred_raw = out["predictions"]  # (1, M, num_params)
+                    all_preds.append(pred_raw.squeeze(0))  # (M, num_params)
+            
+            # Stack ensemble predictions
+            all_preds = torch.stack(all_preds, dim=0)  # (n_estimators, M, num_params)
+            
+            # Aggregate if requested
+            if aggregate == "none":
+                return all_preds
+            elif aggregate == "mean":
+                return torch.mean(all_preds, dim=0)
+            elif aggregate == "median":
+                return torch.median(all_preds, dim=0).values
+            else:
+                raise ValueError(f"Unknown aggregate method: {aggregate}")
+        
+        else:
+            # Single model prediction
+            with torch.no_grad():
+                Xtr_t = torch.from_numpy(X_train_np).unsqueeze(0).to(self.device)
+                ytr_t = torch.from_numpy(y_train_np).unsqueeze(0).unsqueeze(-1).to(self.device)  # (1, N, 1)
+                Xte_t = torch.from_numpy(X_test_np).unsqueeze(0).to(self.device)
+                
+                out = self.model(Xtr_t, ytr_t, Xte_t)
+                pred_raw = out["predictions"]  # (1, M, num_params)
+                
+                return pred_raw.squeeze(0)  # (M, num_params)
 
 
 if __name__ == "__main__":

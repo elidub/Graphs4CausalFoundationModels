@@ -180,7 +180,7 @@ if __name__ == "__main__":
     MAX_TASKS = 20
     DATA_DIR = str(repo_root / "data_cache")  # Use absolute path to data_cache
     CONFIG = str(repo_root / "experiments/FirstTests/configs/basic.yaml")
-    CHECKPOINT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16631563.0/step_32000.pt"  # Leave empty to auto-detect or skip PFN
+    CHECKPOINT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16661592.0/step_15000_obs.pt"  # Leave empty to auto-detect or skip PFN
     DEVICE = "cpu"
     OUTPUT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/src/benchmarking/results/benchmark_results.csv"  # Process ID will be automatically added: benchmark_results_pid12345.csv
     NO_TARGET_ENCODING = True
@@ -192,13 +192,13 @@ if __name__ == "__main__":
     # Subsampling env vars (optional) - read from ALL_CAPS environment variables so submit files can set them
     N_FEATURES = 50
     MAX_N_FEATURES = 50
-    N_TRAIN = 10000
-    MAX_N_TRAIN = 10000
-    N_TEST = 10000
-    MAX_N_TEST = 10000
+    N_TRAIN = 499
+    MAX_N_TRAIN = 499
+    N_TEST = 499
+    MAX_N_TEST = 499
     PREFER_NUMERIC = False
     ONLY_NUMERIC = False
-    FIDELITY = "high"  # Options: "minimal", "low", "high", "very_high"
+    FIDELITY = "low"  # Options: "minimal", "low", "high", "very_high"
     BOOTSTRAP_SAMPLES = 10000
     
     # SimplePFN Ensemble parameters
