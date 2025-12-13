@@ -323,6 +323,7 @@ def main():
             
             # Create dataset based on mode
             if mode == 'predictive':
+                print("   Creating ObservationalDataset...")
                 dataset = ObservationalDataset(
                     scm_config=scm_config,
                     preprocessing_config=preprocessing_config,
@@ -330,6 +331,7 @@ def main():
                     seed=42,
                 )
             else:
+                print("   Creating InterventionalDataset...")
                 dataset = InterventionalDataset(
                     scm_config=scm_config,
                     preprocessing_config=preprocessing_config,
