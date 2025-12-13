@@ -469,6 +469,10 @@ class SCM:
         for child in node_order:
             child_idx = node_to_idx[child]
             for parent in self._parents[child]:
+                # Skip parents that aren't in the provided node_order
+                # (e.g., dropped features or unobserved variables)
+                if parent not in node_to_idx:
+                    continue
                 parent_idx = node_to_idx[parent]
                 adj_matrix[parent_idx, child_idx] = 1.0
         

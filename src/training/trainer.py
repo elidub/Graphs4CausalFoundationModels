@@ -985,7 +985,14 @@ class Trainer:
         sample_batch = next(iter(self.dataloader))
         if isinstance(sample_batch, list):
             batch_size = sample_batch[0].shape[0]
-            if len(sample_batch) == 6:
+            if len(sample_batch) == 7:
+                # Interventional format with adjacency matrix: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adj_matrix)
+                n_train = sample_batch[0].shape[1]
+                n_test = sample_batch[3].shape[1]
+                features = sample_batch[0].shape[2]
+                adj_shape = sample_batch[6].shape
+                print(f"Batch structure (Interventional + Graph): {batch_size} samples, {n_train} obs points, {n_test} intv points, {features} features, adjacency matrix: {adj_shape}")
+            elif len(sample_batch) == 6:
                 # Interventional format: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
                 n_train = sample_batch[0].shape[1]
                 n_test = sample_batch[3].shape[1]
@@ -998,7 +1005,7 @@ class Trainer:
                 features = sample_batch[0].shape[2]
                 print(f"Batch structure (Observational): {batch_size} samples, {n_train} train points, {n_test} test points, {features} features")
             # Legacy: If t/alpha present in old curriculum format (not used in interventional)
-            if len(sample_batch) >= 6 and sample_batch[4].dim() == 0:
+            if len(sample_batch) >= 6 and len(sample_batch) <= 7 and sample_batch[4].dim() == 0:
                 try:
                     t0 = float(sample_batch[4][0].item())
                     a0 = float(sample_batch[5][0].item())

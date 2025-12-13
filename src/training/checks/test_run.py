@@ -37,7 +37,7 @@ def load_and_modify_existing_config(config_path):
     
     # Reduce training iterations for quick test
 
-    config['training_config']['max_steps'] = {'value': 2}  # Very few steps
+    config['training_config']['max_steps'] = {'value': 20}  # Very few steps
     config['training_config']['batch_size'] = {'value': 2}  # Small batch
     config['training_config']['device'] = {'value': 'cpu'}  # Force CPU usage
     config['training_config']['num_workers'] = {'value': 0}  # Avoid multiprocessing issues
