@@ -13,13 +13,46 @@ DEFAULT_CONFIG_PATH = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/
 
 
 def load_yaml_config(config_path: str = None):
-    """Load YAML configuration file."""
+    """Load YAML configuration file.
+    
+    Args:
+        config_path: Path to config file. Can be:
+            - Absolute path: /path/to/config.yaml
+            - Relative path: resolved relative to current working directory
+            - None: uses DEFAULT_CONFIG_PATH
+    
+    Returns:
+        dict: Loaded configuration
+        
+    Raises:
+        FileNotFoundError: If config file doesn't exist
+    """
     if config_path is None:
         config_path = DEFAULT_CONFIG_PATH
     
     config_path = Path(config_path)
+    
+    # Try to resolve the path
+    if not config_path.is_absolute():
+        # First try relative to current working directory
+        resolved_path = config_path.resolve()
+        if not resolved_path.exists():
+            # If that doesn't work, try relative to the script location
+            # (useful when running from different directories)
+            script_dir = Path(__file__).parent.parent.parent  # Go up to repo root
+            alt_path = (script_dir / config_path).resolve()
+            if alt_path.exists():
+                config_path = alt_path
+            else:
+                config_path = resolved_path  # Use original for error message
+        else:
+            config_path = resolved_path
+    
     if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
+        raise FileNotFoundError(
+            f"Config file not found: {config_path}\n"
+            f"  Tried resolving relative to: {Path.cwd()}"
+        )
     
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
