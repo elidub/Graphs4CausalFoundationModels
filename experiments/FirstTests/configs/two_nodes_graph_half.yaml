@@ -9,8 +9,8 @@
 # 
 # ===============================================================================
 
-experiment_name: "two_nodes_nograph"
-description: "use only two variables and no graph conditioning to test basic functionality of the pipeline"
+experiment_name: "two_nodes_graph"
+description: "use only two variables and half graph conditioning to test basic functionality of the pipeline"
 
 mode: "interventional" # determine whether to train in predictive or interventional mode via "predictive" or "interventional"
 
@@ -20,8 +20,8 @@ scm_config:
   graph_edge_prob:
     distribution: "beta"
     distribution_parameters:
-      alpha: 2.0
-      beta: 2.0
+      alpha: 1.0
+      beta: 1.0
   graph_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -244,7 +244,7 @@ dataset_config:
 
   # Adjacency matrix output (only used when graph conditioning is enabled)
   return_adjacency_matrix:  # whether to include adjacency matrix in dataset output
-    value: false  # Will be auto-enabled when use_graph_conditioning=true
+    value: true  # Will be auto-enabled when use_graph_conditioning=true
 
   # Rejection sampling: ensure target variance is sufficiently large
   # If either train or test target variance falls below this threshold, resample the dataset.
@@ -355,19 +355,19 @@ model_config:
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
     value: 2
   num_features:
-    value: 2  # MUST be max_number_features - 1 (2 - 1 = 1 inputs when one is target)
+    value: 2  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
   normalize_features:  # whether to apply quantile transform + standard normalization internally
     value: true
   
   # Graph Conditioning Configuration (only applies when mode="interventional")
   use_graph_conditioning:  # whether to condition on causal graph structure
-    value: false
+    value: true
   graph_conditioning_mode:  # how to apply graph conditioning
     # Options:
     #   "hard_attention_only" - hard masking on all heads
     #   "soft_learned_bias" - learned biases on all heads
     #   "hybrid_half_and_half" - first half of heads use hard masking, second half unconstrained
-    value: "hard_attention_only"
+    value: "hybrid_half_and_half"
   graph_bias_init:  # initial bias value for non-edges in soft mode (negative = discourage attention)
     value: -5.0
   

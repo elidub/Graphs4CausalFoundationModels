@@ -239,7 +239,7 @@ dataset_config:
   n_test_samples_per_dataset: # how many of the max_number_train_samples_per_dataset to use to pass to the model. the rest will be test samples
     distribution: "discrete_uniform"
     distribution_parameters:
-      low: 1
+      low: 499
       high: 500
 
   # Adjacency matrix output (only used when graph conditioning is enabled)
@@ -405,7 +405,7 @@ training_config:
   weight_decay: # weight decay for optimizer, might not be needed
     value: 0.00001 
   max_steps:  #critial for determing training duration!
-    value: 10000
+    value: 100000
   max_epochs: # should always be 1
     value: 1
 
