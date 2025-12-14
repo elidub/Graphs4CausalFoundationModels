@@ -1851,7 +1851,7 @@ def main():
     # =============================================================
     
     # Path to YAML config file (relative to repository root)
-    CONFIG_PATH = 'experiments/FirstTests/configs/basic.yaml'
+    CONFIG_PATH = 'experiments/FirstTests/configs/two_nodes_nograph.yaml'
     
     # Random seed for reproducibility
     SEED = 42

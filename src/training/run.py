@@ -102,8 +102,18 @@ def main():
         graph_conditioning_mode = None
         if mode == 'interventional':
             model_config = config.get('model_config', {})
-            use_graph_conditioning = extract_config_values(model_config.get('use_graph_conditioning', False))
-            graph_conditioning_mode = extract_config_values(model_config.get('graph_conditioning_mode', 'hard_attention_only'))
+            # Extract the actual boolean/string values from the config format
+            use_graph_cond_cfg = model_config.get('use_graph_conditioning', False)
+            if isinstance(use_graph_cond_cfg, dict) and 'value' in use_graph_cond_cfg:
+                use_graph_conditioning = use_graph_cond_cfg['value']
+            else:
+                use_graph_conditioning = use_graph_cond_cfg
+            
+            graph_cond_mode_cfg = model_config.get('graph_conditioning_mode', 'hard_attention_only')
+            if isinstance(graph_cond_mode_cfg, dict) and 'value' in graph_cond_mode_cfg:
+                graph_conditioning_mode = graph_cond_mode_cfg['value']
+            else:
+                graph_conditioning_mode = graph_cond_mode_cfg
         
         print(f"\nMODE:")
         print(f"   Training mode: {mode.upper()}")

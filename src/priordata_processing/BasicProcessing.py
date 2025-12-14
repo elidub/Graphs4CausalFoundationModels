@@ -135,6 +135,9 @@ class BasicProcessing:
         self.eps = eps
         self.device = device
         self.dtype = dtype
+        
+        # Internal state flags
+        self.has_dummy_feature = False  # Set to True when dummy feature is added
 
         # Basic validations mirroring Preprocessor expectations
         assert 0 < outlier_quantile <= 1.0, "outlier_quantile must be in (0,1]"
@@ -197,11 +200,22 @@ class BasicProcessing:
         X_no_target = data_tensor[:, kept_cols]  # (N, n_features)
         Y_tensor = target_values.unsqueeze(-1)
 
+        # Handle edge case: no features (only T and Y)
+        # Add a dummy zero feature to avoid empty X
+        actual_n_features = self.n_features
+        if X_no_target.shape[1] == 0:
+            X_no_target = torch.zeros(X_no_target.shape[0], 1, dtype=X_no_target.dtype, device=X_no_target.device)
+            self.has_dummy_feature = True
+            actual_n_features = 1  # Update to reflect the dummy feature
+        else:
+            self.has_dummy_feature = False
+
         # Batch dimension for Preprocessor
         X_batch = X_no_target.unsqueeze(0)  # [1,N,F]
         Y_batch = Y_tensor.squeeze(-1).unsqueeze(0)  # [1,N]
+        
         preproc = Preprocessor(
-            n_features=self.n_features,
+            n_features=actual_n_features,  # Use actual_n_features which accounts for dummy
             max_n_features=self.max_n_features,
             n_train_samples=self.n_train_samples,
             max_n_train_samples=self.max_n_train_samples,
@@ -223,6 +237,7 @@ class BasicProcessing:
         )
 
         processed = preproc.process(X_batch, Y_batch)
+        
         if processed is None:
             raise RuntimeError("Preprocessor returned None (internal size validation failed).")
 
