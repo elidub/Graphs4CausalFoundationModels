@@ -165,22 +165,24 @@ class HybridGraphConditionedTwoWayBlock(nn.Module):
                 )
             
             # Expand mask to match multi-head attention format
-            # Shape: (B*S, F, F) -> (B*S*num_heads, F, F)
+            # Shape: (B, F, F) or (B*S, F, F) -> (B*S*num_heads, F, F)
             if additive_mask.dim() == 2:
-                # (F, F) -> (B*S, num_heads, F, F)
-                additive_mask = additive_mask.unsqueeze(0).unsqueeze(0).expand(
-                    B * S, self.heads_feat, -1, -1
-                )
+                # (F, F) -> (B*S*num_heads, F, F)
+                additive_mask = additive_mask.unsqueeze(0).repeat(B * S * self.heads_feat, 1, 1)
             elif additive_mask.dim() == 3:
-                # (B*S, F, F) -> (B*S, num_heads, F, F)
-                additive_mask = additive_mask.unsqueeze(1).expand(-1, self.heads_feat, -1, -1)
+                # (B, F, F) -> (B*S*num_heads, F, F)
+                # First repeat for S dimension, then for heads dimension
+                additive_mask = additive_mask.unsqueeze(1).repeat(1, S, 1, 1)  # (B, S, F, F)
+                additive_mask = additive_mask.reshape(B * S, F, F)  # (B*S, F, F)
+                additive_mask = additive_mask.unsqueeze(1).repeat(1, self.heads_feat, 1, 1)  # (B*S, heads, F, F)
+                additive_mask = additive_mask.reshape(B * S * self.heads_feat, F, F)  # (B*S*heads, F, F)
             
             # Create hybrid mask: first half constrained, second half free
-            hybrid_mask = additive_mask.clone()
+            # Split into head groups and modify
+            hybrid_mask = additive_mask.reshape(B * S, self.heads_feat, F, F)
             # Set second half of heads to zero (no masking)
             hybrid_mask[:, self.heads_constrained:, :, :] = 0.0
-            
-            # Reshape for PyTorch MultiheadAttention: (B*S*num_heads, F, F)
+            # Reshape back for PyTorch MultiheadAttention: (B*S*num_heads, F, F)
             hybrid_mask = hybrid_mask.reshape(B * S * self.heads_feat, F, F)
             
             x2, _ = self.feat_attn(x_norm, x_norm, x_norm, attn_mask=hybrid_mask, need_weights=False)

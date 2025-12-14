@@ -115,7 +115,7 @@ def run_simple_run_test(config_path):
 
 def main():
 
-    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "FirstTests" / "configs" / "basic.yaml"
+    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "FirstTests" / "configs" / "two_nodes_graph_half.yaml"
     
     """Main test function."""
     print("=" * 60)
