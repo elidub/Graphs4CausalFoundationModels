@@ -369,8 +369,12 @@ model_config:
   # Graph Conditioning Configuration (only applies when mode="interventional")
   use_graph_conditioning:  # whether to condition on causal graph structure
     value: true
-  graph_conditioning_mode:  # how to apply graph conditioning ("hard_attention_only" for hard masking, "soft_learned_bias" for learned biases)
-    value: "soft_learned_bias"
+  graph_conditioning_mode:  # how to apply graph conditioning
+    # Options:
+    #   "hard_attention_only" - hard masking on all heads
+    #   "soft_learned_bias" - learned biases on all heads
+    #   "hybrid_half_and_half" - first half of heads use hard masking, second half unconstrained
+    value: "hybrid_half_and_half"
   graph_bias_init:  # initial bias value for non-edges in soft mode (negative = discourage attention)
     value: -5.0
   

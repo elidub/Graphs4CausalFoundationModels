@@ -32,6 +32,7 @@ from models.SimplePFN import SimplePFNRegressor
 from models.InterventionalPFN import InterventionalPFN
 from models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
 from models.SoftGraphConditionedInterventionalPFN import SoftGraphConditionedInterventionalPFN
+from models.HybridGraphConditionedInterventionalPFN import HybridGraphConditionedInterventionalPFN
 
 # Import our training modules
 from trainer import Trainer
@@ -113,6 +114,8 @@ def main():
             if use_graph_conditioning:
                 if graph_conditioning_mode == 'soft_learned_bias':
                     model_type_str = 'SoftGraphConditionedInterventionalPFN (learned biases)'
+                elif graph_conditioning_mode == 'hybrid_half_and_half':
+                    model_type_str = 'HybridGraphConditionedInterventionalPFN (half constrained, half free)'
                 else:
                     model_type_str = 'GraphConditionedInterventionalPFN (hard masking)'
             print(f"   Using: InterventionalDataset + {model_type_str}")
@@ -599,6 +602,26 @@ def main():
                     n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
                     graph_bias_init=graph_bias_init,  # Initial bias for non-edges
                 )
+            elif graph_conditioning_mode == 'hybrid_half_and_half':
+                print(f"   Creating HybridGraphConditionedInterventionalPFN model (interventional mode with hybrid graph conditioning)...")
+                print(f"   Graph conditioning mode: {graph_conditioning_mode} (half constrained, half free)")
+                heads_feat = model_config.get("heads_feat", 4)
+                if heads_feat % 2 != 0:
+                    raise ValueError(f"heads_feat must be even for hybrid_half_and_half mode, got {heads_feat}")
+                print(f"   Feature attention heads: {heads_feat} ({heads_feat//2} constrained, {heads_feat//2} unconstrained)")
+                model = HybridGraphConditionedInterventionalPFN(
+                    num_features=num_features,
+                    d_model=model_config.get("d_model", 8),
+                    depth=model_config.get("depth", 1), 
+                    heads_feat=heads_feat,
+                    heads_samp=model_config.get("heads_samp", 2),
+                    dropout=model_config.get("dropout", 0.1),
+                    hidden_mult=model_config.get("hidden_mult", 4),
+                    output_dim=output_dim,  # Use calculated output dimension
+                    normalize_features=model_config.get("normalize_features", True),  # Apply normalization (default: True)
+                    n_sample_attention_sink_rows=model_config.get("n_sample_attention_sink_rows", 0),  # Attention sink rows
+                    n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
+                )
             else:
                 print(f"   Creating GraphConditionedInterventionalPFN model (interventional mode with hard graph conditioning)...")
                 print(f"   Graph conditioning mode: {graph_conditioning_mode} (hard attention masking)")
@@ -641,6 +664,8 @@ def main():
         elif use_graph_conditioning:
             if graph_conditioning_mode == 'soft_learned_bias':
                 model_type = "SoftGraphConditionedInterventionalPFN"
+            elif graph_conditioning_mode == 'hybrid_half_and_half':
+                model_type = "HybridGraphConditionedInterventionalPFN"
             else:
                 model_type = "GraphConditionedInterventionalPFN"
         else:
