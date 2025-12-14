@@ -242,7 +242,7 @@ dataset_config:
   n_test_samples_per_dataset: # how many of the max_number_train_samples_per_dataset to use to pass to the model. the rest will be test samples
     distribution: "discrete_uniform"
     distribution_parameters:
-      low: 200
+      low: 499
       high: 500
 
   # Adjacency matrix output (only used when graph conditioning is enabled)
