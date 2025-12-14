@@ -235,10 +235,10 @@ dataset_config:
   max_number_samples_per_dataset: #actual value of samples (train plus test) per dataset
     value: 500
 
-  max_number_train_samples_per_dataset:  #how many train samples to actually sample per dataset
-    value: 500
-  max_number_test_samples_per_dataset:  # how many test samples to actually sample per dataset
-    value: 500
+  max_number_train_samples_per_dataset:  #how many train samples to actually sample per dataset (max possible when n_test is minimum)
+    value: 300  # When n_test=200 (min), we need n_train=300 (max)
+  max_number_test_samples_per_dataset:  # how many test samples to actually sample per dataset (max possible)
+    value: 500  # When n_test=500 (max), we need n_train=0 (min)
   n_test_samples_per_dataset: # how many of the max_number_train_samples_per_dataset to use to pass to the model. the rest will be test samples
     distribution: "discrete_uniform"
     distribution_parameters:

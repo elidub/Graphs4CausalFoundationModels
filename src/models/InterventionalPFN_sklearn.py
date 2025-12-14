@@ -636,6 +636,7 @@ class InterventionalPFNSklearn(SimplePFNSklearn):
         Y_obs: np.ndarray,
         X_intv: np.ndarray,
         T_intv: np.ndarray,
+        adjacency_matrix: Optional[np.ndarray],
         prediction_type: str,
         num_samples: int,
         predict_fn,
