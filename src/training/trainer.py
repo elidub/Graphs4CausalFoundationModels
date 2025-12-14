@@ -434,6 +434,17 @@ class Trainer:
         torch.save(checkpoint, path)
         print(f"Model saved to {path}")
         
+        # Save config file alongside checkpoint if available
+        if self.config_path and os.path.exists(self.config_path):
+            config_filename = filename.replace('.pt', '_config.yaml') if filename else f"step_{self.global_step}_config.yaml"
+            config_save_path = os.path.join(self.run_save_dir, config_filename)
+            try:
+                import shutil
+                shutil.copy(self.config_path, config_save_path)
+                print(f"Config saved to {config_save_path}")
+            except Exception as e:
+                print(f"Warning: Could not save config file: {e}")
+        
         # Log to wandb if available
         if self.wandb_run:
             self.wandb_run.log({
@@ -573,6 +584,17 @@ class Trainer:
         print(f"   Best {self.best_model_metadata['metric_name']}: {self.best_model_metadata['metric_value']:.6f}")
         print(f"   Best step: {self.best_model_metadata['step']}")
         print(f"   Metric source: {self.best_model_metadata['metric_source']}")
+        
+        # Save config file alongside best model checkpoint if available
+        if self.config_path and os.path.exists(self.config_path):
+            config_filename = filename.replace('.pt', '_config.yaml')
+            config_save_path = os.path.join(self.run_save_dir, config_filename)
+            try:
+                import shutil
+                shutil.copy(self.config_path, config_save_path)
+                print(f"   Config saved to {config_save_path}")
+            except Exception as e:
+                print(f"   Warning: Could not save config file: {e}")
         
         # Log to wandb if available
         if self.wandb_run:
