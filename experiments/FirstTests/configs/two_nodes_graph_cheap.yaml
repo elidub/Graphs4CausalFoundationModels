@@ -82,11 +82,11 @@ scm_config:
       choices:
         - "pre"
         - "post"
-        - "mixed_in"
+        #- "mixed_in"
       probabilities:
-        - 0.3
-        - 0.3
-        - 0.3
+        - 0.5
+        - 0.5
+        #- 0.3
 
   # Apply parameter-free BatchNorm to inputs before MLP
   mlp_use_batch_norm:
@@ -392,7 +392,7 @@ training_config:
   weight_decay: # weight decay for optimizer, might not be needed
     value: 0.00001 
   max_steps:  #critial for determing training duration!
-    value: 5000
+    value: 10000
   max_epochs: # should always be 1
     value: 1
 
