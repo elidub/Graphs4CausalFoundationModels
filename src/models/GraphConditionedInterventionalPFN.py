@@ -552,6 +552,11 @@ class GraphConditionedInterventionalPFN(nn.Module):
             full_mask[:, n_sink_cols:, n_sink_cols:] = attn_mask
             
             attn_mask = full_mask
+
+        #breakpoint()
+        # negate attention mask
+        attn_mask = torch.logical_not(attn_mask)
+
         
         return attn_mask
 
@@ -577,7 +582,7 @@ class GraphConditionedInterventionalPFN(nn.Module):
                 Position 0: Treatment variable
                 Position 1: Outcome variable
                 Position 2+: Other features (sorted, after dropout)
-                A[i,j] = 1 means feature i can attend to feature j
+                A[i,j] = 1 means feature i can attend to feature j.  #TODO this is weird, it should be the other way around?!
 
         Returns:
             Dict with:
