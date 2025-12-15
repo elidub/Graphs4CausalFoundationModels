@@ -33,6 +33,7 @@ from models.InterventionalPFN import InterventionalPFN
 from models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
 from models.SoftGraphConditionedInterventionalPFN import SoftGraphConditionedInterventionalPFN
 from models.HybridGraphConditionedInterventionalPFN import HybridGraphConditionedInterventionalPFN
+from models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
 
 # Import our training modules
 from trainer import Trainer
@@ -126,6 +127,8 @@ def main():
                     model_type_str = 'SoftGraphConditionedInterventionalPFN (learned biases)'
                 elif graph_conditioning_mode == 'hybrid_half_and_half':
                     model_type_str = 'HybridGraphConditionedInterventionalPFN (half constrained, half free)'
+                elif graph_conditioning_mode == 'flat_append':
+                    model_type_str = 'FlatGraphConditionedInterventionalPFN (flat adjacency append)'
                 else:
                     model_type_str = 'GraphConditionedInterventionalPFN (hard masking)'
             print(f"   Using: InterventionalDataset + {model_type_str}")
@@ -632,6 +635,22 @@ def main():
                     n_sample_attention_sink_rows=model_config.get("n_sample_attention_sink_rows", 0),  # Attention sink rows
                     n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
                 )
+            elif graph_conditioning_mode == 'flat_append':
+                print(f"   Creating FlatGraphConditionedInterventionalPFN model (interventional mode with flat graph conditioning)...")
+                print(f"   Graph conditioning mode: {graph_conditioning_mode} (adjacency matrix flattened and appended to inputs)")
+                model = FlatGraphConditionedInterventionalPFN(
+                    num_features=num_features,
+                    d_model=model_config.get("d_model", 8),
+                    depth=model_config.get("depth", 1), 
+                    heads_feat=model_config.get("heads_feat", 2),
+                    heads_samp=model_config.get("heads_samp", 2),
+                    dropout=model_config.get("dropout", 0.1),
+                    hidden_mult=model_config.get("hidden_mult", 4),
+                    output_dim=output_dim,  # Use calculated output dimension
+                    normalize_features=model_config.get("normalize_features", True),  # Apply normalization (default: True)
+                    n_sample_attention_sink_rows=model_config.get("n_sample_attention_sink_rows", 0),  # Attention sink rows
+                    n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
+                )
             else:
                 print(f"   Creating GraphConditionedInterventionalPFN model (interventional mode with hard graph conditioning)...")
                 print(f"   Graph conditioning mode: {graph_conditioning_mode} (hard attention masking)")
@@ -676,6 +695,8 @@ def main():
                 model_type = "SoftGraphConditionedInterventionalPFN"
             elif graph_conditioning_mode == 'hybrid_half_and_half':
                 model_type = "HybridGraphConditionedInterventionalPFN"
+            elif graph_conditioning_mode == 'flat_append':
+                model_type = "FlatGraphConditionedInterventionalPFN"
             else:
                 model_type = "GraphConditionedInterventionalPFN"
         else:
