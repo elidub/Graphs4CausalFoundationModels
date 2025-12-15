@@ -3,7 +3,7 @@ Sklearn-like wrapper for Graph-Conditioned InterventionalPFN models.
 
 This module provides a scikit-learn-style interface for graph-conditioned models
 including GraphConditionedInterventionalPFN, SoftGraphConditionedInterventionalPFN,
-and HybridGraphConditionedInterventionalPFN.
+HybridGraphConditionedInterventionalPFN, and FlatGraphConditionedInterventionalPFN.
 
 Key differences from InterventionalPFN_sklearn:
 - Requires adjacency_matrix as input for all predictions
@@ -46,16 +46,25 @@ from pathlib import Path
 # Robust import - try without 'src.' prefix first, then with 'src.' prefix
 try:
     from models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
+    from models.SoftGraphConditionedInterventionalPFN import SoftGraphConditionedInterventionalPFN
+    from models.HybridGraphConditionedInterventionalPFN import HybridGraphConditionedInterventionalPFN
+    from models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
     from Losses.BarDistribution import BarDistribution
 except Exception:
     try:
         from src.models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
+        from src.models.SoftGraphConditionedInterventionalPFN import SoftGraphConditionedInterventionalPFN
+        from src.models.HybridGraphConditionedInterventionalPFN import HybridGraphConditionedInterventionalPFN
+        from src.models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
         from src.Losses.BarDistribution import BarDistribution
     except Exception:
         repo_root = Path(__file__).resolve().parents[2]
         if str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
         from src.models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
+        from src.models.SoftGraphConditionedInterventionalPFN import SoftGraphConditionedInterventionalPFN
+        from src.models.HybridGraphConditionedInterventionalPFN import HybridGraphConditionedInterventionalPFN
+        from src.models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
         from src.Losses.BarDistribution import BarDistribution
 
 
@@ -66,10 +75,15 @@ class GraphConditionedInterventionalPFNSklearn:
     This wrapper focuses on core functionality: prediction and log-likelihood computation
     for models that require causal graph structure (adjacency matrix) as input.
     
-    Supported models:
-    - GraphConditionedInterventionalPFN (hard attention masking)
+    Supported models (automatically detected from config):
+    - GraphConditionedInterventionalPFN (hard attention masking) 
+      → graph_conditioning_mode: "hard_attention_only" (default)
     - SoftGraphConditionedInterventionalPFN (soft attention weighting)
+      → graph_conditioning_mode: "soft_learned_bias"
     - HybridGraphConditionedInterventionalPFN (learnable interpolation)
+      → graph_conditioning_mode: "hybrid_half_and_half"
+    - FlatGraphConditionedInterventionalPFN (flat adjacency append)
+      → graph_conditioning_mode: "flat_append"
     
     For advanced features like ensemble, clustering, entropy, and variance,
     use the full InterventionalPFN_sklearn wrapper.
@@ -98,6 +112,7 @@ class GraphConditionedInterventionalPFNSklearn:
         self.model_kwargs = None
         self.bar_distribution = None
         self.use_bar_distribution = False
+        self.graph_conditioning_mode = None  # Track which model type to use
         
     def load(self, override_kwargs: Optional[dict[str, Any]] = None) -> "GraphConditionedInterventionalPFNSklearn":
         """
@@ -147,6 +162,13 @@ class GraphConditionedInterventionalPFNSklearn:
                 self.model_kwargs['n_sample_attention_sink_rows'] = get_config_value(model_cfg, 'n_sample_attention_sink_rows', 0)
                 self.model_kwargs['n_feature_attention_sink_cols'] = get_config_value(model_cfg, 'n_feature_attention_sink_cols', 0)
                 
+                # Detect graph conditioning mode
+                self.graph_conditioning_mode = get_config_value(model_cfg, 'graph_conditioning_mode', 'hard_attention_only')
+                
+                # Mode-specific parameters
+                if self.graph_conditioning_mode == 'soft_learned_bias':
+                    self.model_kwargs['graph_bias_init'] = get_config_value(model_cfg, 'graph_bias_init', -5.0)
+                
                 # BarDistribution configuration
                 use_bar = get_config_value(model_cfg, 'use_bar_distribution', False)
                 if use_bar:
@@ -183,11 +205,32 @@ class GraphConditionedInterventionalPFNSklearn:
         if not self.model_kwargs.get("num_features"):
             raise ValueError("num_features not found in config")
         
-        # Build model (GraphConditionedInterventionalPFN or variant)
+        # Build model based on graph conditioning mode
         if self.verbose:
-            print(f"  Building GraphConditionedInterventionalPFN with {self.model_kwargs['num_features']} features...")
+            print(f"  Graph conditioning mode: {self.graph_conditioning_mode}")
+            print(f"  Building model with {self.model_kwargs['num_features']} features...")
         
-        self.model = GraphConditionedInterventionalPFN(**self.model_kwargs).to(self.device)
+        # Remove parameters not supported by specific model types
+        model_kwargs_filtered = self.model_kwargs.copy()
+        
+        if self.graph_conditioning_mode == 'soft_learned_bias':
+            if self.verbose:
+                print(f"  Creating SoftGraphConditionedInterventionalPFN (soft learned biases)")
+            # SoftGraphConditionedInterventionalPFN doesn't have use_same_row_mlp
+            model_kwargs_filtered.pop('use_same_row_mlp', None)
+            self.model = SoftGraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
+        elif self.graph_conditioning_mode == 'hybrid_half_and_half':
+            if self.verbose:
+                print(f"  Creating HybridGraphConditionedInterventionalPFN (half constrained, half free)")
+            self.model = HybridGraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
+        elif self.graph_conditioning_mode == 'flat_append':
+            if self.verbose:
+                print(f"  Creating FlatGraphConditionedInterventionalPFN (flat adjacency append)")
+            self.model = FlatGraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
+        else:  # 'hard_attention_only' or default
+            if self.verbose:
+                print(f"  Creating GraphConditionedInterventionalPFN (hard attention masking)")
+            self.model = GraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
         
         # Load checkpoint
         if self.checkpoint_path:
