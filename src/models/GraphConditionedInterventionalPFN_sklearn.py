@@ -46,15 +46,11 @@ from pathlib import Path
 # Robust import - try without 'src.' prefix first, then with 'src.' prefix
 try:
     from models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
-    from models.SoftGraphConditionedInterventionalPFN import SoftGraphConditionedInterventionalPFN
-    from models.HybridGraphConditionedInterventionalPFN import HybridGraphConditionedInterventionalPFN
     from models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
     from Losses.BarDistribution import BarDistribution
 except Exception:
     try:
         from src.models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
-        from src.models.SoftGraphConditionedInterventionalPFN import SoftGraphConditionedInterventionalPFN
-        from src.models.HybridGraphConditionedInterventionalPFN import HybridGraphConditionedInterventionalPFN
         from src.models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
         from src.Losses.BarDistribution import BarDistribution
     except Exception:
@@ -62,8 +58,6 @@ except Exception:
         if str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
         from src.models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
-        from src.models.SoftGraphConditionedInterventionalPFN import SoftGraphConditionedInterventionalPFN
-        from src.models.HybridGraphConditionedInterventionalPFN import HybridGraphConditionedInterventionalPFN
         from src.models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
         from src.Losses.BarDistribution import BarDistribution
 

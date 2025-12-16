@@ -31,12 +31,30 @@ Architecture features (inherited from InterventionalPFN):
 """
 
 from __future__ import annotations
+from pathlib import Path
+import sys
 from typing import Optional, Dict, Tuple
 import math
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+# Robust import - try without 'src.' prefix first, then with 'src.' prefix
+try:
+    from models.SimplePFN_sklearn import SimplePFNSklearn
+    from models.InterventionalPFN import InterventionalPFN
+except Exception:
+    try:
+        from src.models.SimplePFN_sklearn import SimplePFNSklearn
+        from src.models.InterventionalPFN import InterventionalPFN
+    except Exception:
+        repo_root = Path(__file__).resolve().parents[2]
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from src.models.SimplePFN_sklearn import SimplePFNSklearn
+        from src.models.InterventionalPFN import InterventionalPFN
 
 
 class MLP(nn.Module):
