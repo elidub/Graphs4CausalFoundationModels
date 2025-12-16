@@ -217,12 +217,6 @@ scm_config:
   endo_p_zero:
     value: 0.0
   
-  # Noise mixture proportions: weights for [Normal, Laplace, StudentT]
-  # Must sum to 1.0. If not specified, uses equal weights [0.333, 0.333, 0.333]
-  noise_mixture_proportions:
-    value: null  # null = use default equal weights
-    # Example: value: [0.5, 0.3, 0.2]  # 50% Normal, 30% Laplace, 20% StudentT
-  
   use_exogenous_mechanisms:
     value: true
   mechanism_generator_seed:

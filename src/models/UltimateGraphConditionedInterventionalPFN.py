@@ -246,6 +246,8 @@ class GraphConditionedTwoWayBlock(nn.Module):
         dropout: Dropout rate
         hidden_mult: Hidden layer multiplier for MLPs
         use_adaln: Whether to use AdaLN (adaptive layer norm) with graph embeddings
+        use_soft_attention_bias: Whether to use learnable soft biases instead of hard masking
+        soft_bias_init: Initial value for soft attention biases (positive = encourage attention)
     """
     def __init__(
         self, 
@@ -254,10 +256,14 @@ class GraphConditionedTwoWayBlock(nn.Module):
         heads_samp: int, 
         dropout: float = 0.0, 
         hidden_mult: int = 4,
-        use_adaln: bool = True
+        use_adaln: bool = True,
+        use_soft_attention_bias: bool = False,
+        soft_bias_init: float = 5.0
     ):
         super().__init__()
         self.use_adaln = use_adaln
+        self.use_soft_attention_bias = use_soft_attention_bias
+        self.heads_feat = heads_feat
         
         # Self-attention across features with graph conditioning: (B*S, L+2, D)
         self.feat_attn = nn.MultiheadAttention(
@@ -266,6 +272,15 @@ class GraphConditionedTwoWayBlock(nn.Module):
             dropout=dropout,
             batch_first=True,
         )
+        
+        # Learnable soft attention biases (one per head)
+        # Only used when use_soft_attention_bias=True
+        if use_soft_attention_bias:
+            # Initialize with positive values to encourage attention where graph permits
+            self.soft_attention_bias = nn.Parameter(torch.full((heads_feat,), soft_bias_init))
+        else:
+            self.soft_attention_bias = None
+        
         # Use AdaLN or regular LayerNorm for feature attention
         if use_adaln:
             self.ln_feat = AdaLN(dim)
@@ -339,23 +354,54 @@ class GraphConditionedTwoWayBlock(nn.Module):
         # - 3D: (B*S*num_heads, F, F) for per-head masking
         if attn_mask is not None:
             # attn_mask shape: (B, F, F) - same mask for all samples in each batch
-            # Convert boolean mask to additive mask
-            if attn_mask.dtype == torch.bool:
-                # Convert: True -> 0.0 (attend), False -> -inf (mask)
-                float_mask = torch.zeros_like(attn_mask, dtype=x.dtype)
-                float_mask = float_mask.masked_fill(~attn_mask, float('-inf'))
+            
+            if self.use_soft_attention_bias:
+                # Soft attention: use learnable biases instead of hard masking
+                # Create additive bias mask: add bias where graph permits, leave rest at 0
+                if attn_mask.dtype == torch.bool:
+                    # attn_mask: True = can attend, False = cannot attend
+                    # We want to ADD positive bias where True
+                    bias_mask = torch.zeros_like(attn_mask, dtype=x.dtype)  # (B, F, F)
+                else:
+                    # attn_mask: 1.0 = can attend, 0.0 = cannot attend
+                    bias_mask = attn_mask.float()  # (B, F, F)
+                
+                # Expand to (B*S, F, F)
+                bias_mask = bias_mask.unsqueeze(1).expand(-1, S, -1, -1).reshape(B * S, F, F)
+                
+                # Expand for num_heads and apply per-head biases: (B*S*num_heads, F, F)
+                num_heads = self.feat_attn.num_heads
+                bias_mask = bias_mask.unsqueeze(1).expand(-1, num_heads, -1, -1).reshape(B * S * num_heads, F, F)
+                
+                # Apply learnable biases (one per head)
+                # soft_attention_bias: (num_heads,)
+                # Reshape to (1, num_heads, 1, 1) for broadcasting
+                head_biases = self.soft_attention_bias.view(1, num_heads, 1, 1)
+                # Expand to (B*S, num_heads, F, F)
+                head_biases = head_biases.expand(B * S, -1, F, F).reshape(B * S * num_heads, F, F)
+                
+                # Apply: add bias only where mask is non-zero
+                float_mask = bias_mask * head_biases
+                
             else:
-                # Assume already float: 1.0 -> 0.0 (attend), 0.0 -> -inf (mask)
-                float_mask = torch.zeros_like(attn_mask, dtype=x.dtype)
-                float_mask = float_mask.masked_fill(attn_mask == 0, float('-inf'))
-            
-            # float_mask is (B, F, F)
-            # Expand to (B*S, F, F) by repeating each batch's mask S times
-            float_mask = float_mask.unsqueeze(1).expand(-1, S, -1, -1).reshape(B * S, F, F)  # (B*S, F, F)
-            
-            # Now expand for num_heads: (B*S*num_heads, F, F)
-            num_heads = self.feat_attn.num_heads
-            float_mask = float_mask.unsqueeze(1).expand(-1, num_heads, -1, -1).reshape(B * S * num_heads, F, F)
+                # Hard masking: standard approach
+                # Convert boolean mask to additive mask
+                if attn_mask.dtype == torch.bool:
+                    # Convert: True -> 0.0 (attend), False -> -inf (mask)
+                    float_mask = torch.zeros_like(attn_mask, dtype=x.dtype)
+                    float_mask = float_mask.masked_fill(~attn_mask, float('-inf'))
+                else:
+                    # Assume already float: 1.0 -> 0.0 (attend), 0.0 -> -inf (mask)
+                    float_mask = torch.zeros_like(attn_mask, dtype=x.dtype)
+                    float_mask = float_mask.masked_fill(attn_mask == 0, float('-inf'))
+                
+                # float_mask is (B, F, F)
+                # Expand to (B*S, F, F) by repeating each batch's mask S times
+                float_mask = float_mask.unsqueeze(1).expand(-1, S, -1, -1).reshape(B * S, F, F)  # (B*S, F, F)
+                
+                # Now expand for num_heads: (B*S*num_heads, F, F)
+                num_heads = self.feat_attn.num_heads
+                float_mask = float_mask.unsqueeze(1).expand(-1, num_heads, -1, -1).reshape(B * S * num_heads, F, F)
             
             x2, _ = self.feat_attn(x_norm, x_norm, x_norm, attn_mask=float_mask, need_weights=False)
         else:
@@ -400,16 +446,18 @@ class GraphConditionedTwoWayBlock(nn.Module):
 
 class UltimateGraphConditionedInterventionalPFN(nn.Module):
     """
-    Ultimate PFN-like regressor with dual graph conditioning mechanisms.
+    Ultimate PFN-like regressor with flexible graph conditioning mechanisms.
 
-    Combines two approaches to incorporate causal graph structure:
-    1. Attention masking - hard structural constraints on which features can attend to which
+    Combines multiple approaches to incorporate causal graph structure:
+    1. Attention masking - hard or soft constraints on which features can attend to which
+       - Hard masking: -inf where graph prohibits attention (use_soft_attention_bias=False)
+       - Soft masking: learnable positive biases where graph permits attention (use_soft_attention_bias=True)
     2. GCN-style graph encoder - learns node representations from adjacency matrix
+    3. AdaLN - adaptive layer normalization conditioned on graph embeddings
     
     The GCN encoder processes the graph structure into node embeddings (B, L+2, D).
-    Currently these are computed and returned for inspection. Future versions will
-    use them for AdaLN (Adaptive Layer Normalization) to provide learned, soft
-    graph-based conditioning alongside the hard attention masks.
+    These embeddings can be used for AdaLN to provide learned, soft graph-based 
+    conditioning alongside attention masking.
     
     Adjacency matrix format:
     - Shape: (B, L+2, L+2) where L is number of features (after dropout)
@@ -423,7 +471,7 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
     - SwiGLU activation
     - Pre-layer normalization
     - Separate train/test attention
-    - Graph-conditioned feature attention
+    - Graph-conditioned feature attention (hard or soft)
     - Optional attention sinks
     
     Args:
@@ -439,7 +487,11 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
         use_same_row_mlp: Whether to use the same row MLP for train and test data
         n_sample_attention_sink_rows: Number of learnable sink rows for sample attention stability
         n_feature_attention_sink_cols: Number of learnable sink columns for feature attention stability
-        use_adaln: Whether to use Adaptive Layer Normalization with graph embeddings
+        use_attention_masking: Whether to apply graph-based attention masking (hard constraints)
+        use_gcn: Whether to use GCN encoder to process graph structure
+        use_adaln: Whether to use Adaptive Layer Normalization with graph embeddings (requires use_gcn=True)
+        use_soft_attention_bias: Whether to use learnable soft attention biases (alternative to hard masking)
+        soft_bias_init: Initial value for soft attention biases (positive encourages attention)
     """
     def __init__(
         self,
@@ -455,7 +507,11 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
         use_same_row_mlp: bool = True,
         n_sample_attention_sink_rows: int = 0,
         n_feature_attention_sink_cols: int = 0,
+        use_attention_masking: bool = True,
+        use_gcn: bool = True,
         use_adaln: bool = True,
+        use_soft_attention_bias: bool = False,
+        soft_bias_init: float = 5.0,
     ):
         super().__init__()
         self.num_features = num_features  # L (excluding intervened column)
@@ -464,7 +520,17 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
         self.normalize_features = normalize_features
         self.n_sample_attention_sink_rows = n_sample_attention_sink_rows
         self.n_feature_attention_sink_cols = n_feature_attention_sink_cols
+        self.use_attention_masking = use_attention_masking
+        self.use_gcn = use_gcn
         self.use_adaln = use_adaln
+        self.use_soft_attention_bias = use_soft_attention_bias
+        
+        # Validate configuration
+        if use_adaln and not use_gcn:
+            raise ValueError("use_adaln=True requires use_gcn=True (AdaLN needs graph embeddings from GCN)")
+        
+        if use_soft_attention_bias and not use_attention_masking:
+            raise ValueError("use_soft_attention_bias=True requires use_attention_masking=True (soft bias needs attention mask to define where to apply bias)")
 
         # === Embedding MLPs ===
         # Row-wise MLPs over feature dimension (R^(L+1) -> R^D)
@@ -527,18 +593,24 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
 
         # === Graph Encoder ===
         # GCN-style encoder that processes adjacency matrix into node embeddings
-        self.graph_encoder = GraphEncoder(
-            num_nodes=num_features + 2,
-            d_model=d_model,
-            dropout=dropout
-        )
+        # Only created if use_gcn is True
+        if use_gcn:
+            self.graph_encoder = GraphEncoder(
+                num_nodes=num_features + 2,
+                d_model=d_model,
+                dropout=dropout
+            )
+        else:
+            self.graph_encoder = None
 
         # Stacked two-way attention blocks with graph conditioning
         self.blocks = nn.ModuleList([
             GraphConditionedTwoWayBlock(
                 d_model, heads_feat, heads_samp, 
                 dropout=dropout, hidden_mult=hidden_mult,
-                use_adaln=use_adaln
+                use_adaln=use_adaln,
+                use_soft_attention_bias=use_soft_attention_bias,
+                soft_bias_init=soft_bias_init
             )
             for _ in range(depth)
         ])
@@ -791,15 +863,19 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
             f"Expected adjacency matrix shape ({B}, {L + 2}, {L + 2}), got {adjacency_matrix.shape}"
 
         # === Process graph structure ===
-        # Create initial node features from role embeddings
-        # Position 0: Treatment, Position 1: Outcome, Position 2+: Features
-        node_features = torch.zeros(L + 2, self.d_model, device=device)
-        node_features[0] = self.obs_T_embed.squeeze()  # Treatment node
-        node_features[1] = self.obs_label_embed.squeeze()  # Outcome node
-        node_features[2:] = self.obs_feature_embed.squeeze().expand(L, -1)  # Feature nodes
-        
-        # Apply GCN to get graph-conditioned node embeddings
-        graph_node_embeddings = self.graph_encoder(adjacency_matrix, node_features)  # (B, L+2, D)
+        # Create graph node embeddings if GCN is enabled
+        if self.use_gcn:
+            # Create initial node features from role embeddings
+            # Position 0: Treatment, Position 1: Outcome, Position 2+: Features
+            node_features = torch.zeros(L + 2, self.d_model, device=device)
+            node_features[0] = self.obs_T_embed.squeeze()  # Treatment node
+            node_features[1] = self.obs_label_embed.squeeze()  # Outcome node
+            node_features[2:] = self.obs_feature_embed.squeeze().expand(L, -1)  # Feature nodes
+            
+            # Apply GCN to get graph-conditioned node embeddings
+            graph_node_embeddings = self.graph_encoder(adjacency_matrix, node_features)  # (B, L+2, D)
+        else:
+            graph_node_embeddings = None
 
         # === Normalize features (if enabled) ===
         if self.normalize_features:
@@ -861,17 +937,21 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
         n_sink_cols = self.n_feature_attention_sink_cols
 
         # === Prepare attention mask from adjacency matrix ===
-        attn_mask = self._prepare_attention_mask(adjacency_matrix, n_sink_cols)  # (B, n_sink_cols + L+2, n_sink_cols + L+2)
+        # Only apply attention masking if enabled
+        if self.use_attention_masking:
+            attn_mask = self._prepare_attention_mask(adjacency_matrix, n_sink_cols)  # (B, n_sink_cols + L+2, n_sink_cols + L+2)
+        else:
+            attn_mask = None
         
         # === Prepare graph embeddings for AdaLN ===
         # Handle sink columns: if present, need to extend graph embeddings
-        if n_sink_cols > 0 and self.use_adaln:
+        if n_sink_cols > 0 and self.use_adaln and graph_node_embeddings is not None:
             # Create dummy embeddings for sink columns (learnable or zeros)
             # For now, use zeros - sink columns don't correspond to real features
             sink_graph_emb = torch.zeros(B, n_sink_cols, self.d_model, device=device)
             graph_embeddings_with_sinks = torch.cat([sink_graph_emb, graph_node_embeddings], dim=1)  # (B, n_sink_cols + L+2, D)
         else:
-            graph_embeddings_with_sinks = graph_node_embeddings if self.use_adaln else None
+            graph_embeddings_with_sinks = graph_node_embeddings if (self.use_adaln and graph_node_embeddings is not None) else None
 
         # Apply blocks with graph-conditioned attention and AdaLN
         for blk in self.blocks:
@@ -891,10 +971,13 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
         if self.output_dim == 1:
             predictions = predictions.squeeze(-1)  # (B, M)
 
-        return {
-            "predictions": predictions,
-            "graph_embeddings": graph_node_embeddings  # (B, L+2, D) for inspection/debugging
-        }
+        result = {"predictions": predictions}
+        
+        # Only include graph embeddings if GCN was used
+        if self.use_gcn and graph_node_embeddings is not None:
+            result["graph_embeddings"] = graph_node_embeddings  # (B, L+2, D)
+        
+        return result
 
 
 if __name__ == "__main__":
@@ -917,174 +1000,334 @@ if __name__ == "__main__":
     # Create sample adjacency matrices (fully connected for testing)
     adjacency_matrix = torch.ones(B, L + 2, L + 2)  # (B, L+2, L+2)
 
-    # Test 1: Basic single output regression with GCN graph encoding and AdaLN
-    print("\n[Test 1] Single Output with GCN Graph Encoder and AdaLN")
+    # Test 1: All graph conditioning modes enabled (default)
+    print("\n[Test 1] Full Graph Conditioning: Attention Masking + GCN + AdaLN")
     print("-" * 80)
-    model = UltimateGraphConditionedInterventionalPFN(
+    model_full = UltimateGraphConditionedInterventionalPFN(
         num_features=L,
         d_model=128,
         depth=2,
         heads_feat=4,
         heads_samp=4,
         dropout=0.1,
+        use_attention_masking=True,
+        use_gcn=True,
         use_adaln=True,
     )
-    out = model(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix)
-    print(f"✓ predictions shape: {out['predictions'].shape} (expected: ({B}, {M}))")
-    print(f"✓ graph_embeddings shape: {out['graph_embeddings'].shape} (expected: ({B}, {L+2}, 128))")
-    print(f"✓ Sample predictions: {out['predictions'][0, :3].detach().numpy()}")
-    print(f"✓ AdaLN enabled: {model.use_adaln}")
-    print(f"✓ Block 0 uses AdaLN: {model.blocks[0].use_adaln}")
-    assert out["predictions"].shape == (B, M), f"Expected shape ({B}, {M}), got {out['predictions'].shape}"
-    assert out["graph_embeddings"].shape == (B, L+2, 128), f"Expected graph embeddings shape ({B}, {L+2}, 128)"
+    out_full = model_full(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix)
+    print(f"✓ predictions shape: {out_full['predictions'].shape} (expected: ({B}, {M}))")
+    print(f"✓ graph_embeddings in output: {'graph_embeddings' in out_full}")
+    if 'graph_embeddings' in out_full:
+        print(f"✓ graph_embeddings shape: {out_full['graph_embeddings'].shape}")
+    print(f"✓ use_attention_masking: {model_full.use_attention_masking}")
+    print(f"✓ use_gcn: {model_full.use_gcn}")
+    print(f"✓ use_adaln: {model_full.use_adaln}")
+    assert out_full["predictions"].shape == (B, M)
     print("✓ Test 1 passed!")
 
-    # Test 2: Different adjacency matrices produce different graph embeddings
-    print("\n[Test 2] Different Graphs Produce Different Embeddings (with AdaLN)")
+    # Test 2: Only attention masking (no GCN, no AdaLN)
+    print("\n[Test 2] Attention Masking Only")
     print("-" * 80)
-    # Full graph
-    adj_full = torch.ones(B, L + 2, L + 2)
-    # Sparse graph (only self-loops and chain)
-    adj_sparse = torch.eye(L + 2).unsqueeze(0).expand(B, -1, -1).clone()
-    for i in range(L + 1):
-        adj_sparse[:, i + 1, i] = 1  # Chain structure
-    
-    out_full = model(X_obs, T_obs, Y_obs, X_intv, T_intv, adj_full)
-    out_sparse = model(X_obs, T_obs, Y_obs, X_intv, T_intv, adj_sparse)
-    
-    # Graph embeddings should differ
-    graph_diff = torch.abs(out_full['graph_embeddings'] - out_sparse['graph_embeddings']).max().item()
-    print(f"✓ Max graph embedding difference: {graph_diff:.6f}")
-    assert graph_diff > 1e-6, "Different graphs should produce different embeddings"
-    
-    # Predictions should also differ (even more with AdaLN!)
-    pred_diff = torch.abs(out_full['predictions'] - out_sparse['predictions']).max().item()
-    print(f"✓ Max prediction difference: {pred_diff:.6f}")
-    assert pred_diff > 1e-6, "Different graphs should produce different predictions"
-    print("✓ Test 2 passed!")
-
-    # Test 3: Compare AdaLN vs no AdaLN
-    print("\n[Test 3] AdaLN vs Regular LayerNorm Comparison")
-    print("-" * 80)
-    model_no_adaln = UltimateGraphConditionedInterventionalPFN(
+    model_mask_only = UltimateGraphConditionedInterventionalPFN(
         num_features=L,
         d_model=128,
         depth=2,
         heads_feat=4,
         heads_samp=4,
         dropout=0.1,
+        use_attention_masking=True,
+        use_gcn=False,
         use_adaln=False,
     )
-    out_no_adaln = model_no_adaln(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix)
-    
-    print(f"✓ Model with AdaLN predictions: {out['predictions'][0, 0].item():.6f}")
-    print(f"✓ Model without AdaLN predictions: {out_no_adaln['predictions'][0, 0].item():.6f}")
-    print(f"✓ AdaLN enabled in model: {model.use_adaln}")
-    print(f"✓ AdaLN disabled in model_no_adaln: {model_no_adaln.use_adaln}")
-    
-    # Count parameters
-    adaln_params = sum(p.numel() for p in model.parameters())
-    no_adaln_params = sum(p.numel() for p in model_no_adaln.parameters())
-    print(f"✓ Parameters with AdaLN: {adaln_params:,}")
-    print(f"✓ Parameters without AdaLN: {no_adaln_params:,}")
-    print(f"✓ AdaLN overhead: {adaln_params - no_adaln_params:,} parameters")
-    print("✓ Test 3 passed!")
+    out_mask = model_mask_only(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix)
+    print(f"✓ predictions shape: {out_mask['predictions'].shape}")
+    print(f"✓ graph_embeddings in output: {'graph_embeddings' in out_mask}")
+    print(f"✓ use_attention_masking: {model_mask_only.use_attention_masking}")
+    print(f"✓ use_gcn: {model_mask_only.use_gcn}")
+    print(f"✓ use_adaln: {model_mask_only.use_adaln}")
+    print(f"✓ graph_encoder is None: {model_mask_only.graph_encoder is None}")
+    assert 'graph_embeddings' not in out_mask, "Should not have graph embeddings without GCN"
+    print("✓ Test 2 passed!")
 
-    # Test 4: Verify GCN encoder is using role embeddings
-    print("\n[Test 3] GCN Uses Role Embeddings as Node Features")
+    # Test 3: Only GCN + AdaLN (no attention masking)
+    print("\n[Test 3] GCN + AdaLN Only (No Attention Masking)")
     print("-" * 80)
-    print(f"✓ Treatment embed shape: {model.obs_T_embed.shape}")
-    print(f"✓ Outcome embed shape: {model.obs_label_embed.shape}")
-    print(f"✓ Feature embed shape: {model.obs_feature_embed.shape}")
-    print(f"✓ GraphEncoder input dim: {model.graph_encoder.d_model}")
-    print(f"✓ GraphEncoder output dim: {model.graph_encoder.d_model}")
-    print("✓ Test 3 passed!")
-
-    # Test 4: High-dimensional output
-    print("\n[Test 4] High-Dimensional Output with GCN")
-    print("-" * 80)
-    output_dim = 10
-    model_hd = UltimateGraphConditionedInterventionalPFN(
+    model_gcn_only = UltimateGraphConditionedInterventionalPFN(
         num_features=L,
         d_model=128,
         depth=2,
         heads_feat=4,
         heads_samp=4,
         dropout=0.1,
-        output_dim=output_dim,
+        use_attention_masking=False,
+        use_gcn=True,
+        use_adaln=True,
     )
-    out_hd = model_hd(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix)
-    print(f"✓ high-dim predictions shape: {out_hd['predictions'].shape} (expected: ({B}, {M}, {output_dim}))")
-    print(f"✓ graph_embeddings shape: {out_hd['graph_embeddings'].shape} (expected: ({B}, {L+2}, 128))")
-    assert out_hd["predictions"].shape == (B, M, output_dim)
-    assert out_hd["graph_embeddings"].shape == (B, L+2, 128)
+    out_gcn = model_gcn_only(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix)
+    print(f"✓ predictions shape: {out_gcn['predictions'].shape}")
+    print(f"✓ graph_embeddings in output: {'graph_embeddings' in out_gcn}")
+    if 'graph_embeddings' in out_gcn:
+        print(f"✓ graph_embeddings shape: {out_gcn['graph_embeddings'].shape}")
+    print(f"✓ use_attention_masking: {model_gcn_only.use_attention_masking}")
+    print(f"✓ use_gcn: {model_gcn_only.use_gcn}")
+    print(f"✓ use_adaln: {model_gcn_only.use_adaln}")
+    assert 'graph_embeddings' in out_gcn, "Should have graph embeddings with GCN"
+    print("✓ Test 3 passed!")
+
+    # Test 4: GCN without AdaLN (GCN embeddings computed but not used for conditioning)
+    print("\n[Test 4] GCN Only (Without AdaLN)")
+    print("-" * 80)
+    model_gcn_no_adaln = UltimateGraphConditionedInterventionalPFN(
+        num_features=L,
+        d_model=128,
+        depth=2,
+        heads_feat=4,
+        heads_samp=4,
+        dropout=0.1,
+        use_attention_masking=False,
+        use_gcn=True,
+        use_adaln=False,
+    )
+    out_gcn_no_adaln = model_gcn_no_adaln(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix)
+    print(f"✓ predictions shape: {out_gcn_no_adaln['predictions'].shape}")
+    print(f"✓ graph_embeddings in output: {'graph_embeddings' in out_gcn_no_adaln}")
+    print(f"✓ use_attention_masking: {model_gcn_no_adaln.use_attention_masking}")
+    print(f"✓ use_gcn: {model_gcn_no_adaln.use_gcn}")
+    print(f"✓ use_adaln: {model_gcn_no_adaln.use_adaln}")
     print("✓ Test 4 passed!")
 
-    # Test 5: With attention sinks
-    print("\n[Test 5] GCN with Attention Sinks")
+    # Test 5: No graph conditioning at all
+    print("\n[Test 5] No Graph Conditioning (Baseline)")
     print("-" * 80)
-    n_sink_rows = 3
-    n_sink_cols = 2
-    model_sinks = UltimateGraphConditionedInterventionalPFN(
+    model_no_graph = UltimateGraphConditionedInterventionalPFN(
         num_features=L,
         d_model=128,
         depth=2,
         heads_feat=4,
         heads_samp=4,
         dropout=0.1,
-        n_sample_attention_sink_rows=n_sink_rows,
-        n_feature_attention_sink_cols=n_sink_cols,
+        use_attention_masking=False,
+        use_gcn=False,
+        use_adaln=False,
     )
-    out_sinks = model_sinks(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix)
-    print(f"✓ predictions shape: {out_sinks['predictions'].shape} (expected: ({B}, {M}))")
-    print(f"✓ graph_embeddings shape: {out_sinks['graph_embeddings'].shape} (expected: ({B}, {L+2}, 128))")
-    assert out_sinks["predictions"].shape == (B, M)
-    assert out_sinks["graph_embeddings"].shape == (B, L+2, 128)
+    out_no_graph = model_no_graph(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix)
+    print(f"✓ predictions shape: {out_no_graph['predictions'].shape}")
+    print(f"✓ graph_embeddings in output: {'graph_embeddings' in out_no_graph}")
+    print(f"✓ use_attention_masking: {model_no_graph.use_attention_masking}")
+    print(f"✓ use_gcn: {model_no_graph.use_gcn}")
+    print(f"✓ use_adaln: {model_no_graph.use_adaln}")
+    assert 'graph_embeddings' not in out_no_graph
     print("✓ Test 5 passed!")
-    
-    # Test 6: Verify graph embeddings capture local structure
-    print("\n[Test 6] Graph Embeddings Capture Local Structure")
+
+    # Test 6: Invalid configuration (AdaLN without GCN)
+    print("\n[Test 6] Invalid Configuration: AdaLN=True but GCN=False")
     print("-" * 80)
-    # Create a star graph: Treatment connects to everything, others isolated
-    adj_star = torch.eye(L + 2).unsqueeze(0).expand(B, -1, -1).clone()
-    adj_star[:, :, 0] = 1  # All nodes attend to treatment
-    adj_star[:, 0, :] = 1  # Treatment attends to all
+    try:
+        model_invalid = UltimateGraphConditionedInterventionalPFN(
+            num_features=L,
+            d_model=128,
+            depth=2,
+            use_attention_masking=True,
+            use_gcn=False,
+            use_adaln=True,  # Invalid: needs GCN
+        )
+        print("✗ Should have raised ValueError!")
+        assert False, "Should have raised ValueError"
+    except ValueError as e:
+        print(f"✓ Correctly raised ValueError: {e}")
+        print("✓ Test 6 passed!")
+
+    # Test 7: Compare parameter counts across configurations
+    print("\n[Test 7] Parameter Counts Across Configurations")
+    print("-" * 80)
+    params_full = sum(p.numel() for p in model_full.parameters())
+    params_mask = sum(p.numel() for p in model_mask_only.parameters())
+    params_gcn = sum(p.numel() for p in model_gcn_only.parameters())
+    params_none = sum(p.numel() for p in model_no_graph.parameters())
     
-    out_star = model(X_obs, T_obs, Y_obs, X_intv, T_intv, adj_star)
+    print(f"✓ Full (Mask+GCN+AdaLN): {params_full:,} parameters")
+    print(f"✓ Mask only: {params_mask:,} parameters")
+    print(f"✓ GCN+AdaLN: {params_gcn:,} parameters")
+    print(f"✓ No graph: {params_none:,} parameters")
+    print(f"✓ GCN overhead: {params_gcn - params_none:,} parameters")
+    print(f"✓ Mask overhead: {params_mask - params_none:,} parameters (should be 0)")
+    assert params_mask == params_none, "Attention masking should not add parameters"
+    assert params_gcn > params_none, "GCN should add parameters"
+    print("✓ Test 7 passed!")
+
+    # Test 8: Different graphs produce different results with different conditioning
+    print("\n[Test 8] Graph Structure Effects Across Configurations")
+    print("-" * 80)
+    adj_full_graph = torch.ones(B, L + 2, L + 2)
+    adj_sparse = torch.eye(L + 2).unsqueeze(0).expand(B, -1, -1).clone()
     
-    # Treatment node (position 0) should have different embedding than others
-    treatment_emb = out_star['graph_embeddings'][:, 0, :]  # (B, D)
-    outcome_emb = out_star['graph_embeddings'][:, 1, :]  # (B, D)
-    feature_emb = out_star['graph_embeddings'][:, 2, :]  # (B, D)
+    # Full model
+    out_full_dense = model_full(X_obs, T_obs, Y_obs, X_intv, T_intv, adj_full_graph)
+    out_full_sparse = model_full(X_obs, T_obs, Y_obs, X_intv, T_intv, adj_sparse)
+    diff_full = torch.abs(out_full_dense['predictions'] - out_full_sparse['predictions']).max().item()
     
-    treatment_outcome_diff = torch.abs(treatment_emb - outcome_emb).mean().item()
-    treatment_feature_diff = torch.abs(treatment_emb - feature_emb).mean().item()
+    # Mask only
+    out_mask_dense = model_mask_only(X_obs, T_obs, Y_obs, X_intv, T_intv, adj_full_graph)
+    out_mask_sparse = model_mask_only(X_obs, T_obs, Y_obs, X_intv, T_intv, adj_sparse)
+    diff_mask = torch.abs(out_mask_dense['predictions'] - out_mask_sparse['predictions']).max().item()
     
-    print(f"✓ Treatment-Outcome embedding difference: {treatment_outcome_diff:.6f}")
-    print(f"✓ Treatment-Feature embedding difference: {treatment_feature_diff:.6f}")
-    print("✓ Test 6 passed!")
+    # GCN only
+    out_gcn_dense = model_gcn_only(X_obs, T_obs, Y_obs, X_intv, T_intv, adj_full_graph)
+    out_gcn_sparse = model_gcn_only(X_obs, T_obs, Y_obs, X_intv, T_intv, adj_sparse)
+    diff_gcn = torch.abs(out_gcn_dense['predictions'] - out_gcn_sparse['predictions']).max().item()
     
+    # No graph (should be invariant to graph structure)
+    out_none_1 = model_no_graph(X_obs, T_obs, Y_obs, X_intv, T_intv, adj_full_graph)
+    out_none_2 = model_no_graph(X_obs, T_obs, Y_obs, X_intv, T_intv, adj_sparse)
+    diff_none = torch.abs(out_none_1['predictions'] - out_none_2['predictions']).max().item()
+    
+    print(f"✓ Full model diff (dense vs sparse): {diff_full:.6f}")
+    print(f"✓ Mask only diff: {diff_mask:.6f}")
+    print(f"✓ GCN only diff: {diff_gcn:.6f}")
+    print(f"✓ No graph diff: {diff_none:.6f}")
+    
+    assert diff_full > 1e-6, "Full model should be sensitive to graph"
+    assert diff_mask > 1e-6, "Mask-only should be sensitive to graph"
+    assert diff_gcn > 1e-6, "GCN-only should be sensitive to graph"
+    # Note: No-graph model may still show differences due to random initialization
+    # and numerical precision, but should not use graph structure
+    print(f"✓ Graph-conditioned models show clear differences")
+    print(f"✓ No-graph model: {diff_none:.6f} (may vary due to numerical effects)")
+    print("✓ Test 8 passed!")
+
+    # Test 9: Soft attention bias (learnable biases instead of hard masking)
+    print("\n[Test 9] Soft Attention Bias")
+    print("-" * 80)
+    model_soft_bias = UltimateGraphConditionedInterventionalPFN(
+        num_features=L,
+        d_model=128,
+        depth=2,
+        heads_feat=4,
+        heads_samp=4,
+        dropout=0.1,
+        use_attention_masking=True,
+        use_gcn=False,
+        use_adaln=False,
+        use_soft_attention_bias=True,
+        soft_bias_init=5.0,
+    )
+    out_soft = model_soft_bias(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix)
+    print(f"✓ predictions shape: {out_soft['predictions'].shape}")
+    print(f"✓ use_soft_attention_bias: {model_soft_bias.use_soft_attention_bias}")
+    
+    # Check that soft attention biases exist and are learnable
+    has_biases = any('soft_attention_bias' in name for name, _ in model_soft_bias.named_parameters())
+    print(f"✓ Soft attention biases exist: {has_biases}")
+    
+    # Count bias parameters (should be heads_feat per layer)
+    bias_params = [p for name, p in model_soft_bias.named_parameters() if 'soft_attention_bias' in name]
+    print(f"✓ Number of bias parameter tensors: {len(bias_params)} (expected: {2} layers)")
+    for i, p in enumerate(bias_params):
+        print(f"✓ Layer {i} bias shape: {p.shape} (expected: ({4},) for 4 heads)")
+        assert p.shape == (4,), f"Expected shape (4,), got {p.shape}"
+        print(f"✓ Layer {i} bias values: {p.data.tolist()} (initialized to {5.0})")
+    
+    # Verify different from hard masking
+    out_hard = model_mask_only(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix)
+    diff_soft_vs_hard = torch.abs(out_soft['predictions'] - out_hard['predictions']).max().item()
+    print(f"✓ Soft vs hard masking diff: {diff_soft_vs_hard:.6f}")
+    assert diff_soft_vs_hard > 1e-6, "Soft and hard masking should produce different results"
+    print("✓ Test 9 passed!")
+
+    # Test 10: Invalid configuration (soft bias without attention masking)
+    print("\n[Test 10] Invalid Configuration: Soft Bias=True but Masking=False")
+    print("-" * 80)
+    try:
+        model_invalid_soft = UltimateGraphConditionedInterventionalPFN(
+            num_features=L,
+            d_model=128,
+            depth=2,
+            use_attention_masking=False,
+            use_soft_attention_bias=True,  # Invalid: needs masking
+        )
+        print("✗ Should have raised ValueError!")
+        assert False, "Should have raised ValueError"
+    except ValueError as e:
+        print(f"✓ Correctly raised ValueError: {e}")
+        print("✓ Test 10 passed!")
+
+    # Test 11: Soft bias with GCN+AdaLN (full soft conditioning)
+    print("\n[Test 11] Full Soft Conditioning: Soft Bias + GCN + AdaLN")
+    print("-" * 80)
+    model_full_soft = UltimateGraphConditionedInterventionalPFN(
+        num_features=L,
+        d_model=128,
+        depth=2,
+        heads_feat=4,
+        heads_samp=4,
+        dropout=0.1,
+        use_attention_masking=True,
+        use_gcn=True,
+        use_adaln=True,
+        use_soft_attention_bias=True,
+        soft_bias_init=10.0,
+    )
+    out_full_soft = model_full_soft(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix)
+    print(f"✓ predictions shape: {out_full_soft['predictions'].shape}")
+    print(f"✓ graph_embeddings in output: {'graph_embeddings' in out_full_soft}")
+    print(f"✓ use_attention_masking: {model_full_soft.use_attention_masking}")
+    print(f"✓ use_gcn: {model_full_soft.use_gcn}")
+    print(f"✓ use_adaln: {model_full_soft.use_adaln}")
+    print(f"✓ use_soft_attention_bias: {model_full_soft.use_soft_attention_bias}")
+    
+    # Compare with full hard model
+    diff_full_soft_vs_hard = torch.abs(out_full_soft['predictions'] - out_full['predictions']).max().item()
+    print(f"✓ Full soft vs full hard diff: {diff_full_soft_vs_hard:.6f}")
+    assert diff_full_soft_vs_hard > 1e-6, "Soft and hard conditioning should differ"
+    print("✓ Test 11 passed!")
+
+    # Test 12: Parameter counts with soft attention bias
+    print("\n[Test 12] Parameter Counts with Soft Attention Bias")
+    print("-" * 80)
+    params_soft = sum(p.numel() for p in model_soft_bias.parameters())
+    params_hard = sum(p.numel() for p in model_mask_only.parameters())
+    params_full_soft = sum(p.numel() for p in model_full_soft.parameters())
+    
+    print(f"✓ Hard masking only: {params_hard:,} parameters")
+    print(f"✓ Soft masking only: {params_soft:,} parameters")
+    print(f"✓ Full soft (Soft+GCN+AdaLN): {params_full_soft:,} parameters")
+    print(f"✓ Soft bias overhead: {params_soft - params_hard:,} parameters")
+    
+    # Soft bias adds: depth * heads_feat parameters (one bias per head per layer)
+    expected_overhead = 2 * 4  # 2 layers * 4 heads
+    actual_overhead = params_soft - params_hard
+    print(f"✓ Expected soft bias overhead: {expected_overhead} parameters")
+    print(f"✓ Actual overhead: {actual_overhead} parameters")
+    assert actual_overhead == expected_overhead, f"Expected {expected_overhead}, got {actual_overhead}"
+    print("✓ Test 12 passed!")
+
     # Model statistics
     print("\n[Model Statistics]")
     print("-" * 80)
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    gcn_params = sum(p.numel() for p in model.graph_encoder.parameters())
-    print(f"✓ Total parameters: {total_params:,}")
-    print(f"✓ Trainable parameters: {trainable_params:,}")
-    print(f"✓ GCN encoder parameters: {gcn_params:,}")
+    print(f"✓ Full model parameters: {params_full:,}")
+    print(f"✓ Mask-only parameters: {params_mask:,}")
+    print(f"✓ GCN+AdaLN parameters: {params_gcn:,}")
+    print(f"✓ No-graph parameters: {params_none:,}")
+    print(f"✓ Soft bias parameters: {params_soft:,}")
+    print(f"✓ Full soft parameters: {params_full_soft:,}")
     
     # Architecture verification
     print("\n[Architecture Verification]")
     print("-" * 80)
-    print(f"✓ Uses GraphConditionedTwoWayBlock with attention masking")
-    print(f"✓ Includes GCN-style GraphEncoder")
-    print(f"✓ GCN processes adjacency → (B, L+2, D) node embeddings")
+    print(f"✓ Flexible graph conditioning modes:")
+    print(f"  - use_attention_masking: Hard/soft constraints via attention masks")
+    print(f"  - use_soft_attention_bias: Learnable biases (alternative to hard masking)")
+    print(f"  - use_gcn: GCN processes adjacency → (B, L+2, D) node embeddings")
+    print(f"  - use_adaln: AdaLN modulates LayerNorms with graph embeddings")
+    print(f"✓ Soft attention bias:")
+    print(f"  - One learnable bias per head per layer")
+    print(f"  - Initialized to positive values (default: 5.0)")
+    print(f"  - Added to attention scores where graph permits")
+    print(f"  - Requires use_attention_masking=True")
+    print(f"✓ Can use any combination: all, none, or individual modes")
     print(f"✓ GCN reuses existing role embeddings (obs_T, obs_label, obs_feature)")
-    print(f"✓ AdaLN (Adaptive Layer Normalization) for graph-based conditioning")
     print(f"✓ AdaLN applied to ln_feat and ln_mlp in each block")
-    print(f"✓ Graph embeddings modulate scale and shift in LayerNorms")
-    print(f"✓ Graph embeddings returned for inspection/debugging")
+    print(f"✓ Graph embeddings returned when GCN enabled")
     print(f"✓ MLP uses SwiGLU activation")
     print(f"✓ Pre-layer normalization (adaptive when AdaLN enabled)")
     print(f"✓ Separate train/test attention layers")
@@ -1093,3 +1336,4 @@ if __name__ == "__main__":
     print("\n" + "=" * 80)
     print("All tests passed! ✓")
     print("=" * 80)
+

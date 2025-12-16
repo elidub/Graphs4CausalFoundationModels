@@ -1,0 +1,23 @@
+universe = vanilla
+executable = /usr/bin/bash
+arguments = -c "python3 check_data_location.py"
+
+log = check_data_location.log
+output = check_data_location.out
+error = check_data_location.err
+
+request_cpus = 1
+request_memory = 2G
+request_disk = 1G
+
+# Transfer necessary files
+transfer_input_files = check_data_location.py, ../../data_cache.zip
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT
+
+# Environment setup
+environment = "PYTHONPATH=/local/condor_execute/dir_$(Cluster).$(Process)/src"
+
++RequestWalltime = 300
+
+queue 1

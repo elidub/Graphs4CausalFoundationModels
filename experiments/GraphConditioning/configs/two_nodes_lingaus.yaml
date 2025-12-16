@@ -28,18 +28,7 @@ scm_config:
       low: 0
       high: 100000
   xgboost_prob:
-    distribution: "categorical"
-    distribution_parameters:
-      choices:
-      - 0.0
-      - 0.1
-      - 0.2
-      - 0.3
-      probabilities:
-      - 0.9
-      - 0.1
-      - 0.01
-      - 0.001
+    value: 0.0
         #- 0.8
         #- 0.1
         #- 0.1
@@ -49,20 +38,14 @@ scm_config:
       low: 0
       high: 100000
   mlp_nonlins:
-    value: "tabicl"
+    value: "id"
   mlp_num_hidden_layers:
     distribution: "categorical"
     distribution_parameters:
       choices:
         - 0
-        - 1
-        - 2
-        - 3
       probabilities:
-        - 0.875
-        - 0.1
-        - 0.025
-        - 0.01
+        - 1.0
   mlp_hidden_dim:
     distribution: "categorical"
     distribution_parameters:
@@ -97,9 +80,9 @@ scm_config:
         - "post"
         - "mixed_in"
       probabilities:
-        - 0.3
-        - 0.3
-        - 0.3
+        - 0.5
+        - 0.5
+        - 0.0
 
   # Apply parameter-free BatchNorm to inputs before MLP
   mlp_use_batch_norm:
@@ -109,8 +92,8 @@ scm_config:
         - true
         - false
       probabilities:
-        - 0.5
-        - 0.5
+        - 1.0
+        - 0.0
       
   xgb_node_shape:
     value: [1]
@@ -220,11 +203,10 @@ scm_config:
   # Noise mixture proportions: weights for [Normal, Laplace, StudentT]
   # Must sum to 1.0. If not specified, uses equal weights [0.333, 0.333, 0.333]
   noise_mixture_proportions:
-    value: null  # null = use default equal weights
-    # Example: value: [0.5, 0.3, 0.2]  # 50% Normal, 30% Laplace, 20% StudentT
+    value: [1.0, 0.0, 0.0] # null = use default equal weights # Example: value: [0.5, 0.3, 0.2]  # 50% Normal, 30% Laplace, 20% StudentT
   
   use_exogenous_mechanisms:
-    value: true
+    value: false
   mechanism_generator_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -250,7 +232,7 @@ dataset_config:
 
   # Adjacency matrix output (only used when graph conditioning is enabled)
   return_adjacency_matrix:  # whether to include adjacency matrix in dataset output
-    value: true  # Will be auto-enabled when use_graph_conditioning=true
+    value: false  # Will be auto-enabled when use_graph_conditioning=true
 
   # Rejection sampling: ensure target variance is sufficiently large
   # If either train or test target variance falls below this threshold, resample the dataset.
@@ -413,7 +395,7 @@ training_config:
   weight_decay: # weight decay for optimizer, might not be needed
     value: 0.00001 
   max_steps:  #critial for determing training duration!
-    value: 100000
+    value: 50000
   max_epochs: # should always be 1
     value: 1
 
@@ -479,9 +461,9 @@ training_config:
   # Options: "minimal" (1 task, basic, 1 repeat), "low" (10 tasks, basic, 1 repeat),
   #          "high" (all tasks, extended, 5 repeats), "very high" (all tasks, extended, 25 repeats)
   benchmark_eval_fidelity:
-    value: "low"  # e.g., "minimal" to run at each evaluation step
+    value: "minimal"  # e.g., "minimal" to run at each evaluation step
   benchmark_final_fidelity:
-    value: "high"  # e.g., "high" to run at the end of training
+    value: "minimal"  # e.g., "high" to run at the end of training
   # Use only cached OpenML data and never download during benchmarking
   benchmark_offline:
     value: true

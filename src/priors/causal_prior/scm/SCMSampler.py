@@ -152,6 +152,7 @@ class SCMSampler:
         "endo_std_mean": (float, type(None)),
         "endo_std_std": (float, type(None)),
         "endo_p_zero": float,
+        "noise_mixture_proportions": (list, type(None)),
         "use_exogenous_mechanisms": bool,
         "mechanism_generator_seed": int,
     }
@@ -404,9 +405,27 @@ class SCMSampler:
             else:
                 raise ValueError(f"Unknown endo_std_distribution: {params['endo_std_distribution']}")
             
-            # Prepare distributions list - use only base distributions with equal weights
+            # Prepare distributions list - use only base distributions
             distributions = [dist.Normal, dist.Laplace, dist.StudentT]
-            mixture_proportions = [1.0 / len(distributions)] * len(distributions)
+            
+            # Get mixture proportions from params, or use equal weights as default
+            if params.get("noise_mixture_proportions") is not None:
+                mixture_proportions = params["noise_mixture_proportions"]
+                # Validate that the length matches the number of distributions
+                if len(mixture_proportions) != len(distributions):
+                    raise ValueError(
+                        f"noise_mixture_proportions must have {len(distributions)} elements "
+                        f"(one for each of {[d.__name__ for d in distributions]}), "
+                        f"got {len(mixture_proportions)}"
+                    )
+                # Validate that they sum to 1.0 (with some tolerance)
+                total = sum(mixture_proportions)
+                if abs(total - 1.0) > 1e-6:
+                    raise ValueError(
+                        f"noise_mixture_proportions must sum to 1.0, got {total}"
+                    )
+            else:
+                mixture_proportions = [1.0 / len(distributions)] * len(distributions)
             
             # Get endogenous p_zero parameter (probability of zero noise)
             endo_p_zero = params.get("endo_p_zero", 0.0)
