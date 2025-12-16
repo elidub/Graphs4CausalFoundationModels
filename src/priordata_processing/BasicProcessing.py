@@ -144,7 +144,7 @@ class BasicProcessing:
         assert n_features <= max_n_features, "n_features <= max_n_features"
         assert n_train_samples <= max_n_train_samples, "n_train_samples <= max_n_train_samples"
         assert n_test_samples <= max_n_test_samples, "n_test_samples <= max_n_test_samples"
-        assert 0.0 <= test_feature_mask_fraction < 1.0, "test_feature_mask_fraction must be in [0,1)"
+        assert 0.0 <= test_feature_mask_fraction <= 1.0, "test_feature_mask_fraction must be in [0,1]"
 
     # ------------------------------------------------------------------
     def process(
