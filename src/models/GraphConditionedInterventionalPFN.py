@@ -14,7 +14,8 @@ Adjacency matrix ordering (matches data layout):
 - Position 1: Outcome variable (target feature)
 - Position 2+: Feature variables that were KEPT after dropout (sorted order)
 
-The adjacency matrix A[i,j] = 1 means feature i can attend to feature j.
+The adjacency matrix A[i,j] = 1 means there is a causal edge from j to i.
+Attention flows opposite to causal edges: feature i attends to feature j if A[i,j] = 1 (edge j→i).
 
 Key differences from InterventionalPFN:
 1. Takes adjacency_matrix as input
@@ -248,8 +249,8 @@ class GraphConditionedInterventionalPFN(nn.Module):
     - Position 0: Treatment variable (intervention_node)
     - Position 1: Outcome variable (target feature)
     - Position 2+: Feature variables (kept after dropout, sorted order)
-    - A[i,j] = 1 means feature i CAN attend to feature j
-    - A[i,j] = 0 means feature i CANNOT attend to feature j
+    - A[i,j] = 1 means there is a causal edge from j to i (i.e., j causes i)
+    - Attention flows opposite to causal edges: feature i attends to j if A[i,j] = 1
     
     Architecture features:
     - SwiGLU activation
@@ -522,16 +523,20 @@ class GraphConditionedInterventionalPFN(nn.Module):
         - Position 0: Treatment variable
         - Position 1: Outcome variable
         - Position 2+: Other features
+        - A[i,j] = 1 means there is a causal edge from j to i (j causes i)
+        
+        Attention flows opposite to causal edges: feature i attends to j if A[i,j] = 1.
+        This is implemented by negating the adjacency matrix (logical_not).
         
         With sink columns, the mask is expanded to allow all features to attend to sinks.
         
         Args:
-            adjacency_matrix: (B, L+2, L+2) - 1 means can attend, 0 means cannot
+            adjacency_matrix: (B, L+2, L+2) - 1 means causal edge from j to i, 0 means no edge
             n_sink_cols: Number of sink columns prepended
             
         Returns:
             Attention mask of shape (B, n_sink_cols + L+2, n_sink_cols + L+2)
-            where True means position CAN attend.
+            where False means position CAN attend (PyTorch convention after negation).
         """
         B, F, F2 = adjacency_matrix.shape
         assert F == F2, "Adjacency matrix must be square"

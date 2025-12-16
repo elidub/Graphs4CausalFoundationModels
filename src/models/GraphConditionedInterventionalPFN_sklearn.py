@@ -305,7 +305,8 @@ class GraphConditionedInterventionalPFNSklearn:
                 Position 0: Treatment variable
                 Position 1: Outcome variable
                 Position 2+: Other features (sorted order)
-                A[i,j] = 1 means feature i can attend to feature j
+                A[i,j] = 1 means there is a causal edge from j to i (j causes i)
+                Attention flows opposite to causal edges: feature i attends to j if A[i,j] = 1
             prediction_type: Type of prediction
                 - "point": Direct model output (requires BarDistribution disabled)
                 - "mode": Most likely value from BarDistribution
@@ -418,6 +419,11 @@ class GraphConditionedInterventionalPFNSklearn:
             T_intv: Interventional intervened feature (M,) or (M, 1)
             Y_intv: Interventional targets (M,) or (M, 1) - ground truth
             adjacency_matrix: Causal graph adjacency matrix (L+2, L+2)
+                Position 0: Treatment variable
+                Position 1: Outcome variable
+                Position 2+: Other features (sorted order)
+                A[i,j] = 1 means there is a causal edge from j to i (j causes i)
+                Attention flows opposite to causal edges: feature i attends to j if A[i,j] = 1
             
         Returns:
             Log-likelihood values of shape (M,)
