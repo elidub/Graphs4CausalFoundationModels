@@ -17,7 +17,7 @@ Input format:
 Adjacency matrix ordering (NEW - updated to match dataset):
 - Position 0: Treatment variable (intervention_node)
 - Position 1: Outcome variable (target feature)
-- Positions 2 to L+1: Feature variables (sorted, kept after dropout, correspond to X[:,0] to X[:,L-1])
+- Positions 2 to L+1: Feature variables (kept after dropout, in the SAME ORDER as X columns, correspond to X[:,0] to X[:,L-1])
 
 Edge semantics:
 - A[i,j] = 1 means there is a directed edge from i to j (i causes j)
@@ -468,7 +468,7 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
     - Shape: (B, L+2, L+2) where L is number of features (after dropout)
     - Position 0: Treatment variable (intervention_node)
     - Position 1: Outcome variable (target feature)
-    - Positions 2 to L+1: Feature variables (sorted, kept after dropout, correspond to X[:,0] to X[:,L-1])
+    - Positions 2 to L+1: Feature variables (kept after dropout, in the SAME ORDER as X columns, correspond to X[:,0] to X[:,L-1])
     
     IMPORTANT: The internal embedding order is DIFFERENT from adjacency matrix order!
     - Internal embedding order: [X_0, X_1, ..., X_{L-1}, T, Y]
