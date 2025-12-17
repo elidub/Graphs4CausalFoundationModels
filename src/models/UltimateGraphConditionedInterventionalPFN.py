@@ -14,10 +14,10 @@ Input format:
 - Same as InterventionalPFN: X_obs, T_obs, Y_obs, X_intv, T_intv
 - Additional: adjacency_matrix (B, L+2, L+2) encoding causal structure
 
-Adjacency matrix ordering (matches internal embedding order):
-- Position 0 to L-1: Feature variables (sorted, kept after dropout)
-- Position L: Treatment variable (intervention_node)
-- Position L+1: Outcome variable (target feature)
+Adjacency matrix ordering (NEW - updated to match dataset):
+- Position 0: Treatment variable (intervention_node)
+- Position 1: Outcome variable (target feature)
+- Positions 2 to L+1: Feature variables (sorted, kept after dropout, correspond to X[:,0] to X[:,L-1])
 
 Edge semantics:
 - A[i,j] = 1 means there is a directed edge from i to j (i causes j)
@@ -466,9 +466,15 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
     
     Adjacency matrix format:
     - Shape: (B, L+2, L+2) where L is number of features (after dropout)
-    - Position 0 to L-1: Feature variables (sorted, kept after dropout)
-    - Position L: Treatment variable (intervention_node)
-    - Position L+1: Outcome variable (target feature)
+    - Position 0: Treatment variable (intervention_node)
+    - Position 1: Outcome variable (target feature)
+    - Positions 2 to L+1: Feature variables (sorted, kept after dropout, correspond to X[:,0] to X[:,L-1])
+    
+    IMPORTANT: The internal embedding order is DIFFERENT from adjacency matrix order!
+    - Internal embedding order: [X_0, X_1, ..., X_{L-1}, T, Y]
+    - Adjacency matrix order: [T, Y, X_0, X_1, ..., X_{L-1}]
+    - The model automatically reorders the adjacency matrix to match internal order
+    
     - Edge semantics: A[i,j] = 1 means edge from i to j (i causes j)
     - The matrix is transposed internally so j can attend to i
     - This ensures effects attend to their causes for causal inference
@@ -779,7 +785,20 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
         """
         Prepare attention mask for feature attention from adjacency matrix.
         
-        The adjacency matrix from the dataset uses the convention:
+        The adjacency matrix from the dataset uses the ordering:
+        - Position 0: Treatment variable (T)
+        - Position 1: Outcome variable (Y)
+        - Positions 2 to L+1: Feature variables (X_0, ..., X_{L-1})
+        
+        The model internally uses a different ordering:
+        - Positions 0 to L-1: Feature variables (X_0, ..., X_{L-1})
+        - Position L: Treatment variable (T)
+        - Position L+1: Outcome variable (Y)
+        
+        This method reorders the adjacency matrix to match the internal ordering,
+        then prepares the attention mask.
+        
+        Edge semantics:
         - A[i,j] = 1 means there is a directed edge from i to j (i causes j)
         
         For causal inference, we need information to flow backward along causal edges:
@@ -790,18 +809,14 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
         - A_T[j,i] = 1 when original A[i,j] = 1 (edge i→j exists)
         - This allows position j to attend to position i
         
-        Position ordering:
-        - Position 0 to L-1: Feature variables
-        - Position L: Treatment variable
-        - Position L+1: Outcome variable
-        
-        The mask is created by transposing, converting to boolean, then negating (logical_not).
+        The mask is created by reordering, transposing, converting to boolean, then negating (logical_not).
         After negation: False = CAN attend, True = CANNOT attend
         
         With sink columns, the mask is expanded to allow all features to attend to sinks.
         
         Args:
             adjacency_matrix: (B, L+2, L+2) - Binary adjacency matrix from dataset
+                              Ordering: [T, Y, X_0, ..., X_{L-1}]
                               A[i,j] = 1 means edge from i to j (i causes j)
             n_sink_cols: Number of sink columns prepended
             
@@ -812,6 +827,22 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
         B, F, F2 = adjacency_matrix.shape
         assert F == F2, "Adjacency matrix must be square"
         assert F == self.num_features + 2, f"Expected adjacency matrix size {self.num_features + 2}, got {F}"
+        
+        # Reorder adjacency matrix from [T, Y, X_0, ..., X_{L-1}] to [X_0, ..., X_{L-1}, T, Y]
+        # Input positions: 0=T, 1=Y, 2 to L+1=X_0 to X_{L-1}
+        # Output positions: 0 to L-1=X_0 to X_{L-1}, L=T, L+1=Y
+        L = self.num_features
+        
+        # Create permutation indices
+        # New position 0 to L-1 should come from old position 2 to L+1 (features)
+        # New position L should come from old position 0 (treatment)
+        # New position L+1 should come from old position 1 (outcome)
+        perm_indices = list(range(2, L + 2)) + [0, 1]  # [2, 3, ..., L+1, 0, 1]
+        
+        # Permute both rows and columns
+        adjacency_matrix = adjacency_matrix[:, perm_indices, :]  # Permute rows
+        adjacency_matrix = adjacency_matrix[:, :, perm_indices]  # Permute columns
+        # Now adjacency_matrix is in the order [X_0, ..., X_{L-1}, T, Y]
         
         # Transpose adjacency matrix to flip edge direction for attention
         # Original: A[i,j] = 1 means i→j (i causes j)
@@ -864,10 +895,13 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
             X_intv: (B, M, L) - interventional features (test)
             T_intv: (B, M, 1) - interventional intervened feature (test)
             adjacency_matrix: (B, L+2, L+2) - causal graph adjacency matrix
-                Position ordering (matching internal embedding order):
-                  - Position 0 to L-1: Feature variables (X[:,0] to X[:,L-1])
-                  - Position L: Treatment variable (T)
-                  - Position L+1: Outcome variable (Y)
+                Position ordering (NEW - from dataset):
+                  - Position 0: Treatment variable (T)
+                  - Position 1: Outcome variable (Y)
+                  - Positions 2 to L+1: Feature variables (X[:,0] to X[:,L-1])
+                
+                Note: This is automatically reordered internally to match the model's
+                embedding order [X_0, ..., X_{L-1}, T, Y]
                 
                 Edge semantics:
                   - A[i,j] = 1 means directed edge from i to j (i causes j)
@@ -897,6 +931,14 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
         # === Process graph structure ===
         # Create graph node embeddings if GCN is enabled
         if self.use_gcn:
+            # Reorder adjacency matrix from dataset order [T, Y, X_0, ..., X_{L-1}] 
+            # to internal order [X_0, ..., X_{L-1}, T, Y]
+            # This matches the internal embedding order used throughout the model
+            perm_indices = list(range(2, L + 2)) + [0, 1]  # [2, 3, ..., L+1, 0, 1]
+            adj_reordered = adjacency_matrix[:, perm_indices, :]  # Permute rows
+            adj_reordered = adj_reordered[:, :, perm_indices]  # Permute columns
+            # Now adj_reordered is in order [X_0, ..., X_{L-1}, T, Y]
+            
             # Create initial node features from role embeddings
             # Position 0 to L-1: Feature nodes, Position L: Treatment, Position L+1: Outcome
             node_features = torch.zeros(L + 2, self.d_model, device=device)
@@ -905,7 +947,8 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
             node_features[L+1] = self.obs_label_embed.squeeze()  # Outcome node
             
             # Apply GCN to get graph-conditioned node embeddings
-            graph_node_embeddings = self.graph_encoder(adjacency_matrix, node_features)  # (B, L+2, D)
+            # GCN receives adjacency in internal order [X_0, ..., X_{L-1}, T, Y]
+            graph_node_embeddings = self.graph_encoder(adj_reordered, node_features)  # (B, L+2, D)
         else:
             graph_node_embeddings = None
 

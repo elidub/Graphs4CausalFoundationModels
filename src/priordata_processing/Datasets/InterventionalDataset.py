@@ -55,36 +55,36 @@ class InterventionalDataset(Dataset):
         (X_obs, Y_obs, X_intv, Y_intv, adj_matrix)
         
         The adjacency matrix has a specific node ordering that aligns with the data:
-        - Positions 0 to L-1: Feature variables corresponding to X[:,0], X[:,1], ..., X[:,L-1]
-        - Position L: Treatment variable T (the intervened node)
-        - Position L+1: Outcome variable Y (the target feature)
+        - Position 0: Treatment variable T (the intervened node)
+        - Position 1: Outcome variable Y (the target feature)
+        - Positions 2 to L+1: Feature variables corresponding to X[:,0], X[:,1], ..., X[:,L-1]
         
-        This ordering matches the model's internal representation: [X_0, ..., X_{L-1}, T, Y]
+        This ordering matches the model's internal representation: [T, Y, X_0, ..., X_{L-1}]
         
-        CRITICAL: The features at positions 0 to L-1 in the adjacency matrix correspond 
+        CRITICAL: The features at positions 2 to L+1 in the adjacency matrix correspond 
         to the REAL (non-padded) columns of X in the same order. That is:
-        - adj_matrix[0, :] and adj_matrix[:, 0] refer to the same variable as X[:, 0]
-        - adj_matrix[1, :] and adj_matrix[:, 1] refer to the same variable as X[:, 1]
-        - adj_matrix[k, :] and adj_matrix[:, k] refer to X[:, k] for k < L
-        - adj_matrix[L, :] and adj_matrix[:, L] refer to treatment T
-        - adj_matrix[L+1, :] and adj_matrix[:, L+1] refer to outcome Y
+        - adj_matrix[0, :] and adj_matrix[:, 0] refer to treatment T
+        - adj_matrix[1, :] and adj_matrix[:, 1] refer to outcome Y
+        - adj_matrix[2, :] and adj_matrix[:, 2] refer to the same variable as X[:, 0]
+        - adj_matrix[3, :] and adj_matrix[:, 3] refer to the same variable as X[:, 1]
+        - adj_matrix[k+2, :] and adj_matrix[:, k+2] refer to X[:, k] for k < L
         
         IMPORTANT: X may contain zero-padded columns to reach max_n_features.
         The adjacency matrix ONLY covers real nodes from the SCM, not padded columns!
         If adjacency matrix is (N x N) and X has M columns:
         - If M == N-2: No padding, perfect correspondence
         - If M > N-2: X contains (M - N + 2) padded columns at the end
-          - X[:, :N-2] are real features (correspond to adjacency positions 0:N-2)
+          - X[:, :N-2] are real features (correspond to adjacency positions 2:N)
           - X[:, N-2:] are zero-padded columns (no adjacency correspondence)
         
         Example with padding:
           - SCM has 32 nodes: 1 treatment + 1 outcome + 30 others
           - After dropout: 25 features kept
-          - Adjacency matrix: 27x27 (25 features + treatment + outcome)
+          - Adjacency matrix: 27x27 (treatment + outcome + 25 features)
           - X is padded to max_n_features=50, so X.shape = (N, 50)
-          - X[:, :25] = real features (correspond to adjacency positions 0-24)
-          - Adjacency position 25 = treatment T
-          - Adjacency position 26 = outcome Y
+          - Adjacency position 0 = treatment T
+          - Adjacency position 1 = outcome Y
+          - X[:, :25] = real features (correspond to adjacency positions 2-26)
           - X[:, 25:] = zero padding (no adjacency correspondence)
         
         The ordering of features in X follows sorted(scm.dag.nodes()) after excluding
@@ -95,10 +95,10 @@ class InterventionalDataset(Dataset):
         variable at position i to the variable at position j.
         
         Examples:
-        - adj_matrix[L, L+1] = 1.0 means treatment T causes outcome Y
-        - adj_matrix[0, L+1] = 1.0 means feature X[:,0] causes outcome Y
-        - adj_matrix[L, 0] = 1.0 means treatment T causes feature X[:,0]
-        - adj_matrix[0, 1] = 1.0 means feature X[:,0] causes feature X[:,1]
+        - adj_matrix[0, 1] = 1.0 means treatment T causes outcome Y
+        - adj_matrix[2, 1] = 1.0 means feature X[:,0] causes outcome Y
+        - adj_matrix[0, 2] = 1.0 means treatment T causes feature X[:,0]
+        - adj_matrix[2, 3] = 1.0 means feature X[:,0] causes feature X[:,1]
         
     Examples
     --------
@@ -116,9 +116,9 @@ class InterventionalDataset(Dataset):
     >>> X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adj = dataset[0]
     >>> print(adj.shape)  # torch.Size([num_nodes, num_nodes])
     >>> # If L features kept, adj is (L+2) x (L+2)
-    >>> # adj[L, L+1] tells if treatment causes outcome
-    >>> # adj[0, L+1] tells if first feature (X[:,0]) causes outcome  
-    >>> # adj[L, 0] tells if treatment causes first feature (X[:,0])
+    >>> # adj[0, 1] tells if treatment causes outcome
+    >>> # adj[2, 1] tells if first feature (X[:,0]) causes outcome  
+    >>> # adj[0, 2] tells if treatment causes first feature (X[:,0])
     """
     
     # Expected preprocessing hyperparameters
@@ -589,27 +589,27 @@ class InterventionalDataset(Dataset):
             # Optionally add adjacency matrix with proper node ordering
             if self.return_adjacency_matrix:
                 # Construct adjacency matrix with specific ordering to match model's data layout:
-                # Positions 0 to L-1: Feature variables that were KEPT after dropout (in sorted order)
-                # Position L: Treatment variable (intervention_node)
-                # Position L+1: Outcome variable (processor.selected_target_feature)
+                # Position 0: Treatment variable (intervention_node)
+                # Position 1: Outcome variable (processor.selected_target_feature)
+                # Positions 2 to L+1: Feature variables that were KEPT after dropout (in sorted order)
                 #
-                # This ordering matches the model's internal representation: [X_0, ..., X_{L-1}, T, Y]
+                # This ordering matches the model's internal representation: [T, Y, X_0, ..., X_{L-1}]
                 #
                 # This aligns with the REAL (non-padded) columns in the returned tensors:
-                # - X_obs/X_intv[:, i] corresponds to position i in adjacency matrix for i < len(kept_features)
-                # - T_obs/T_intv correspond to position L in adjacency matrix
-                # - Y_obs/Y_intv correspond to position L+1 in adjacency matrix
+                # - T_obs/T_intv correspond to position 0 in adjacency matrix
+                # - Y_obs/Y_intv correspond to position 1 in adjacency matrix
+                # - X_obs/X_intv[:, i] corresponds to position i+2 in adjacency matrix for i < len(kept_features)
                 #
                 # CRITICAL: The Preprocessor may pad X to max_n_features with zero columns.
                 # The adjacency matrix size is (len(kept_features) + 2) x (len(kept_features) + 2),
                 # which may be SMALLER than X.shape[1] + 2 if padding was applied.
                 #
                 # Example: If SCM has 32 nodes, treatment='X5', outcome='X10', and 25 features kept:
-                #   - Adjacency matrix is 27x27 (25 features + 1 treatment + 1 outcome)
+                #   - Adjacency matrix is 27x27 (1 treatment + 1 outcome + 25 features)
                 #   - X might be padded to shape (N, 50)
-                #   - X[:, :25] correspond to real SCM nodes (positions 0-24 in adjacency)
-                #   - Adjacency position 25 = treatment T
-                #   - Adjacency position 26 = outcome Y
+                #   - Adjacency position 0 = treatment T
+                #   - Adjacency position 1 = outcome Y
+                #   - X[:, :25] correspond to real SCM nodes (positions 2-26 in adjacency)
                 #   - X[:, 25:] are padded zeros with no correspondence to adjacency matrix
                 #
                 # The adjacency matrix entry [i,j] = 1.0 indicates a directed edge from 
@@ -620,19 +620,19 @@ class InterventionalDataset(Dataset):
                     target_node = processor.selected_target_feature
                     kept_features = processor.kept_feature_indices  # Node names after dropout
                     
-                    # Build ordered list to match model's feature ordering: [features, treatment, outcome]
-                    # Model has: [X_0, X_1, ..., X_{L-1}, T, Y]
+                    # Build ordered list to match model's feature ordering: [treatment, outcome, features]
+                    # Model has: [T, Y, X_0, X_1, ..., X_{L-1}]
                     # So adjacency matrix must use the same ordering
                     ordered_nodes = []
                     
-                    # Add kept features in sorted order first
-                    ordered_nodes.extend(sorted(kept_features))
-                    
-                    # Then add treatment and outcome
+                    # Add treatment and outcome first
                     ordered_nodes.append(intervention_node)
                     ordered_nodes.append(target_node)
                     
-                    # Get adjacency matrix with this specific ordering: [X_0, ..., X_{L-1}, T, Y]
+                    # Then add kept features in sorted order
+                    ordered_nodes.extend(sorted(kept_features))
+                    
+                    # Get adjacency matrix with this specific ordering: [T, Y, X_0, ..., X_{L-1}]
                     # This will be size (len(kept_features) + 2) x (len(kept_features) + 2)
                     adj_matrix_unpadded = scm.get_adjacency_matrix(node_order=ordered_nodes)
                     
