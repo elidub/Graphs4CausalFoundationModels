@@ -46,11 +46,13 @@ from pathlib import Path
 # Robust import - try without 'src.' prefix first, then with 'src.' prefix
 try:
     from models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
+    from models.UltimateGraphConditionedInterventionalPFN import UltimateGraphConditionedInterventionalPFN
     from models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
     from Losses.BarDistribution import BarDistribution
 except Exception:
     try:
         from src.models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
+        from src.models.UltimateGraphConditionedInterventionalPFN import UltimateGraphConditionedInterventionalPFN
         from src.models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
         from src.Losses.BarDistribution import BarDistribution
     except Exception:
@@ -58,6 +60,7 @@ except Exception:
         if str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
         from src.models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
+        from src.models.UltimateGraphConditionedInterventionalPFN import UltimateGraphConditionedInterventionalPFN
         from src.models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
         from src.Losses.BarDistribution import BarDistribution
 
@@ -70,12 +73,13 @@ class GraphConditionedInterventionalPFNSklearn:
     for models that require causal graph structure (adjacency matrix) as input.
     
     Supported models (automatically detected from config):
-    - GraphConditionedInterventionalPFN (hard attention masking) 
-      → graph_conditioning_mode: "hard_attention_only" (default)
-    - SoftGraphConditionedInterventionalPFN (soft attention weighting)
-      → graph_conditioning_mode: "soft_learned_bias"
-    - HybridGraphConditionedInterventionalPFN (learnable interpolation)
-      → graph_conditioning_mode: "hybrid_half_and_half"
+    - GraphConditionedInterventionalPFN (hard attention masking only) 
+      → graph_conditioning_mode: not specified or basic modes
+    - UltimateGraphConditionedInterventionalPFN (flexible graph conditioning)
+      → graph_conditioning_mode: 'ultimate_soft_attention', 'ultimate_gcn', 
+         'ultimate_gcn_and_soft_attention', or legacy modes
+      → Controlled by flags: use_attention_masking, use_gcn, use_adaln, use_soft_attention_bias
+      → Note: soft attention bias and hard attention masking are typically mutually exclusive
     - FlatGraphConditionedInterventionalPFN (flat adjacency append)
       → graph_conditioning_mode: "flat_append"
     
@@ -159,9 +163,55 @@ class GraphConditionedInterventionalPFNSklearn:
                 # Detect graph conditioning mode
                 self.graph_conditioning_mode = get_config_value(model_cfg, 'graph_conditioning_mode', 'hard_attention_only')
                 
-                # Mode-specific parameters
-                if self.graph_conditioning_mode == 'soft_learned_bias':
-                    self.model_kwargs['graph_bias_init'] = get_config_value(model_cfg, 'graph_bias_init', -5.0)
+                # UltimateGraphConditionedInterventionalPFN-specific parameters
+                # First try to get explicit values from config
+                use_attention_masking = get_config_value(model_cfg, 'use_attention_masking', None)
+                use_gcn = get_config_value(model_cfg, 'use_gcn', None)
+                use_adaln = get_config_value(model_cfg, 'use_adaln', None)
+                use_soft_attention_bias = get_config_value(model_cfg, 'use_soft_attention_bias', None)
+                
+                # If not explicitly set, infer from graph_conditioning_mode
+                if use_attention_masking is None or use_gcn is None or use_adaln is None or use_soft_attention_bias is None:
+                    # Map mode names to flag settings: (use_attention_masking, use_gcn, use_adaln, use_soft_attention_bias)
+                    # Note: soft attention bias and hard attention masking are mutually exclusive in most cases
+                    mode_to_flags = {
+                        'ultimate_hard_attention_only': (True, False, False, False),
+                        'ultimate_gcn_only': (False, True, True, False),
+                        'ultimate_gcn_and_hard_attention': (True, True, True, False),
+                        'ultimate_soft_attention': (False, False, False, True),  # Soft bias only, no hard masking
+                        'ultimate_gcn_and_soft_attention': (False, True, True, True),  # GCN+AdaLN+soft bias, no hard masking
+                        # Legacy modes
+                        'hard_attention_only': (True, False, False, False),
+                        'soft_learned_bias': (False, False, False, True),  # Soft bias only
+                        'hybrid_half_and_half': (False, False, False, True),  # Soft bias only
+                    }
+                    
+                    if self.graph_conditioning_mode in mode_to_flags:
+                        inferred_masking, inferred_gcn, inferred_adaln, inferred_soft = mode_to_flags[self.graph_conditioning_mode]
+                        if use_attention_masking is None:
+                            use_attention_masking = inferred_masking
+                        if use_gcn is None:
+                            use_gcn = inferred_gcn
+                        if use_adaln is None:
+                            use_adaln = inferred_adaln
+                        if use_soft_attention_bias is None:
+                            use_soft_attention_bias = inferred_soft
+                    else:
+                        # Default fallback
+                        if use_attention_masking is None:
+                            use_attention_masking = True
+                        if use_gcn is None:
+                            use_gcn = False
+                        if use_adaln is None:
+                            use_adaln = False
+                        if use_soft_attention_bias is None:
+                            use_soft_attention_bias = False
+                
+                self.model_kwargs['use_attention_masking'] = use_attention_masking
+                self.model_kwargs['use_gcn'] = use_gcn
+                self.model_kwargs['use_adaln'] = use_adaln
+                self.model_kwargs['use_soft_attention_bias'] = use_soft_attention_bias
+                self.model_kwargs['soft_bias_init'] = get_config_value(model_cfg, 'soft_bias_init', 5.0)
                 
                 # BarDistribution configuration
                 use_bar = get_config_value(model_cfg, 'use_bar_distribution', False)
@@ -207,23 +257,29 @@ class GraphConditionedInterventionalPFNSklearn:
         # Remove parameters not supported by specific model types
         model_kwargs_filtered = self.model_kwargs.copy()
         
-        if self.graph_conditioning_mode == 'soft_learned_bias':
-            if self.verbose:
-                print(f"  Creating SoftGraphConditionedInterventionalPFN (soft learned biases)")
-            # SoftGraphConditionedInterventionalPFN doesn't have use_same_row_mlp
-            model_kwargs_filtered.pop('use_same_row_mlp', None)
-            self.model = SoftGraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
-        elif self.graph_conditioning_mode == 'hybrid_half_and_half':
-            if self.verbose:
-                print(f"  Creating HybridGraphConditionedInterventionalPFN (half constrained, half free)")
-            self.model = HybridGraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
-        elif self.graph_conditioning_mode == 'flat_append':
+        # Map graph_conditioning_mode to UltimateGraphConditionedInterventionalPFN flags
+        if self.graph_conditioning_mode == 'flat_append':
             if self.verbose:
                 print(f"  Creating FlatGraphConditionedInterventionalPFN (flat adjacency append)")
             self.model = FlatGraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
-        else:  # 'hard_attention_only' or default
+        elif self.graph_conditioning_mode in ['ultimate_hard_attention_only', 'ultimate_gcn_only', 'ultimate_gcn_and_hard_attention',
+                                               'ultimate_soft_attention', 'ultimate_gcn_and_soft_attention', 
+                                               'soft_learned_bias', 'hybrid_half_and_half', 'hard_attention_only']:
+            # All these modes use UltimateGraphConditionedInterventionalPFN with different flag combinations
+            if self.verbose:
+                print(f"  Creating UltimateGraphConditionedInterventionalPFN")
+                print(f"    use_attention_masking: {model_kwargs_filtered.get('use_attention_masking', True)}")
+                print(f"    use_gcn: {model_kwargs_filtered.get('use_gcn', False)}")
+                print(f"    use_adaln: {model_kwargs_filtered.get('use_adaln', False)}")
+                print(f"    use_soft_attention_bias: {model_kwargs_filtered.get('use_soft_attention_bias', False)}")
+            self.model = UltimateGraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
+        else:  
+            # Default: use basic GraphConditionedInterventionalPFN (hard attention masking only)
             if self.verbose:
                 print(f"  Creating GraphConditionedInterventionalPFN (hard attention masking)")
+            # Remove UltimateGraphConditionedInterventionalPFN-specific parameters
+            for key in ['use_attention_masking', 'use_gcn', 'use_adaln', 'use_soft_attention_bias', 'soft_bias_init']:
+                model_kwargs_filtered.pop(key, None)
             self.model = GraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
         
         # Load checkpoint

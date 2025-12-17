@@ -6,7 +6,10 @@ import torch
 from torch import Tensor
 import torch.distributions as dist
 
-from priors.causal_prior.noise_distributions.DistributionInterface import Distribution
+try:
+    from priors.causal_prior.noise_distributions.DistributionInterface import Distribution
+except: 
+    from src.priors.causal_prior.noise_distributions.DistributionInterface import Distribution
 
 class MixedDist(Distribution):
     """

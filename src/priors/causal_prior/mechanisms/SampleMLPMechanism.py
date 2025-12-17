@@ -2,8 +2,12 @@ from __future__ import annotations
 from typing import List, Optional, Tuple, Literal
 import torch
 from torch import nn, Tensor
-from priors.causal_prior.mechanisms.BaseMechanism import BaseMechanism
-from priors.causal_prior.mechanisms.RandomActivation import RandomActivation  # your existing class
+try:
+    from priors.causal_prior.mechanisms.BaseMechanism import BaseMechanism
+    from priors.causal_prior.mechanisms.RandomActivation import RandomActivation  # your existing class
+except:
+    from src.priors.causal_prior.mechanisms.BaseMechanism import BaseMechanism
+    from src.priors.causal_prior.mechanisms.RandomActivation import RandomActivation  # your existing class
 
 # ------------ SampledMechanism ------------
 class SampleMLPMechanism(BaseMechanism):
