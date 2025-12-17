@@ -2,13 +2,23 @@
 Sklearn-like wrapper for Graph-Conditioned InterventionalPFN models.
 
 This module provides a scikit-learn-style interface for graph-conditioned models
-including GraphConditionedInterventionalPFN, SoftGraphConditionedInterventionalPFN,
-HybridGraphConditionedInterventionalPFN, and FlatGraphConditionedInterventionalPFN.
+including GraphConditionedInterventionalPFN, UltimateGraphConditionedInterventionalPFN,
+and FlatGraphConditionedInterventionalPFN.
 
 Key differences from InterventionalPFN_sklearn:
 - Requires adjacency_matrix as input for all predictions
 - Simpler API: only supports basic prediction and log-likelihood
 - No ensemble, clustering, entropy, or variance methods (use full wrapper for those)
+
+Adjacency Matrix Format:
+- Shape: (L+2, L+2) where L is the number of features
+- Position ordering: [X_0, X_1, ..., X_{L-1}, T, Y]
+  * Positions 0 to L-1: Feature variables (sorted order, kept after dropout)
+  * Position L: Treatment variable (intervention node)
+  * Position L+1: Outcome variable (target feature)
+- Edge semantics: A[i,j] = 1 means directed edge from i to j (i causes j)
+- The matrix is transposed internally so that j can attend to i (effects attend to causes)
+- Self-loops are added automatically by the model for self-attention
 
 Usage:
     # Basic usage
@@ -22,7 +32,7 @@ Usage:
     preds = wrapper.predict(
         X_obs, T_obs, Y_obs,
         X_intv, T_intv,
-        adjacency_matrix,
+        adjacency_matrix,  # (L+2, L+2) - A[i,j]=1 means i→j
         prediction_type="mode"
     )
     
@@ -30,7 +40,7 @@ Usage:
     log_probs = wrapper.log_likelihood(
         X_obs, T_obs, Y_obs,
         X_intv, T_intv, Y_intv,
-        adjacency_matrix
+        adjacency_matrix  # (L+2, L+2) - A[i,j]=1 means i→j
     )
 """
 
@@ -352,11 +362,16 @@ class GraphConditionedInterventionalPFNSklearn:
             X_intv: Interventional features (M, L)
             T_intv: Interventional intervened feature (M,) or (M, 1)
             adjacency_matrix: Causal graph adjacency matrix (L+2, L+2)
-                Position 0: Treatment variable
-                Position 1: Outcome variable
-                Position 2+: Other features (sorted order)
-                A[i,j] = 1 means there is a causal edge from j to i (j causes i)
-                Attention flows opposite to causal edges: feature i attends to j if A[i,j] = 1
+                Position ordering (matches internal embedding order):
+                  - Position 0 to L-1: Feature variables (X[:,0] to X[:,L-1])
+                  - Position L: Treatment variable (T)
+                  - Position L+1: Outcome variable (Y)
+                
+                Edge semantics:
+                  - A[i,j] = 1 means directed edge from i to j (i causes j)
+                  - The matrix is transposed internally so j can attend to i
+                  - This ensures effects attend to their causes for causal inference
+                  - Self-loops are added automatically for self-attention
             prediction_type: Type of prediction
                 - "point": Direct model output (requires BarDistribution disabled)
                 - "mode": Most likely value from BarDistribution
@@ -469,11 +484,16 @@ class GraphConditionedInterventionalPFNSklearn:
             T_intv: Interventional intervened feature (M,) or (M, 1)
             Y_intv: Interventional targets (M,) or (M, 1) - ground truth
             adjacency_matrix: Causal graph adjacency matrix (L+2, L+2)
-                Position 0: Treatment variable
-                Position 1: Outcome variable
-                Position 2+: Other features (sorted order)
-                A[i,j] = 1 means there is a causal edge from j to i (j causes i)
-                Attention flows opposite to causal edges: feature i attends to j if A[i,j] = 1
+                Position ordering (matches internal embedding order):
+                  - Position 0 to L-1: Feature variables (X[:,0] to X[:,L-1])
+                  - Position L: Treatment variable (T)
+                  - Position L+1: Outcome variable (Y)
+                
+                Edge semantics:
+                  - A[i,j] = 1 means directed edge from i to j (i causes j)
+                  - The matrix is transposed internally so j can attend to i
+                  - This ensures effects attend to their causes for causal inference
+                  - Self-loops are added automatically for self-attention
             
         Returns:
             Log-likelihood values of shape (M,)
