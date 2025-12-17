@@ -363,7 +363,7 @@ model_config:
   use_graph_conditioning:  # whether to condition on causal graph structure
     value: true
   graph_conditioning_mode:  # how to apply graph conditioning
-    value: "ultimate_soft_attention"
+    value: "hard_attention_only"
     # Options:
     # - "hard_attention_only": GraphConditionedInterventionalPFN with hard attention masking
     # - "flat_append": FlatGraphConditionedInterventionalPFN (flatten adjacency and append)

@@ -2,35 +2,40 @@
 Ultimate Graph-Conditioned Interventional Prior-Data Fitted Network (PFN) for causal inference.
 
 This module extends GraphConditionedInterventionalPFN with additional graph processing:
-1. Attention masking (inherited) - hard structural constraints
+1. Attention masking - hard or soft structural constraints
 2. GCN-style graph encoder - learns node representations from graph structure
+3. AdaLN - adaptive layer normalization conditioned on graph embeddings
 
 The GCN encoder processes the adjacency matrix into node embeddings that capture
-the graph structure. These embeddings are computed but not yet used for conditioning
-(AdaLN integration planned for future).
+the graph structure. These embeddings can be used for AdaLN to provide learned,
+soft graph-based conditioning alongside attention masking.
 
 Input format:
 - Same as InterventionalPFN: X_obs, T_obs, Y_obs, X_intv, T_intv
 - Additional: adjacency_matrix (B, L+2, L+2) encoding causal structure
 
-Adjacency matrix ordering (matches data layout):
-- Position 0: Treatment variable (intervention_node)
-- Position 1: Outcome variable (target feature)
-- Position 2+: Feature variables that were KEPT after dropout (sorted order)
+Adjacency matrix ordering (matches internal embedding order):
+- Position 0 to L-1: Feature variables (sorted, kept after dropout)
+- Position L: Treatment variable (intervention_node)
+- Position L+1: Outcome variable (target feature)
 
-The adjacency matrix A[i,j] = 1 means there is a causal edge from j to i.
-Attention flows opposite to causal edges: feature i attends to feature j if A[i,j] = 1 (edge j→i).
+Edge semantics:
+- A[i,j] = 1 means there is a directed edge from i to j (i causes j)
+- The matrix is transposed internally so that j can attend to i
+- This ensures effects attend to their causes for proper causal inference
 
 Key differences from GraphConditionedInterventionalPFN:
 1. Includes GCN-style graph encoder for processing adjacency matrix
-2. Produces graph node embeddings (B, L+2, D) - currently for inspection only
-3. Future: Will use graph embeddings for AdaLN conditioning
+2. Produces graph node embeddings (B, L+2, D) for AdaLN conditioning
+3. Supports both hard masking (-inf) and soft attention biases (learnable)
+4. AdaLN modulates layer normalization using graph embeddings
+5. Flexible configuration: can enable/disable masking, GCN, AdaLN independently
 
 Architecture features:
 - SwiGLU activation
-- Pre-layer normalization
+- Pre-layer normalization (adaptive when AdaLN enabled)
 - Separate train/test attention
-- Graph-conditioned feature attention via masking
+- Graph-conditioned feature attention (hard or soft)
 - GCN-style graph processing
 - Optional attention sinks
 """
@@ -461,15 +466,16 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
     
     Adjacency matrix format:
     - Shape: (B, L+2, L+2) where L is number of features (after dropout)
-    - Position 0: Treatment variable (intervention_node)
-    - Position 1: Outcome variable (target feature)
-    - Position 2+: Feature variables (kept after dropout, sorted order)
-    - A[i,j] = 1 means there is a causal edge from j to i (i.e., j causes i)
-    - Attention flows opposite to causal edges: feature i attends to j if A[i,j] = 1
+    - Position 0 to L-1: Feature variables (sorted, kept after dropout)
+    - Position L: Treatment variable (intervention_node)
+    - Position L+1: Outcome variable (target feature)
+    - Edge semantics: A[i,j] = 1 means edge from i to j (i causes j)
+    - The matrix is transposed internally so j can attend to i
+    - This ensures effects attend to their causes for causal inference
     
     Architecture features:
     - SwiGLU activation
-    - Pre-layer normalization
+    - Pre-layer normalization (adaptive when AdaLN enabled)
     - Separate train/test attention
     - Graph-conditioned feature attention (hard or soft)
     - Optional attention sinks
@@ -773,19 +779,30 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
         """
         Prepare attention mask for feature attention from adjacency matrix.
         
-        The adjacency matrix defines causal structure between features:
-        - Position 0: Treatment variable
-        - Position 1: Outcome variable
-        - Position 2+: Other features
-        - A[i,j] = 1 means there is a causal edge from j to i (j causes i)
+        The adjacency matrix from the dataset uses the convention:
+        - A[i,j] = 1 means there is a directed edge from i to j (i causes j)
         
-        Attention flows opposite to causal edges: feature i attends to j if A[i,j] = 1.
-        This is implemented by negating the adjacency matrix (logical_not).
+        For causal inference, we need information to flow backward along causal edges:
+        - If i→j (i causes j), then j should attend to i (effect attends to cause)
+        - This means we need to TRANSPOSE the adjacency matrix
+        
+        After transposing:
+        - A_T[j,i] = 1 when original A[i,j] = 1 (edge i→j exists)
+        - This allows position j to attend to position i
+        
+        Position ordering:
+        - Position 0 to L-1: Feature variables
+        - Position L: Treatment variable
+        - Position L+1: Outcome variable
+        
+        The mask is created by transposing, converting to boolean, then negating (logical_not).
+        After negation: False = CAN attend, True = CANNOT attend
         
         With sink columns, the mask is expanded to allow all features to attend to sinks.
         
         Args:
-            adjacency_matrix: (B, L+2, L+2) - 1 means causal edge from j to i, 0 means no edge
+            adjacency_matrix: (B, L+2, L+2) - Binary adjacency matrix from dataset
+                              A[i,j] = 1 means edge from i to j (i causes j)
             n_sink_cols: Number of sink columns prepended
             
         Returns:
@@ -795,6 +812,15 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
         B, F, F2 = adjacency_matrix.shape
         assert F == F2, "Adjacency matrix must be square"
         assert F == self.num_features + 2, f"Expected adjacency matrix size {self.num_features + 2}, got {F}"
+        
+        # Transpose adjacency matrix to flip edge direction for attention
+        # Original: A[i,j] = 1 means i→j (i causes j)
+        # After transpose: A[j,i] = 1 means j can attend to i (effect attends to cause)
+        adjacency_matrix = adjacency_matrix.transpose(-2, -1)  # (B, L+2, L+2)
+        
+        # Add self-loops to enable self-attention
+        eye = torch.eye(F, device=adjacency_matrix.device, dtype=adjacency_matrix.dtype)
+        adjacency_matrix = adjacency_matrix + eye.unsqueeze(0)  # (B, L+2, L+2)
         
         # Convert adjacency matrix to boolean mask (1 -> True, 0 -> False)
         # True means CAN attend
@@ -838,14 +864,20 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
             X_intv: (B, M, L) - interventional features (test)
             T_intv: (B, M, 1) - interventional intervened feature (test)
             adjacency_matrix: (B, L+2, L+2) - causal graph adjacency matrix
-                Position 0: Treatment variable
-                Position 1: Outcome variable
-                Position 2+: Other features (sorted, after dropout)
-                A[i,j] = 1 means feature i can attend to feature j.  #TODO this is weird, it should be the other way around?!
+                Position ordering (matching internal embedding order):
+                  - Position 0 to L-1: Feature variables (X[:,0] to X[:,L-1])
+                  - Position L: Treatment variable (T)
+                  - Position L+1: Outcome variable (Y)
+                
+                Edge semantics:
+                  - A[i,j] = 1 means directed edge from i to j (i causes j)
+                  - The matrix is transposed internally so j can attend to i
+                  - This ensures effects attend to their causes for causal inference
 
         Returns:
             Dict with:
                 - "predictions": (B, M) if output_dim == 1, else (B, M, output_dim)
+                - "graph_embeddings": (B, L+2, D) if use_gcn=True, else not present
         """
         B, N, L = X_obs.shape
         assert L == self.num_features, f"Expected {self.num_features} features, got {L}"
@@ -866,11 +898,11 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
         # Create graph node embeddings if GCN is enabled
         if self.use_gcn:
             # Create initial node features from role embeddings
-            # Position 0: Treatment, Position 1: Outcome, Position 2+: Features
+            # Position 0 to L-1: Feature nodes, Position L: Treatment, Position L+1: Outcome
             node_features = torch.zeros(L + 2, self.d_model, device=device)
-            node_features[0] = self.obs_T_embed.squeeze()  # Treatment node
-            node_features[1] = self.obs_label_embed.squeeze()  # Outcome node
-            node_features[2:] = self.obs_feature_embed.squeeze().expand(L, -1)  # Feature nodes
+            node_features[:L] = self.obs_feature_embed.squeeze().expand(L, -1)  # Feature nodes
+            node_features[L] = self.obs_T_embed.squeeze()  # Treatment node
+            node_features[L+1] = self.obs_label_embed.squeeze()  # Outcome node
             
             # Apply GCN to get graph-conditioned node embeddings
             graph_node_embeddings = self.graph_encoder(adjacency_matrix, node_features)  # (B, L+2, D)

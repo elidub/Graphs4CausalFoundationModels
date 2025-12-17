@@ -9,11 +9,12 @@ from priors.causal_prior.mechanisms.BaseMechanism import BaseMechanism
 class LinearMechanism(BaseMechanism):
     """
     Simple linear mechanism that:
-    1. Computes a weighted linear combination of parent values
-    2. Applies a nonlinearity
-    3. Adds noise
+    1. Optionally standardizes parent values (z-score normalization)
+    2. Computes a weighted linear combination of parent values
+    3. Applies a nonlinearity
+    4. Adds noise
     
-    Output: nonlinearity(weights @ parents) + noise
+    Output: nonlinearity(weights @ standardized_parents) + noise
     
     Args:
         input_dim: Number of parent features (D)
@@ -24,6 +25,8 @@ class LinearMechanism(BaseMechanism):
                      - A string: 'tanh', 'relu', 'sigmoid', 'identity', 'leaky_relu', 'elu'
                      - A callable: Any function that takes a tensor and returns a tensor
                      Default: 'identity' (no nonlinearity)
+        standardize: If True, standardizes inputs to zero mean and unit variance
+                    before applying linear combination. Default: False
         node_shape: Output shape per sample, default () for scalar output
         name: Optional name for the mechanism
         
@@ -45,10 +48,14 @@ class LinearMechanism(BaseMechanism):
         input_dim: int,
         weights: list | Tensor,
         nonlinearity: str | Callable[[Tensor], Tensor] = 'identity',
+        standardize: bool = False,
         node_shape: Tuple[int, ...] = (),
         name: Optional[str] = None,
     ) -> None:
         super().__init__(input_dim=input_dim, node_shape=node_shape, name=name)
+        
+        # Store standardization flag
+        self.standardize = standardize
         
         # Convert weights to tensor
         if isinstance(weights, list):
@@ -105,7 +112,7 @@ class LinearMechanism(BaseMechanism):
     
     def _forward(self, parents: Tensor, eps: Optional[Tensor] = None) -> Tensor:
         """
-        Compute: nonlinearity(weights @ parents) + noise
+        Compute: nonlinearity(weights @ standardized_parents) + noise
         
         Args:
             parents: (B, D) where D == input_dim
@@ -115,6 +122,15 @@ class LinearMechanism(BaseMechanism):
             (B,) or (B, *node_shape) depending on node_shape
         """
         B = parents.shape[0]
+        
+        # Standardize inputs if requested
+        if self.standardize and self.input_dim > 0:
+            # Compute mean and std along batch dimension
+            mean = parents.mean(dim=0, keepdim=True)  # (1, D)
+            std = parents.std(dim=0, keepdim=True, unbiased=False)  # (1, D)
+            # Avoid division by zero
+            std = torch.where(std > 1e-8, std, torch.ones_like(std))
+            parents = (parents - mean) / std
         
         # Compute weighted sum: (B, D) @ (D,) -> (B,)
         linear_combination = torch.matmul(parents, self.weights)
@@ -142,6 +158,7 @@ class LinearMechanism(BaseMechanism):
             f"input_dim={self.input_dim}, "
             f"weights=[{weights_str}], "
             f"nonlinearity='{self.nonlinearity_name}', "
+            f"standardize={self.standardize}, "
             f"node_shape={self.node_shape}"
             f"{f', name={self.name}' if self.name else ''})"
         )
@@ -268,6 +285,37 @@ if __name__ == "__main__":
     output8 = mech8(parents8, eps=None)
     print(f"   Parents: {parents8}")
     print(f"   Linear: [-0.5, 3.0], after ReLU: {output8}")
+    
+    # Test 9: Standardization
+    print("\n9. With standardization")
+    mech9_no_std = LinearMechanism(
+        input_dim=2,
+        weights=[1.0, 1.0],
+        nonlinearity='identity',
+        standardize=False
+    )
+    mech9_std = LinearMechanism(
+        input_dim=2,
+        weights=[1.0, 1.0],
+        nonlinearity='identity',
+        standardize=True
+    )
+    
+    # Create data with different scales
+    parents9 = torch.tensor([
+        [1.0, 10.0],
+        [2.0, 20.0],
+        [3.0, 30.0],
+        [4.0, 40.0]
+    ])
+    
+    output9_no_std = mech9_no_std(parents9, eps=None)
+    output9_std = mech9_std(parents9, eps=None)
+    
+    print(f"   Parents:\n{parents9}")
+    print(f"   Without standardization: {output9_no_std}")
+    print(f"   With standardization: {output9_std}")
+    print(f"   (Standardization equalizes the contribution of each parent)")
     
     print("\n" + "=" * 80)
     print("All tests completed successfully!")

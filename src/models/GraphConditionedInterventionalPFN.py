@@ -9,13 +9,15 @@ Input format:
 - Same as InterventionalPFN: X_obs, T_obs, Y_obs, X_intv, T_intv
 - Additional: adjacency_matrix (B, L+2, L+2) encoding causal structure
 
-Adjacency matrix ordering (matches data layout):
-- Position 0: Treatment variable (intervention_node)
-- Position 1: Outcome variable (target feature)
-- Position 2+: Feature variables that were KEPT after dropout (sorted order)
+Adjacency matrix ordering (matches internal embedding order):
+- Position 0 to L-1: Feature variables (sorted, kept after dropout)
+- Position L: Treatment variable (intervention_node)
+- Position L+1: Outcome variable (target feature)
 
-The adjacency matrix A[i,j] = 1 means there is a causal edge from j to i.
-Attention flows opposite to causal edges: feature i attends to feature j if A[i,j] = 1 (edge j→i).
+Edge semantics:
+- A[i,j] = 1 means there is a directed edge from i to j (i causes j)
+- The matrix is transposed internally so that j can attend to i
+- This ensures effects attend to their causes for proper causal inference
 
 Key differences from InterventionalPFN:
 1. Takes adjacency_matrix as input
@@ -264,11 +266,12 @@ class GraphConditionedInterventionalPFN(nn.Module):
     
     Adjacency matrix format:
     - Shape: (B, L+2, L+2) where L is number of features (after dropout)
-    - Position 0: Treatment variable (intervention_node)
-    - Position 1: Outcome variable (target feature)
-    - Position 2+: Feature variables (kept after dropout, sorted order)
-    - A[i,j] = 1 means there is a causal edge from j to i (i.e., j causes i)
-    - Attention flows opposite to causal edges: feature i attends to j if A[i,j] = 1
+    - Position 0 to L-1: Feature variables (kept after dropout, sorted order)
+    - Position L: Treatment variable (intervention_node)
+    - Position L+1: Outcome variable (target feature)
+    - This matches the internal embedding order: [X_0, X_1, ..., X_{L-1}, T, Y]
+    - The attention mask is derived from adjacency matrix via logical_not operation
+    - After negation, False means CAN attend, True means CANNOT attend
     
     Architecture features:
     - SwiGLU activation
@@ -537,19 +540,30 @@ class GraphConditionedInterventionalPFN(nn.Module):
         """
         Prepare attention mask for feature attention from adjacency matrix.
         
-        The adjacency matrix defines causal structure between features:
-        - Position 0: Treatment variable
-        - Position 1: Outcome variable
-        - Position 2+: Other features
-        - A[i,j] = 1 means there is a causal edge from j to i (j causes i)
+        The adjacency matrix from the dataset uses the convention:
+        - A[i,j] = 1 means there is a directed edge from i to j (i causes j)
         
-        Attention flows opposite to causal edges: feature i attends to j if A[i,j] = 1.
-        This is implemented by negating the adjacency matrix (logical_not).
+        For causal inference, we need information to flow backward along causal edges:
+        - If i→j (i causes j), then j should attend to i (effect attends to cause)
+        - This means we need to TRANSPOSE the adjacency matrix
+        
+        After transposing:
+        - A_T[j,i] = 1 when original A[i,j] = 1 (edge i→j exists)
+        - This allows position j to attend to position i
+        
+        Position ordering:
+        - Position 0 to L-1: Feature variables
+        - Position L: Treatment variable
+        - Position L+1: Outcome variable
+        
+        The mask is created by transposing, converting to boolean, then negating (logical_not).
+        After negation: False = CAN attend, True = CANNOT attend
         
         With sink columns, the mask is expanded to allow all features to attend to sinks.
         
         Args:
-            adjacency_matrix: (B, L+2, L+2) - 1 means causal edge from j to i, 0 means no edge
+            adjacency_matrix: (B, L+2, L+2) - Binary adjacency matrix from dataset
+                              A[i,j] = 1 means edge from i to j (i causes j)
             n_sink_cols: Number of sink columns prepended
             
         Returns:
@@ -559,6 +573,15 @@ class GraphConditionedInterventionalPFN(nn.Module):
         B, F, F2 = adjacency_matrix.shape
         assert F == F2, "Adjacency matrix must be square"
         assert F == self.num_features + 2, f"Expected adjacency matrix size {self.num_features + 2}, got {F}"
+        
+        # Transpose adjacency matrix to flip edge direction for attention
+        # Original: A[i,j] = 1 means i→j (i causes j)
+        # After transpose: A[j,i] = 1 means j can attend to i (effect attends to cause)
+        adjacency_matrix = adjacency_matrix.transpose(-2, -1)  # (B, L+2, L+2)
+        
+        # Add self-loops to enable self-attention
+        eye = torch.eye(F, device=adjacency_matrix.device, dtype=adjacency_matrix.dtype)
+        adjacency_matrix = adjacency_matrix + eye.unsqueeze(0)  # (B, L+2, L+2)
         
         # Convert adjacency matrix to boolean mask (1 -> True, 0 -> False)
         # True means CAN attend
@@ -602,10 +625,15 @@ class GraphConditionedInterventionalPFN(nn.Module):
             X_intv: (B, M, L) - interventional features (test)
             T_intv: (B, M, 1) - interventional intervened feature (test)
             adjacency_matrix: (B, L+2, L+2) - causal graph adjacency matrix
-                Position 0: Treatment variable
-                Position 1: Outcome variable
-                Position 2+: Other features (sorted, after dropout)
-                A[i,j] = 1 means feature i can attend to feature j.  #TODO this is weird, it should be the other way around?!
+                Position ordering (matching internal embedding order):
+                  - Position 0 to L-1: Feature variables (X[:,0] to X[:,L-1])
+                  - Position L: Treatment variable (T)
+                  - Position L+1: Outcome variable (Y)
+                
+                Edge semantics:
+                  - A[i,j] = 1 means directed edge from i to j (i causes j)
+                  - The matrix is transposed internally so j can attend to i
+                  - This ensures effects attend to their causes for causal inference
 
         Returns:
             Dict with:
@@ -753,10 +781,8 @@ if __name__ == "__main__":
     print("\n[Test 2] Sparse Causal Graph")
     print("-" * 80)
     # Create a simple chain structure: Treatment -> Feature1 -> Feature2 -> ... -> Outcome
+    # Note: Self-loops are added automatically by the model
     sparse_adj = torch.zeros(B, L + 2, L + 2)
-    # Allow self-attention
-    for i in range(L + 2):
-        sparse_adj[:, i, i] = 1
     # Treatment (0) affects all features
     sparse_adj[:, :, 0] = 1
     # Chain structure: each feature affects the next
@@ -829,7 +855,7 @@ if __name__ == "__main__":
     print("-" * 80)
     # Create two different graph structures
     adj1 = torch.ones(B, L + 2, L + 2)  # Fully connected
-    adj2 = torch.eye(L + 2).unsqueeze(0).expand(B, -1, -1)  # Only self-attention
+    adj2 = torch.zeros(B, L + 2, L + 2)  # No edges (only self-attention from model)
     
     out1 = model(X_obs, T_obs, Y_obs, X_intv, T_intv, adj1)
     out2 = model(X_obs, T_obs, Y_obs, X_intv, T_intv, adj2)
