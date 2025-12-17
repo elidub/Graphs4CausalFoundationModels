@@ -62,12 +62,16 @@ class InterventionalDataset(Dataset):
         This ordering matches the model's internal representation: [T, Y, X_0, ..., X_{L-1}]
         
         CRITICAL: The features at positions 2 to L+1 in the adjacency matrix correspond 
-        to the REAL (non-padded) columns of X in the same order. That is:
+        to the REAL (non-padded) columns of X in the EXACT SAME ORDER. That is:
         - adj_matrix[0, :] and adj_matrix[:, 0] refer to treatment T
         - adj_matrix[1, :] and adj_matrix[:, 1] refer to outcome Y
         - adj_matrix[2, :] and adj_matrix[:, 2] refer to the same variable as X[:, 0]
         - adj_matrix[3, :] and adj_matrix[:, 3] refer to the same variable as X[:, 1]
         - adj_matrix[k+2, :] and adj_matrix[:, k+2] refer to X[:, k] for k < L
+        
+        The feature ordering in the adjacency matrix MATCHES the column ordering in X.
+        Features are NOT necessarily in sorted order - they are in whatever order the
+        BasicProcessing class outputs them (after dropout, but before padding).
         
         IMPORTANT: X may contain zero-padded columns to reach max_n_features.
         The adjacency matrix ONLY covers real nodes from the SCM, not padded columns!
@@ -195,7 +199,8 @@ class InterventionalDataset(Dataset):
                  scm_config: Dict[str, Any],
                  preprocessing_config: Dict[str, Any],
                  dataset_config: Dict[str, Any],
-                 seed: Optional[int] = None):
+                 seed: Optional[int] = None,
+                 return_scm: bool = False):
         """
         Initialize the dataset with configuration dictionaries.
         
@@ -204,11 +209,13 @@ class InterventionalDataset(Dataset):
             preprocessing_config: Preprocessing hyperparameter configuration
             dataset_config: Dataset configuration (size, max samples, etc.)
             seed: Random seed for reproducibility
+            return_scm: If True, also return the SCM object in __getitem__ (for debugging)
         """
         self.scm_config = scm_config
         self.preprocessing_config = preprocessing_config
         self.dataset_config = dataset_config
         self.seed = seed
+        self.return_scm = return_scm
         
         # Helper to extract value from config entries that may be plain or dicts with {'value': ...}
         def _get_cfg_value(cfg: Dict[str, Any], key: str, default: Any):
@@ -393,9 +400,10 @@ class InterventionalDataset(Dataset):
         return self.size
     
     def _contains_nan(self, *tensors):
-        """Check if any of the provided tensors contains NaN values."""
+        """Check if any of the provided tensors contains NaN values.
+        Skips non-tensor objects (e.g., SCM, processor when return_scm=True)."""
         for tensor in tensors:
-            if tensor is not None and torch.isnan(tensor).any():
+            if tensor is not None and torch.is_tensor(tensor) and torch.isnan(tensor).any():
                 return True
         return False
     
@@ -623,16 +631,20 @@ class InterventionalDataset(Dataset):
                     # Build ordered list to match model's feature ordering: [treatment, outcome, features]
                     # Model has: [T, Y, X_0, X_1, ..., X_{L-1}]
                     # So adjacency matrix must use the same ordering
+                    # CRITICAL: kept_features is already in the order that columns appear in X
+                    # Do NOT sort them - use the exact order from the processor
                     ordered_nodes = []
                     
                     # Add treatment and outcome first
                     ordered_nodes.append(intervention_node)
                     ordered_nodes.append(target_node)
                     
-                    # Then add kept features in sorted order
-                    ordered_nodes.extend(sorted(kept_features))
+                    # Then add kept features in the SAME order as they appear in X
+                    # (kept_features is already ordered to match X columns)
+                    ordered_nodes.extend(kept_features)
                     
                     # Get adjacency matrix with this specific ordering: [T, Y, X_0, ..., X_{L-1}]
+                    # where X_i corresponds to X[:, i] in the returned tensor
                     # This will be size (len(kept_features) + 2) x (len(kept_features) + 2)
                     adj_matrix_unpadded = scm.get_adjacency_matrix(node_order=ordered_nodes)
                     
@@ -667,6 +679,11 @@ class InterventionalDataset(Dataset):
                         adj_matrix = padded_adj
                 
                 result = result + (adj_matrix,)
+            
+            # Optionally add SCM for debugging
+            if self.return_scm:
+                # Also return processor and intervention_node for detailed debugging
+                result = result + (scm, processor, intervention_node)
             
             # Save latest result so we can return even if rejection keeps failing
             last_result = result
