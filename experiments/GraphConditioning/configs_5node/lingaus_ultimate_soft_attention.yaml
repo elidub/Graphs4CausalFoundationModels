@@ -9,19 +9,22 @@
 # 
 # ===============================================================================
 
-experiment_name: "two_nodes_lingaus_ultimate_soft_attention"
+experiment_name: "five_nodes_lingaus_ultimate_soft_attention"
 description: ""
 
 mode: "interventional" # determine whether to train in predictive or interventional mode via "predictive" or "interventional"
 
 scm_config:
   num_nodes:
-    value: 2
+    distribution: "discrete_uniform"
+    distribution_parameters:
+      low: 2
+      high: 5
   graph_edge_prob:
     distribution: "beta"
     distribution_parameters:
-      alpha: 1.0
-      beta: 1.0
+      alpha: 2.0
+      beta: 3.0
   graph_seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -304,19 +307,9 @@ preprocessing_config:
     value: false
 
   increase_treatment_scale: 
-    distribution: "categorical"
-    distribution_parameters:
-      choices:
-        - true
-        - false
-      probabilities:
-        - 0.5
-        - 0.5
+    value: false
   distribution_rescale_factor: 
-    distribution: "beta"
-    distribution_parameters:
-      alpha: 2.0
-      beta: 3.0
+    value: 0.0
   
   # Test feature masking: randomly mask a fraction of features in test set only
   # Creates distribution shift where test has fewer features than train
