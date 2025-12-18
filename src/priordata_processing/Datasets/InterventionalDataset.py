@@ -5,6 +5,7 @@ import torch
 import torch.distributions as dist
 import sys
 import os
+from copy import deepcopy
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -486,6 +487,9 @@ class InterventionalDataset(Dataset):
         while True:
             # Sample an SCM
             scm = self.scm_sampler.sample(seed=seed + retry_attempt)
+
+            if self.return_scm:
+                org_scm = deepcopy(scm)
             
             # sample the observational data first
             scm.sample_exogenous(num_samples=number_train_samples)
@@ -683,7 +687,7 @@ class InterventionalDataset(Dataset):
             # Optionally add SCM for debugging
             if self.return_scm:
                 # Also return processor and intervention_node for detailed debugging
-                result = result + (scm, processor, intervention_node)
+                result = result + (org_scm, processor, intervention_node)
             
             # Save latest result so we can return even if rejection keeps failing
             last_result = result
