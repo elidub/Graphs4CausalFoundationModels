@@ -22,3 +22,5 @@ wandb/
 src/training/checks/ResultsComplexity
 src/training/checks/ResultsRealWorldSamples
 src/benchmarking/results
+
+/experiments/GraphConditioning/checkpoints
