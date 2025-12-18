@@ -224,13 +224,13 @@ dataset_config:
     value: 500
 
   max_number_train_samples_per_dataset:  #how many train samples to actually sample per dataset
-    value: 500
+    value: 1000
   max_number_test_samples_per_dataset:  # how many test samples to actually sample per dataset
-    value: 500
+    value: 1000
   n_test_samples_per_dataset: # how many of the max_number_train_samples_per_dataset to use to pass to the model. the rest will be test samples
     distribution: "discrete_uniform"
     distribution_parameters:
-      low: 499
+      low: 1
       high: 500
 
   # Adjacency matrix output (only used when graph conditioning is enabled)
@@ -249,7 +249,7 @@ dataset_config:
 
 
   max_number_features:
-    value: 2
+    value: 3
   seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -314,7 +314,7 @@ preprocessing_config:
   # Test feature masking: randomly mask a fraction of features in test set only
   # Creates distribution shift where test has fewer features than train
   test_feature_mask_fraction:
-    value: 0.0
+    value: 1.0
   
   random_seed:
     distribution: "discrete_uniform"
@@ -336,7 +336,7 @@ model_config:
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
     value: 2
   num_features:
-    value: 2  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
+    value: 3
   normalize_features:  # whether to apply quantile transform + standard normalization internally
     value: true
   
