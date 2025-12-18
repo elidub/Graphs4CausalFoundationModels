@@ -36,11 +36,25 @@ Usage:
         prediction_type="mode"
     )
     
-    # Log-likelihood
+    # Log-likelihood (requires BarDistribution)
     log_probs = wrapper.log_likelihood(
         X_obs, T_obs, Y_obs,
         X_intv, T_intv, Y_intv,
         adjacency_matrix  # (L+2, L+2) - A[i,j]=1 means i→j
+    )
+    
+    # Or use alias
+    log_probs = wrapper.predict_log_likelihood(
+        X_obs, T_obs, Y_obs,
+        X_intv, T_intv, Y_intv,
+        adjacency_matrix
+    )
+    
+    # Negative log-likelihood (NLL) for loss computation
+    nll = wrapper.predict_negative_log_likelihood(
+        X_obs, T_obs, Y_obs,
+        X_intv, T_intv, Y_intv,
+        adjacency_matrix
     )
 """
 
@@ -565,9 +579,89 @@ class GraphConditionedInterventionalPFNSklearn:
             predictions = out["predictions"]  # (1, M, output_dim)
             
             # Compute log-likelihood
-            log_probs = self.bar_distribution.log_prob(predictions, Y_intv_t)  # (1, M)
+            log_probs = self.bar_distribution._logpdf_from_pred(predictions, Y_intv_t)  # (1, M)
         
         return log_probs.squeeze(0).cpu().numpy()  # (M,)
+    
+    def predict_log_likelihood(
+        self,
+        X_obs: Any,
+        T_obs: Any,
+        Y_obs: Any,
+        X_intv: Any,
+        T_intv: Any,
+        Y_intv: Any,
+        adjacency_matrix: Any,
+    ) -> np.ndarray:
+        """
+        Alias for log_likelihood method for consistency with SimplePFN_sklearn.
+        
+        Compute log-likelihood of test targets under the predictive distribution.
+        Requires BarDistribution to be enabled.
+        
+        Args:
+            X_obs: Observational features (N, L)
+            T_obs: Observational intervened feature (N,) or (N, 1)
+            Y_obs: Observational targets (N,) or (N, 1)
+            X_intv: Interventional features (M, L)
+            T_intv: Interventional intervened feature (M,) or (M, 1)
+            Y_intv: Interventional targets (M,) or (M, 1) - ground truth
+            adjacency_matrix: Causal graph adjacency matrix (L+2, L+2)
+                Position ordering (matches internal embedding order):
+                  - Position 0 to L-1: Feature variables (X[:,0] to X[:,L-1])
+                  - Position L: Treatment variable (T)
+                  - Position L+1: Outcome variable (Y)
+                
+                Edge semantics:
+                  - A[i,j] = 1 means directed edge from i to j (i causes j)
+                  - The matrix is transposed internally so j can attend to i
+                  - This ensures effects attend to their causes for causal inference
+                  - Self-loops are added automatically for self-attention
+            
+        Returns:
+            Log-likelihood values of shape (M,)
+        """
+        return self.log_likelihood(X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adjacency_matrix)
+    
+    def predict_negative_log_likelihood(
+        self,
+        X_obs: Any,
+        T_obs: Any,
+        Y_obs: Any,
+        X_intv: Any,
+        T_intv: Any,
+        Y_intv: Any,
+        adjacency_matrix: Any,
+    ) -> np.ndarray:
+        """
+        Compute negative log-likelihood (NLL) of test targets.
+        
+        This is simply the negative of log_likelihood, commonly used as a loss metric.
+        Requires BarDistribution to be enabled.
+        
+        Args:
+            X_obs: Observational features (N, L)
+            T_obs: Observational intervened feature (N,) or (N, 1)
+            Y_obs: Observational targets (N,) or (N, 1)
+            X_intv: Interventional features (M, L)
+            T_intv: Interventional intervened feature (M,) or (M, 1)
+            Y_intv: Interventional targets (M,) or (M, 1) - ground truth
+            adjacency_matrix: Causal graph adjacency matrix (L+2, L+2)
+                Position ordering (matches internal embedding order):
+                  - Position 0 to L-1: Feature variables (X[:,0] to X[:,L-1])
+                  - Position L: Treatment variable (T)
+                  - Position L+1: Outcome variable (Y)
+                
+                Edge semantics:
+                  - A[i,j] = 1 means directed edge from i to j (i causes j)
+                  - The matrix is transposed internally so j can attend to i
+                  - This ensures effects attend to their causes for causal inference
+                  - Self-loops are added automatically for self-attention
+            
+        Returns:
+            Negative log-likelihood values of shape (M,)
+        """
+        return -self.log_likelihood(X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adjacency_matrix)
 
 
 if __name__ == "__main__":
@@ -661,6 +755,18 @@ if __name__ == "__main__":
         log_probs = wrapper.log_likelihood(X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adjacency_matrix)
         print(f"\n✓ Log-likelihood shape: {log_probs.shape}")
         print(f"  Sample log-likelihoods: {log_probs[:3]}")
+        
+        # Test alias method
+        log_probs_alias = wrapper.predict_log_likelihood(X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adjacency_matrix)
+        print(f"\n✓ predict_log_likelihood shape: {log_probs_alias.shape}")
+        assert np.allclose(log_probs, log_probs_alias), "log_likelihood and predict_log_likelihood should return the same values"
+        
+        # Test negative log-likelihood
+        nll = wrapper.predict_negative_log_likelihood(X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adjacency_matrix)
+        print(f"\n✓ Negative log-likelihood shape: {nll.shape}")
+        print(f"  Sample NLL: {nll[:3]}")
+        assert np.allclose(nll, -log_probs), "NLL should be negative of log-likelihood"
+        
     except Exception as e:
         print(f"\n✗ Error in log-likelihood: {e}")
         import traceback
