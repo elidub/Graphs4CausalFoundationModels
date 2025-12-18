@@ -4,7 +4,7 @@ output     = logs/simple_pfn_$(ClusterId).$(ProcId).out
 error      = logs/simple_pfn_$(ClusterId).$(ProcId).err
 log        = logs/simple_pfn_$(ClusterId).$(ProcId).log
 
-transfer_input_files = ../../src, ../../pyproject.toml, ../../requirements.txt, ../../setup.py, ../../../venv.zip, run_script.sh, configs/basic.yaml, ../../data_cache.zip
+transfer_input_files = ../../src, ../../pyproject.toml, ../../requirements.txt, ../../setup.py, ../../../venv.zip, run_script.sh, configs/two_nodes_lingaus_ultimate_gcn_and_hard_attention.yaml, ../../data_cache.zip
 should_transfer_files = Yes
 when_to_transfer_output = ON_EXIT
 
@@ -13,7 +13,7 @@ environment = "HOME=/tmp/wandb_home WANDB_API_KEY=e5ba90a037256650557e4644545bd2
 
 request_gpus   = 1
 request_memory = 128GB
-request_cpus   = 70
+request_cpus   = 52
 request_disk   = 128GB
 
 # Remove GPU requirements since we're using CPU

@@ -70,4 +70,4 @@ fi
 
 # Run SimplePFN training with config
 cd src/training
-python3 run.py --config "../../basic.yaml"
+python3 run.py --config "../../two_nodes_lingaus_ultimate_gcn_and_hard_attention.yaml"
