@@ -495,7 +495,8 @@ class InterventionalPFNSklearn(SimplePFNSklearn):
             return preds.squeeze(0).cpu().numpy()  # (M,)
         elif prediction_type == "sample":
             samples = self.bar_distribution.sample(raw_preds, num_samples=num_samples)
-            return samples.squeeze(0).cpu().numpy()  # (M, num_samples)
+            # BarDistribution.sample returns (B, num_samples, M), squeeze(0) -> (num_samples, M)
+            return samples.squeeze(0).cpu().numpy()  # (num_samples, M)
         else:
             raise ValueError(f"Unknown prediction_type: {prediction_type}")
     
@@ -598,7 +599,8 @@ class InterventionalPFNSklearn(SimplePFNSklearn):
         
         # Make predictions for each cluster
         M = X_intv.shape[0]
-        predictions = np.zeros(M if prediction_type != "sample" else (M, num_samples), dtype=np.float32)
+        # For sampling, predictions shape is (num_samples, M), otherwise (M,)
+        predictions = np.zeros(M if prediction_type != "sample" else (num_samples, M), dtype=np.float32)
         
         for cluster_id in np.unique(cluster_assignments):
             # Get train samples in this cluster
@@ -625,7 +627,12 @@ class InterventionalPFNSklearn(SimplePFNSklearn):
                     X_obs_c, T_obs_c, Y_obs_c, X_intv_c, T_intv_c, prediction_type, num_samples
                 )
             
-            predictions[test_mask] = cluster_pred
+            # For sampling, cluster_pred has shape (num_samples, M_cluster)
+            # For other types, cluster_pred has shape (M_cluster,)
+            if prediction_type == "sample":
+                predictions[:, test_mask] = cluster_pred
+            else:
+                predictions[test_mask] = cluster_pred
         
         return predictions
     

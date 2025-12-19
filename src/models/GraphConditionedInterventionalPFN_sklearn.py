@@ -202,7 +202,7 @@ class GraphConditionedInterventionalPFNSklearn:
                         'ultimate_hard_attention_only': (True, False, False, False),
                         'ultimate_gcn_only': (False, True, True, False),
                         'ultimate_gcn_and_hard_attention': (True, True, True, False),
-                        'ultimate_soft_attention': (False, False, False, True),  # Soft bias only, no hard masking
+                        'ultimate_soft_attention': (True, False, False, True),  # Soft bias only, no hard masking
                         'ultimate_gcn_and_soft_attention': (False, True, True, True),  # GCN+AdaLN+soft bias, no hard masking
                         # Legacy modes
                         'hard_attention_only': (True, False, False, False),
