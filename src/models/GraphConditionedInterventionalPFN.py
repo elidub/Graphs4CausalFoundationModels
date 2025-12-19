@@ -321,6 +321,10 @@ class GraphConditionedInterventionalPFN(nn.Module):
         self.normalize_features = normalize_features
         self.n_sample_attention_sink_rows = n_sample_attention_sink_rows
         self.n_feature_attention_sink_cols = n_feature_attention_sink_cols
+        
+        # Automatically detect and set device (GPU if available, else CPU)
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"[GraphConditionedInterventionalPFN] Using device: {self.device}")
 
         # === Embedding MLPs ===
         # Row-wise MLPs over feature dimension (R^(L+1) -> R^D)
@@ -389,6 +393,9 @@ class GraphConditionedInterventionalPFN(nn.Module):
 
         # Output projection from D to desired output_dim per test token
         self.regression_head = nn.Linear(d_model, output_dim)
+        
+        # Move model to the detected device
+        self.to(self.device)
 
     def _create_role_embedding(self, *shape, std=0.02):
         """Helper to create and initialize a role embedding parameter."""
@@ -672,10 +679,17 @@ class GraphConditionedInterventionalPFN(nn.Module):
             Dict with:
                 - "predictions": (B, M) if output_dim == 1, else (B, M, output_dim)
         """
+        # Automatically move inputs to the model's device
+        X_obs = X_obs.to(self.device)
+        T_obs = T_obs.to(self.device)
+        Y_obs = Y_obs.to(self.device)
+        X_intv = X_intv.to(self.device)
+        T_intv = T_intv.to(self.device)
+        adjacency_matrix = adjacency_matrix.to(self.device)
+        
         B, N, L = X_obs.shape
         assert L == self.num_features, f"Expected {self.num_features} features, got {L}"
         M = X_intv.shape[1]
-        device = X_obs.device
 
         # Ensure T has correct shape
         if T_obs.dim() == 2:

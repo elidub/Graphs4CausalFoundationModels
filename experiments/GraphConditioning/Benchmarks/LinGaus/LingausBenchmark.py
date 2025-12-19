@@ -885,11 +885,12 @@ class LinGausBenchmark:
         This method provides a unified interface compatible with the Trainer's benchmark
         integration pattern. It maps fidelity levels to evaluation configurations:
         
+        - "minimal": 3 samples from all node counts (2, 5, 10, 20, 35, 50)
         - "low": 100 samples from all node counts (2, 5, 10, 20, 35, 50)
         - "high": 1000 samples from all node counts (2, 5, 10, 20, 35, 50)
         
         Args:
-            fidelity: Fidelity level ("low" or "high")
+            fidelity: Fidelity level ("minimal", "low", or "high")
             checkpoint_path: Path to the model checkpoint .pt file
             config_path: Path to the model config YAML file (uses self._current_config_path if None)
             
@@ -897,7 +898,7 @@ class LinGausBenchmark:
             Dictionary mapping node_count -> aggregated_results
             
         Raises:
-            ValueError: If fidelity is not "low" or "high"
+            ValueError: If fidelity is not "minimal", "low", or "high"
             RuntimeError: If no model is loaded and config_path is not provided
         """
         # Normalize fidelity
@@ -905,6 +906,7 @@ class LinGausBenchmark:
         
         # Map fidelity to max_samples
         fidelity_map = {
+            "minimal": 3,
             "low": 100,
             "high": 1000,
         }
@@ -912,7 +914,7 @@ class LinGausBenchmark:
         if fidelity not in fidelity_map:
             raise ValueError(
                 f"Invalid fidelity '{fidelity}' for LinGaus benchmark. "
-                f"Choose 'low' (100 samples) or 'high' (1000 samples)."
+                f"Choose 'minimal' (3 samples), 'low' (100 samples), or 'high' (1000 samples)."
             )
         
         max_samples = fidelity_map[fidelity]
