@@ -866,7 +866,8 @@ class SimplePFNSklearn:
         # Initialize output array
         M = X_test.shape[0]
         if prediction_type == "sample":
-            predictions = np.zeros((M, num_samples), dtype=np.float32)
+            # BarDistribution.sample returns (B, num_samples, M), after squeeze(0) -> (num_samples, M)
+            predictions = np.zeros((num_samples, M), dtype=np.float32)
         else:
             predictions = np.zeros(M, dtype=np.float32)
         
@@ -904,7 +905,11 @@ class SimplePFNSklearn:
                 )
             
             # Store predictions
-            predictions[test_mask] = cluster_preds
+            # For sampling, cluster_preds has shape (num_samples, M_cluster), need to use [:, test_mask]
+            if prediction_type == "sample":
+                predictions[:, test_mask] = cluster_preds
+            else:
+                predictions[test_mask] = cluster_preds
         
         return predictions
     
