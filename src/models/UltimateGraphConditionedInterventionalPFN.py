@@ -252,7 +252,7 @@ class GraphConditionedTwoWayBlock(nn.Module):
         hidden_mult: Hidden layer multiplier for MLPs
         use_adaln: Whether to use AdaLN (adaptive layer norm) with graph embeddings
         use_soft_attention_bias: Whether to use learnable soft biases instead of hard masking
-        soft_bias_init: Initial value for soft attention biases (positive = encourage attention)
+        soft_bias_init: Mean value for soft attention bias initialization (std=1.0, per head)
     """
     def __init__(
         self, 
@@ -281,8 +281,10 @@ class GraphConditionedTwoWayBlock(nn.Module):
         # Learnable soft attention biases (one per head)
         # Only used when use_soft_attention_bias=True
         if use_soft_attention_bias:
-            # Initialize with positive values to encourage attention where graph permits
-            self.soft_attention_bias = nn.Parameter(torch.full((heads_feat,), soft_bias_init))
+            # Initialize randomly with mean=soft_bias_init and std=1.0
+            self.soft_attention_bias = nn.Parameter(
+                torch.randn(heads_feat) * 1.0 + soft_bias_init
+            )
         else:
             self.soft_attention_bias = None
         
@@ -508,7 +510,7 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
         use_gcn: Whether to use GCN encoder to process graph structure
         use_adaln: Whether to use Adaptive Layer Normalization with graph embeddings (requires use_gcn=True)
         use_soft_attention_bias: Whether to use learnable soft attention biases (alternative to hard masking)
-        soft_bias_init: Initial value for soft attention biases (positive encourages attention)
+        soft_bias_init: Mean for soft attention bias initialization (std=1.0, randomly initialized per head)
     """
     def __init__(
         self,
