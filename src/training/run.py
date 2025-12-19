@@ -63,6 +63,17 @@ except ImportError:
             sys.path.insert(0, str(repo_root))
         from src.benchmarking.Benchmark import Benchmark
 
+# Import LinGausBenchmark for graph-conditioned model evaluation
+LinGausBenchmark = None
+try:
+    # Try relative path from experiments/GraphConditioning/Benchmarks/LinGaus/
+    lingaus_bench_path = Path(__file__).parent.parent.parent / "experiments" / "GraphConditioning" / "Benchmarks" / "LinGaus"
+    if str(lingaus_bench_path) not in sys.path:
+        sys.path.insert(0, str(lingaus_bench_path))
+    from LingausBenchmark import LinGausBenchmark
+except ImportError:
+    print("Warning: LinGausBenchmark not available. LinGaus benchmark integration will be disabled.")
+
 
 def _normalize_interp_name(s: str) -> str:
     if not isinstance(s, str) or not s:
@@ -890,9 +901,14 @@ def main():
         
         # Optional: build a Benchmark instance for periodic and final evaluation
         benchmark = None
+        benchmark_enabled = training_config.get("benchmark_enabled", True)  # Default to True for backward compatibility
         benchmark_eval_fidelity = training_config.get("benchmark_eval_fidelity")
         benchmark_final_fidelity = training_config.get("benchmark_final_fidelity")
-        if benchmark_eval_fidelity or benchmark_final_fidelity:
+        
+        if not benchmark_enabled:
+            print(f"\nOPENML BENCHMARK DISABLED (benchmark_enabled=false in config)")
+        
+        if benchmark_enabled and (benchmark_eval_fidelity or benchmark_final_fidelity):
             print(f"\nBENCHMARK SETUP:")
             print(f"   Eval fidelity: {benchmark_eval_fidelity or 'disabled'}")
             print(f"   Final fidelity: {benchmark_final_fidelity or 'disabled'}")
@@ -970,6 +986,40 @@ def main():
             print(f"   Norm methods: {norm_methods}")
             print(f"   Outlier strategies: {outlier_strategies}")
 
+        # Optional: build a LinGausBenchmark instance for periodic and final evaluation
+        lingaus_benchmark = None
+        lingaus_benchmark_eval_fidelity = training_config.get("lingaus_benchmark_eval_fidelity")
+        lingaus_benchmark_final_fidelity = training_config.get("lingaus_benchmark_final_fidelity")
+        if (lingaus_benchmark_eval_fidelity or lingaus_benchmark_final_fidelity) and LinGausBenchmark is not None:
+            print(f"\nLINGAUS BENCHMARK SETUP:")
+            print(f"   Eval fidelity: {lingaus_benchmark_eval_fidelity or 'disabled'}")
+            print(f"   Final fidelity: {lingaus_benchmark_final_fidelity or 'disabled'}")
+            
+            # Get benchmark directory from config
+            lingaus_benchmark_dir = training_config.get(
+                "lingaus_benchmark_dir",
+                "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/LinGaus"
+            )
+            
+            try:
+                lingaus_benchmark = LinGausBenchmark(
+                    benchmark_dir=lingaus_benchmark_dir,
+                    cache_dir=None,  # Will use default: benchmark_dir/data_cache
+                    verbose=True,
+                    max_samples=None,  # Will be controlled by fidelity level
+                )
+                print(f"   LinGausBenchmark instance created!")
+                print(f"   Benchmark dir: {lingaus_benchmark_dir}")
+                print(f"   Data cache: {lingaus_benchmark.cache_dir}")
+            except Exception as e:
+                print(f"   WARNING: Failed to create LinGausBenchmark: {e}")
+                lingaus_benchmark = None
+        elif lingaus_benchmark_eval_fidelity or lingaus_benchmark_final_fidelity:
+            print(f"\nLINGAUS BENCHMARK SETUP:")
+            print(f"   WARNING: LinGaus benchmark requested but LinGausBenchmark class not available")
+            print(f"   Eval fidelity: {lingaus_benchmark_eval_fidelity or 'disabled'}")
+            print(f"   Final fidelity: {lingaus_benchmark_final_fidelity or 'disabled'}")
+
         # Initialize trainer
         trainer = Trainer(
             model=model,
@@ -996,6 +1046,10 @@ def main():
             benchmark_eval_fidelity=benchmark_eval_fidelity,
             benchmark_final_fidelity=benchmark_final_fidelity,
             benchmark=benchmark,
+            # LinGaus Benchmark integration
+            lingaus_benchmark_eval_fidelity=lingaus_benchmark_eval_fidelity,
+            lingaus_benchmark_final_fidelity=lingaus_benchmark_final_fidelity,
+            lingaus_benchmark=lingaus_benchmark,
             # Mixed precision training
             use_amp=use_amp,
             amp_dtype=amp_dtype,

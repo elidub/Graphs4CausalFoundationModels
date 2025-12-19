@@ -46,6 +46,10 @@ class Trainer:
         benchmark_eval_fidelity: Optional[str] = None,  # Run benchmark at each eval with this fidelity (e.g., "minimal", "low", "high", "very high")
         benchmark_final_fidelity: Optional[str] = None,  # Run benchmark at end with this fidelity
         benchmark: Optional[object] = None,  # Benchmark instance constructed by run.py
+        # LinGaus Benchmark integration (separate from OpenML benchmark)
+        lingaus_benchmark_eval_fidelity: Optional[str] = None,  # Run LinGaus benchmark at each eval ("low" or "high")
+        lingaus_benchmark_final_fidelity: Optional[str] = None,  # Run LinGaus benchmark at end ("low" or "high")
+        lingaus_benchmark: Optional[object] = None,  # LinGausBenchmark instance constructed by run.py
         # Mixed precision training
         use_amp: bool = False,  # Enable automatic mixed precision
         amp_dtype: Optional[str] = None,  # 'fp16' or 'bf16' to select autocast dtype
@@ -100,6 +104,10 @@ class Trainer:
         self.benchmark_eval_fidelity = benchmark_eval_fidelity
         self.benchmark_final_fidelity = benchmark_final_fidelity
         self.benchmark = benchmark  # store externally constructed Benchmark instance
+        # LinGaus Benchmark integration config
+        self.lingaus_benchmark_eval_fidelity = lingaus_benchmark_eval_fidelity
+        self.lingaus_benchmark_final_fidelity = lingaus_benchmark_final_fidelity
+        self.lingaus_benchmark = lingaus_benchmark  # store externally constructed LinGausBenchmark instance
         # Cached training shapes for aligning benchmark subsampling
         self._train_n_features = None
         self._train_n_train = None
@@ -1305,6 +1313,14 @@ class Trainer:
                             )
                         except Exception as e:
                             print(f"[Trainer] Benchmark at eval step {self.global_step} failed: {e}")
+                    if self.lingaus_benchmark_eval_fidelity:
+                        try:
+                            self._run_lingaus_benchmark_with_current_model(
+                                fidelity=self.lingaus_benchmark_eval_fidelity,
+                                tag=f"eval_step{self.global_step}"
+                            )
+                        except Exception as e:
+                            print(f"[Trainer] LinGaus benchmark at eval step {self.global_step} failed: {e}")
                 else:
                     if (self.enable_model_selection and 
                         self.eval_dataloaders is None and 
@@ -1369,6 +1385,19 @@ class Trainer:
                     )
                 except Exception as e:
                     print(f"[Trainer] Final benchmark failed: {e}")
+            
+            # Run final LinGaus benchmark if requested
+            if self.lingaus_benchmark_final_fidelity:
+                # Use the just-saved final checkpoint
+                final_ckpt = os.path.join(self.run_save_dir, "final.pt")
+                try:
+                    self._run_lingaus_benchmark_with_checkpoint(
+                        fidelity=self.lingaus_benchmark_final_fidelity,
+                        tag="final",
+                        checkpoint_path=final_ckpt,
+                    )
+                except Exception as e:
+                    print(f"[Trainer] Final LinGaus benchmark failed: {e}")
             
             # Save best model if model selection was enabled
             if self.enable_model_selection and self.best_model_state is not None:
@@ -1545,5 +1574,85 @@ class Trainer:
                 
                 if log:
                     self.wandb_run.log(log, step=self.global_step)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[Trainer] Failed to log benchmark metrics to wandb: {e}")
+    
+    def _run_lingaus_benchmark_with_current_model(self, fidelity: str, tag: str) -> None:
+        """Save a temporary checkpoint of the current model and run the LinGaus benchmark with the given fidelity.
+
+        Args:
+            fidelity: One of {"low", "high"}
+            tag: Short label used in output filenames (e.g., "eval_step1000")
+        """
+        # Ensure we have a place to save
+        if not self.run_save_dir:
+            import tempfile
+            self.run_save_dir = os.path.join(tempfile.gettempdir(), f"simplepfn_checkpoints_{self.run_name}")
+            os.makedirs(self.run_save_dir, exist_ok=True)
+
+        # Save a checkpoint for the benchmark to load
+        ckpt_name = f"lingaus_benchmark_{tag}.pt"
+        ckpt_path = self.save_model(filename=ckpt_name, metadata={"stage": tag, "lingaus_benchmark": True})
+        if not ckpt_path:
+            raise RuntimeError("Failed to save checkpoint for LinGaus benchmark.")
+
+        self._run_lingaus_benchmark_with_checkpoint(fidelity=fidelity, tag=tag, checkpoint_path=ckpt_path)
+
+    def _run_lingaus_benchmark_with_checkpoint(self, fidelity: str, tag: str, checkpoint_path: str) -> None:
+        """Run the LinGaus benchmark with a specified checkpoint using the injected LinGausBenchmark instance."""
+        if self.lingaus_benchmark is None:
+            raise RuntimeError("Trainer.lingaus_benchmark is None; please construct a LinGausBenchmark in run.py and pass it into Trainer.")
+
+        # Ensure we have a run directory for outputs
+        out_dir = self.run_save_dir or "."
+        
+        print(f"[Trainer] Running LinGaus benchmark ({fidelity}) with checkpoint: {checkpoint_path}")
+        
+        try:
+            # Run the benchmark
+            results = self.lingaus_benchmark.run(
+                fidelity=fidelity,
+                checkpoint_path=checkpoint_path,
+                config_path=self.config_path,
+            )
+            
+            # Print summary of results
+            print(f"\n[LinGaus Benchmark] Results for {len(results)} node configurations:")
+            for node_count, node_results in sorted(results.items()):
+                if 'mse' in node_results:
+                    mse_mean = node_results['mse'].get('mean', float('nan'))
+                    mse_median = node_results['mse'].get('median', float('nan'))
+                    print(f"  {node_count} nodes: MSE mean={mse_mean:.6f}, median={mse_median:.6f}")
+                if 'r2' in node_results:
+                    r2_mean = node_results['r2'].get('mean', float('nan'))
+                    r2_median = node_results['r2'].get('median', float('nan'))
+                    print(f"            R² mean={r2_mean:.6f}, median={r2_median:.6f}")
+            
+            # Log to wandb if available
+            if hasattr(self, 'wandb_run') and self.wandb_run is not None:
+                try:
+                    log = {}
+                    for node_count, node_results in results.items():
+                        prefix = f"lingaus_benchmark/{tag}/{node_count}nodes"
+                        
+                        # Log only mean values for MSE, R², and NLL
+                        if 'mse' in node_results and 'mean' in node_results['mse']:
+                            log[f"{prefix}/mse_mean"] = float(node_results['mse']['mean'])
+                        
+                        if 'r2' in node_results and 'mean' in node_results['r2']:
+                            log[f"{prefix}/r2_mean"] = float(node_results['r2']['mean'])
+                        
+                        if 'nll' in node_results and 'mean' in node_results['nll']:
+                            log[f"{prefix}/nll_mean"] = float(node_results['nll']['mean'])
+                    
+                    if log:
+                        self.wandb_run.log(log, step=self.global_step)
+                        print(f"[Trainer] Logged {len(log)} LinGaus benchmark metrics to wandb")
+                        
+                except Exception as e:
+                    print(f"[Trainer] Failed to log LinGaus benchmark metrics to wandb: {e}")
+                    
+        except Exception as e:
+            print(f"[Trainer] LinGaus benchmark failed: {e}")
+            import traceback
+            traceback.print_exc()
