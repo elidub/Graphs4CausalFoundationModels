@@ -65,14 +65,93 @@ except ImportError:
 
 # Import LinGausBenchmark for graph-conditioned model evaluation
 LinGausBenchmark = None
+
+# Log to file for debugging
+import sys
+debug_log_path = "/tmp/lingaus_import_debug.log"
 try:
-    # Try relative path from experiments/GraphConditioning/Benchmarks/LinGaus/
-    lingaus_bench_path = Path(__file__).parent.parent.parent / "experiments" / "GraphConditioning" / "Benchmarks" / "LinGaus"
-    if str(lingaus_bench_path) not in sys.path:
-        sys.path.insert(0, str(lingaus_bench_path))
-    from LingausBenchmark import LinGausBenchmark
-except ImportError:
-    print("Warning: LinGausBenchmark not available. LinGaus benchmark integration will be disabled.")
+    with open(debug_log_path, 'w') as f:
+        f.write("[DEBUG] Attempting to import LinGausBenchmark...\n")
+        f.write(f"[DEBUG] Current working directory: {Path.cwd()}\n")
+        f.write(f"[DEBUG] sys.path entries:\n")
+        for i, p in enumerate(sys.path[:10]):
+            f.write(f"  [{i}] {p}\n")
+        f.write(f"[DEBUG] LINGAUS_BENCHMARK_DIR env var: {os.environ.get('LINGAUS_BENCHMARK_DIR')}\n")
+        f.write(f"[DEBUG] PYTHONPATH: {os.environ.get('PYTHONPATH')}\n")
+        f.write(f"[DEBUG] Contents of cwd:\n")
+        try:
+            for item in Path.cwd().iterdir():
+                f.write(f"  - {item.name} {'(dir)' if item.is_dir() else '(file)'}\n")
+        except Exception as e:
+            f.write(f"  Error listing cwd: {e}\n")
+        
+        # Check if Benchmarks/LinGaus exists and what's in it
+        bench_path = Path.cwd() / "Benchmarks" / "LinGaus"
+        f.write(f"[DEBUG] Checking {bench_path}:\n")
+        f.write(f"  Exists: {bench_path.exists()}\n")
+        if bench_path.exists():
+            f.write(f"  Contents:\n")
+            for item in bench_path.iterdir():
+                f.write(f"    - {item.name}\n")
+except Exception as e:
+    pass  # Don't fail if we can't write debug log
+
+print(f"[DEBUG] Import debug log written to: {debug_log_path}")
+print("[DEBUG] Attempting to import LinGausBenchmark...")
+print(f"[DEBUG] Current working directory: {Path.cwd()}")
+print(f"[DEBUG] sys.path (first 5 entries): {sys.path[:5]}")
+print(f"[DEBUG] LINGAUS_BENCHMARK_DIR env var: {os.environ.get('LINGAUS_BENCHMARK_DIR')}")
+print(f"[DEBUG] PYTHONPATH: {os.environ.get('PYTHONPATH')}")
+
+try:
+    # First, try direct import (relies on PYTHONPATH being set correctly)
+    try:
+        from LingausBenchmark import LinGausBenchmark
+        print(f"[DEBUG] LinGausBenchmark imported successfully via PYTHONPATH")
+    except ImportError as e1:
+        print(f"[DEBUG] Direct import failed: {e1}")
+        
+        # Fallback: Try multiple paths to find LingausBenchmark module
+        possible_paths = [
+            # Local development: relative path from src/training/
+            Path(__file__).parent.parent.parent / "experiments" / "GraphConditioning" / "Benchmarks" / "LinGaus",
+            # Cluster job: check if Benchmarks/LinGaus exists in cwd
+            Path.cwd() / "Benchmarks" / "LinGaus",
+            # Cluster job: check if it's already in PYTHONPATH via environment
+            Path(os.environ.get("LINGAUS_BENCHMARK_DIR", "")) if os.environ.get("LINGAUS_BENCHMARK_DIR") else None,
+        ]
+        
+        print(f"[DEBUG] Checking fallback paths:")
+        for i, path in enumerate(possible_paths):
+            if path:
+                exists = path.exists()
+                print(f"  [{i}] {path} - exists: {exists}")
+                if exists:
+                    print(f"      Contents: {list(path.glob('*.py'))[:5]}")
+        
+        import_successful = False
+        for bench_path in possible_paths:
+            if bench_path and bench_path.exists():
+                bench_path_str = str(bench_path)
+                if bench_path_str not in sys.path:
+                    print(f"[DEBUG] Adding {bench_path_str} to sys.path")
+                    sys.path.insert(0, bench_path_str)
+                try:
+                    from LingausBenchmark import LinGausBenchmark
+                    import_successful = True
+                    print(f"[DEBUG] LinGausBenchmark imported successfully from: {bench_path}")
+                    break
+                except ImportError as ie:
+                    print(f"[DEBUG] Import failed from {bench_path}: {ie}")
+                    continue
+        
+        if not import_successful:
+            raise ImportError(f"Could not find LingausBenchmark module. Original error: {e1}")
+        
+except ImportError as e:
+    print(f"[DEBUG] FINAL: LinGausBenchmark import failed: {e}")
+    print(f"[DEBUG] This will cause an error if benchmark is requested in config")
+    LinGausBenchmark = None
 
 
 def _normalize_interp_name(s: str) -> str:
@@ -990,16 +1069,42 @@ def main():
         lingaus_benchmark = None
         lingaus_benchmark_eval_fidelity = training_config.get("lingaus_benchmark_eval_fidelity")
         lingaus_benchmark_final_fidelity = training_config.get("lingaus_benchmark_final_fidelity")
+        
+        # Check if LinGausBenchmark import failed but benchmark is requested
+        if LinGausBenchmark is None and (lingaus_benchmark_eval_fidelity or lingaus_benchmark_final_fidelity):
+            print(f"\nLINGAUS BENCHMARK IMPORT FAILED!")
+            print(f"   Eval fidelity requested: {lingaus_benchmark_eval_fidelity or 'disabled'}")
+            print(f"   Final fidelity requested: {lingaus_benchmark_final_fidelity or 'disabled'}")
+            print(f"   LinGausBenchmark class: {LinGausBenchmark}")
+            print(f"   ERROR: LinGausBenchmark import failed but benchmark is configured in YAML!")
+            print(f"   Check the import debug output above for details.")
+            raise RuntimeError("LinGausBenchmark import failed but benchmark is requested in config. Check import paths and file transfers.")
+        
         if (lingaus_benchmark_eval_fidelity or lingaus_benchmark_final_fidelity) and LinGausBenchmark is not None:
             print(f"\nLINGAUS BENCHMARK SETUP:")
             print(f"   Eval fidelity: {lingaus_benchmark_eval_fidelity or 'disabled'}")
             print(f"   Final fidelity: {lingaus_benchmark_final_fidelity or 'disabled'}")
             
-            # Get benchmark directory from config
+            # Get benchmark directory from config or environment variable
             lingaus_benchmark_dir = training_config.get(
                 "lingaus_benchmark_dir",
                 "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/LinGaus"
             )
+            
+            # Check if LINGAUS_BENCHMARK_DIR is set in environment (for cluster jobs)
+            env_benchmark_dir = os.environ.get("LINGAUS_BENCHMARK_DIR")
+            if env_benchmark_dir:
+                print(f"   Using LINGAUS_BENCHMARK_DIR from environment: {env_benchmark_dir}")
+                lingaus_benchmark_dir = env_benchmark_dir
+            # Otherwise, try to resolve relative path from job root
+            elif not os.path.isabs(lingaus_benchmark_dir):
+                job_root = os.environ.get("JOB_ROOT_DIR", os.getcwd())
+                resolved_path = os.path.join(job_root, lingaus_benchmark_dir)
+                if os.path.exists(resolved_path):
+                    print(f"   Resolved relative path: {lingaus_benchmark_dir} -> {resolved_path}")
+                    lingaus_benchmark_dir = resolved_path
+                else:
+                    print(f"   WARNING: Relative path {lingaus_benchmark_dir} does not exist at {resolved_path}")
             
             try:
                 lingaus_benchmark = LinGausBenchmark(
@@ -1013,12 +1118,25 @@ def main():
                 print(f"   Data cache: {lingaus_benchmark.cache_dir}")
             except Exception as e:
                 print(f"   WARNING: Failed to create LinGausBenchmark: {e}")
+                print(f"   Exception details:")
+                import traceback
+                traceback.print_exc()
                 lingaus_benchmark = None
         elif lingaus_benchmark_eval_fidelity or lingaus_benchmark_final_fidelity:
             print(f"\nLINGAUS BENCHMARK SETUP:")
             print(f"   WARNING: LinGaus benchmark requested but LinGausBenchmark class not available")
             print(f"   Eval fidelity: {lingaus_benchmark_eval_fidelity or 'disabled'}")
             print(f"   Final fidelity: {lingaus_benchmark_final_fidelity or 'disabled'}")
+
+        # DEBUG: Print status before passing to Trainer
+        print(f"\n[DEBUG run.py] Before creating Trainer:")
+        print(f"  lingaus_benchmark_eval_fidelity: {lingaus_benchmark_eval_fidelity}")
+        print(f"  lingaus_benchmark_final_fidelity: {lingaus_benchmark_final_fidelity}")
+        print(f"  lingaus_benchmark variable: {lingaus_benchmark}")
+        print(f"  lingaus_benchmark is None: {lingaus_benchmark is None}")
+        if lingaus_benchmark is not None:
+            print(f"  lingaus_benchmark type: {type(lingaus_benchmark)}")
+            print(f"  lingaus_benchmark.benchmark_dir: {lingaus_benchmark.benchmark_dir}")
 
         # Initialize trainer
         trainer = Trainer(

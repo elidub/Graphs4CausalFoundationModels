@@ -443,7 +443,7 @@ training_config:
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 1000
+    value: 10
   eval_batches: # number of batches to use for evaluation
     value: 200
   eval_dataset_size: # size of the evaluation dataset
@@ -488,7 +488,7 @@ training_config:
   
   # LinGaus Benchmark Integration (evaluates on synthetic Linear-Gaussian SCMs)
   lingaus_benchmark_eval_fidelity: # run LinGaus benchmark at each evaluation step
-    value: low  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
+    value: "low"  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
   lingaus_benchmark_final_fidelity: # run LinGaus benchmark at end of training
     value: "high"  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
   lingaus_benchmark_dir: # directory containing LinGaus benchmark configs and data

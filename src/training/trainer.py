@@ -108,6 +108,15 @@ class Trainer:
         self.lingaus_benchmark_eval_fidelity = lingaus_benchmark_eval_fidelity
         self.lingaus_benchmark_final_fidelity = lingaus_benchmark_final_fidelity
         self.lingaus_benchmark = lingaus_benchmark  # store externally constructed LinGausBenchmark instance
+        
+        # DEBUG: Print what we received
+        print(f"\n[DEBUG Trainer.__init__] LinGaus Benchmark Configuration:")
+        print(f"  lingaus_benchmark_eval_fidelity: {lingaus_benchmark_eval_fidelity}")
+        print(f"  lingaus_benchmark_final_fidelity: {lingaus_benchmark_final_fidelity}")
+        print(f"  lingaus_benchmark parameter: {lingaus_benchmark}")
+        print(f"  lingaus_benchmark is None: {lingaus_benchmark is None}")
+        print(f"  lingaus_benchmark type: {type(lingaus_benchmark)}")
+        
         # Cached training shapes for aligning benchmark subsampling
         self._train_n_features = None
         self._train_n_train = None
@@ -1314,6 +1323,10 @@ class Trainer:
                         except Exception as e:
                             print(f"[Trainer] Benchmark at eval step {self.global_step} failed: {e}")
                     if self.lingaus_benchmark_eval_fidelity:
+                        print(f"\n[DEBUG] LinGaus benchmark triggered at step {self.global_step}")
+                        print(f"[DEBUG] self.lingaus_benchmark_eval_fidelity = {self.lingaus_benchmark_eval_fidelity}")
+                        print(f"[DEBUG] self.lingaus_benchmark is None: {self.lingaus_benchmark is None}")
+                        print(f"[DEBUG] self.lingaus_benchmark type: {type(self.lingaus_benchmark)}")
                         try:
                             self._run_lingaus_benchmark_with_current_model(
                                 fidelity=self.lingaus_benchmark_eval_fidelity,
@@ -1321,6 +1334,8 @@ class Trainer:
                             )
                         except Exception as e:
                             print(f"[Trainer] LinGaus benchmark at eval step {self.global_step} failed: {e}")
+                            import traceback
+                            traceback.print_exc()
                 else:
                     if (self.enable_model_selection and 
                         self.eval_dataloaders is None and 
