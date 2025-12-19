@@ -363,13 +363,17 @@ class GraphConditionedTwoWayBlock(nn.Module):
             if self.use_soft_attention_bias:
                 # Soft attention: use learnable biases instead of hard masking
                 # Create additive bias mask: add bias where graph permits, leave rest at 0
+                # IMPORTANT: attn_mask from _prepare_attention_mask is NEGATED
+                # So False = CAN attend (edge exists), True = CANNOT attend (no edge)
                 if attn_mask.dtype == torch.bool:
-                    # attn_mask: True = can attend, False = cannot attend
-                    # We want to ADD positive bias where True
-                    bias_mask = torch.zeros_like(attn_mask, dtype=x.dtype)  # (B, F, F)
+                    # attn_mask is negated: False = can attend, True = cannot attend
+                    # We want to ADD positive bias where False (where edges exist)
+                    # Convert to float: False -> 1.0 (add bias), True -> 0.0 (no bias)
+                    bias_mask = (~attn_mask).float()  # (B, F, F)
                 else:
-                    # attn_mask: 1.0 = can attend, 0.0 = cannot attend
-                    bias_mask = attn_mask.float()  # (B, F, F)
+                    # attn_mask is negated: 0.0 = can attend, -inf/other = cannot attend
+                    # For soft bias, we want 1.0 where attention is allowed (0.0), 0.0 elsewhere
+                    bias_mask = (attn_mask == 0.0).float()  # (B, F, F)
                 
                 # Expand to (B*S, F, F)
                 bias_mask = bias_mask.unsqueeze(1).expand(-1, S, -1, -1).reshape(B * S, F, F)
@@ -385,7 +389,9 @@ class GraphConditionedTwoWayBlock(nn.Module):
                 # Expand to (B*S, num_heads, F, F)
                 head_biases = head_biases.expand(B * S, -1, F, F).reshape(B * S * num_heads, F, F)
                 
-                # Apply: add bias only where mask is non-zero
+                # Apply: add bias only where edges exist in the graph
+                # Result: float_mask[i,j] = bias_value if edge j->i exists, 0.0 otherwise
+                # This will be ADDED to attention scores before softmax
                 float_mask = bias_mask * head_biases
                 
             else:
@@ -407,7 +413,6 @@ class GraphConditionedTwoWayBlock(nn.Module):
                 # Now expand for num_heads: (B*S*num_heads, F, F)
                 num_heads = self.feat_attn.num_heads
                 float_mask = float_mask.unsqueeze(1).expand(-1, num_heads, -1, -1).reshape(B * S * num_heads, F, F)
-            
             x2, _ = self.feat_attn(x_norm, x_norm, x_norm, attn_mask=float_mask, need_weights=False)
         else:
             x2, _ = self.feat_attn(x_norm, x_norm, x_norm, need_weights=False)
@@ -1017,7 +1022,7 @@ class UltimateGraphConditionedInterventionalPFN(nn.Module):
             attn_mask = self._prepare_attention_mask(adjacency_matrix, n_sink_cols)  # (B, n_sink_cols + L+2, n_sink_cols + L+2)
         else:
             attn_mask = None
-        
+
         # === Prepare graph embeddings for AdaLN ===
         # Handle sink columns: if present, need to extend graph embeddings
         if n_sink_cols > 0 and self.use_adaln and graph_node_embeddings is not None:
