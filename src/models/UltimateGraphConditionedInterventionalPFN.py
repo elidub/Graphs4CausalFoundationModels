@@ -263,7 +263,7 @@ class GraphConditionedTwoWayBlock(nn.Module):
         hidden_mult: int = 4,
         use_adaln: bool = True,
         use_soft_attention_bias: bool = False,
-        soft_bias_init: float = 100.0
+        soft_bias_init: float = 5.0,
     ):
         super().__init__()
         self.use_adaln = use_adaln
