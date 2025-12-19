@@ -24,3 +24,4 @@ src/training/checks/ResultsRealWorldSamples
 src/benchmarking/results
 
 /experiments/GraphConditioning/checkpoints
+/experiments/GraphConditioning/Benchmarks/LinGaus/benchmark_res/
