@@ -46,13 +46,12 @@ class LinGausBenchmark:
     
     # Config file names mapping
     CONFIG_FILES = {
-        2: "Benchmark_config_2_nodes.yaml",
-        5: "Benchmark_config_5_nodes.yaml",
-        10: "Benchmark_config_10_nodes.yaml",
-        20: "Benchmark_config_20_nodes.yaml",
-        35: "Benchmark_config_35_nodes.yaml",
-        50: "Benchmark_config_50_nodes.yaml",
-        "variable": "Benchmark_config_variable_nodes.yaml",
+        2: "2node.yaml",
+        5: "5node.yaml",
+        10: "10node.yaml",
+        20: "20node.yaml",
+        35: "35node.yaml",
+        50: "50node.yaml",
     }
     
     def __init__(
@@ -1156,7 +1155,7 @@ if __name__ == "__main__":
     print("LinGausBenchmark - Full Benchmark")
     print("="*80)
     
-    MAX_SAMPLES = 3  # Limit to 3 samples per dataset for quick testing
+    MAX_SAMPLES = 20  # Limit to 3 samples per dataset for quick testing
     benchmark = LinGausBenchmark(verbose=True, max_samples=MAX_SAMPLES)
     
     # Test loading a config
@@ -1181,7 +1180,6 @@ if __name__ == "__main__":
             checkpoint_path=checkpoint_path_gc,
             max_samples=MAX_SAMPLES,  # Limit to 100 samples per dataset for quick testing
         )
-        breakpoint()
         
         twonode_mse = all_results[2]['mse']['mean']
         fivenode_mse = all_results[5]['mse']['mean']
