@@ -27,7 +27,7 @@ scm_config:
       beta: 3.0
   graph_seed:
     distribution: "discrete_uniform"
-    distribution_parameters:
+    distribu tion_parameters:
       low: 0
       high: 100000
   xgboost_prob:
@@ -393,10 +393,11 @@ training_config:
     value: 1
 
   # Data Loading Parameters
+  # Data Loading Parameters
   batch_size: # batch size
-    value: 8
+    value: 6
   accumulate_grad_batches:
-    value: 4
+    value: 6
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
     value: 70
 
