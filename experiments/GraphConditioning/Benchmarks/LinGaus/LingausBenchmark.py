@@ -936,13 +936,13 @@ class LinGausBenchmark:
                     "Either provide config_path or call load_model() first."
                 )
         
-        # Load model if not already loaded or if checkpoint changed
-        if self.model is None:
-            self.load_model(
-                config_path=config_path,
-                checkpoint_path=checkpoint_path,
-                verbose=self.verbose,
-            )
+        # Always reload the model with the provided checkpoint
+        # This ensures we use the latest checkpoint for each benchmark run
+        self.load_model(
+            config_path=config_path,
+            checkpoint_path=checkpoint_path,
+            verbose=self.verbose,
+        )
         
         # Store original max_samples and override
         original_max_samples = self.max_samples
