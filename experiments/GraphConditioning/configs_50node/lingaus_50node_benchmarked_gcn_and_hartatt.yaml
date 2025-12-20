@@ -9,7 +9,7 @@
 # 
 # ===============================================================================
 
-experiment_name: "five_nodes_lingaus_ultimate_gcn_only"
+experiment_name: "lingaus_50node_benchmarked_gcn_and_hartatt"
 description: ""
 
 mode: "interventional" # determine whether to train in predictive or interventional mode via "predictive" or "interventional"
@@ -19,7 +19,7 @@ scm_config:
     distribution: "discrete_uniform"
     distribution_parameters:
       low: 2
-      high: 5
+      high: 50
   graph_edge_prob:
     distribution: "beta"
     distribution_parameters:
@@ -249,7 +249,7 @@ dataset_config:
 
 
   max_number_features:
-    value: 2
+    value: 48
   seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -336,7 +336,7 @@ model_config:
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
     value: 2
   num_features:
-    value: 2  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
+    value: 48  
   normalize_features:  # whether to apply quantile transform + standard normalization internally
     value: true
   
@@ -344,7 +344,7 @@ model_config:
   use_graph_conditioning:  # whether to condition on causal graph structure
     value: true
   graph_conditioning_mode:  # how to apply graph conditioning
-    value: "ultimate_gcn_only"
+    value: "ultimate_gcn_and_hard_attention"
     # Options:
     # - "hard_attention_only": GraphConditionedInterventionalPFN with hard attention masking
     # - "flat_append": FlatGraphConditionedInterventionalPFN (flatten adjacency and append)
@@ -488,7 +488,7 @@ training_config:
   
   # LinGaus Benchmark Integration (evaluates on synthetic Linear-Gaussian SCMs)
   lingaus_benchmark_eval_fidelity: # run LinGaus benchmark at each evaluation step
-    value: "low"  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
+    value: low  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
   lingaus_benchmark_final_fidelity: # run LinGaus benchmark at end of training
     value: "high"  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
   lingaus_benchmark_dir: # directory containing LinGaus benchmark configs and data
