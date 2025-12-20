@@ -443,7 +443,7 @@ training_config:
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 10
+    value: 1000
   eval_batches: # number of batches to use for evaluation
     value: 200
   eval_dataset_size: # size of the evaluation dataset

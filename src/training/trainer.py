@@ -208,6 +208,16 @@ class Trainer:
             'benchmark/r2_rf_mean': float('nan'),
             'benchmark/r2_pfn_mean': float('nan'),
         }
+        # Initialize LinGaus benchmark metric caches (will be populated when benchmark runs)
+        # These cover common node configurations from the LinGaus benchmark
+        self._latest_lingaus_metrics = {}
+        for node_count in [2, 5, 10, 20, 35, 50]:
+            self._latest_lingaus_metrics[f'lingaus/n{node_count}/mse_mean'] = float('nan')
+            self._latest_lingaus_metrics[f'lingaus/n{node_count}/mse_median'] = float('nan')
+            self._latest_lingaus_metrics[f'lingaus/n{node_count}/r2_mean'] = float('nan')
+            self._latest_lingaus_metrics[f'lingaus/n{node_count}/r2_median'] = float('nan')
+            self._latest_lingaus_metrics[f'lingaus/n{node_count}/nll_mean'] = float('nan')
+            self._latest_lingaus_metrics[f'lingaus/n{node_count}/nll_median'] = float('nan')
         # Seed per-set and overall eval metric placeholders so keys exist from step 1
         if self.eval_dataloaders is not None:
             # Ensure names are defined
@@ -1290,6 +1300,7 @@ class Trainer:
                     log_dict.update(self._latest_schedule_info)
                     log_dict.update(self._latest_eval_metrics)
                     log_dict.update(self._latest_benchmark_metrics)
+                    log_dict.update(self._latest_lingaus_metrics)
                     self.wandb_run.log(log_dict, step=self.global_step)
 
                 # Print progress - more frequent at start, less frequent later
@@ -1666,6 +1677,34 @@ class Trainer:
                         
                 except Exception as e:
                     print(f"[Trainer] Failed to log LinGaus benchmark metrics to wandb: {e}")
+            
+            # Update cached LinGaus metrics for per-step logging
+            # These will be logged at every training step (similar to OpenML benchmark metrics)
+            for node_count, node_results in results.items():
+                prefix = f'lingaus/n{node_count}'
+                
+                # Update MSE metrics (mean and median)
+                if 'mse' in node_results:
+                    if 'mean' in node_results['mse']:
+                        self._latest_lingaus_metrics[f'{prefix}/mse_mean'] = float(node_results['mse']['mean'])
+                    if 'median' in node_results['mse']:
+                        self._latest_lingaus_metrics[f'{prefix}/mse_median'] = float(node_results['mse']['median'])
+                
+                # Update R² metrics (mean and median)
+                if 'r2' in node_results:
+                    if 'mean' in node_results['r2']:
+                        self._latest_lingaus_metrics[f'{prefix}/r2_mean'] = float(node_results['r2']['mean'])
+                    if 'median' in node_results['r2']:
+                        self._latest_lingaus_metrics[f'{prefix}/r2_median'] = float(node_results['r2']['median'])
+                
+                # Update NLL metrics (mean and median)
+                if 'nll' in node_results:
+                    if 'mean' in node_results['nll']:
+                        self._latest_lingaus_metrics[f'{prefix}/nll_mean'] = float(node_results['nll']['mean'])
+                    if 'median' in node_results['nll']:
+                        self._latest_lingaus_metrics[f'{prefix}/nll_median'] = float(node_results['nll']['median'])
+            
+            print(f"[Trainer] Updated {len([k for k in self._latest_lingaus_metrics if not np.isnan(self._latest_lingaus_metrics[k])])} LinGaus metrics for per-step logging")
                     
         except Exception as e:
             print(f"[Trainer] LinGaus benchmark failed: {e}")
