@@ -381,6 +381,10 @@ model_config:
 # ===============================================================================
 # Training Configuration 
 # ===============================================================================
+
+# ===============================================================================
+# Training Configuration 
+# ===============================================================================
 training_config:
   # Core Training Parameters
   learning_rate:  # usually 1e-5 - 1e-4 work well
@@ -449,14 +453,16 @@ training_config:
   eval_dataset_size: # size of the evaluation dataset
     value: 1000000
 
-  # Benchmark Integration (run OpenML benchmark during training)
+  # OpenML Benchmark Integration (run OpenML benchmark during training)
   # Choose fidelity levels for when to run the external benchmark.
   # Options: "minimal" (1 task, basic, 1 repeat), "low" (10 tasks, basic, 1 repeat),
   #          "high" (all tasks, extended, 5 repeats), "very high" (all tasks, extended, 25 repeats)
+  benchmark_enabled: # whether to enable OpenML benchmark
+    value: false  # Set to false to disable, true to enable
   benchmark_eval_fidelity:
-    value: "minimal"  # e.g., "minimal" to run at each evaluation step
+    value: null  # e.g., "minimal" to run at each evaluation step (null = disabled)
   benchmark_final_fidelity:
-    value: "minimal"  # e.g., "high" to run at the end of training
+    value: null  # e.g., "high" to run at the end of training (null = disabled)
   # Use only cached OpenML data and never download during benchmarking
   benchmark_offline:
     value: true
@@ -483,3 +489,11 @@ training_config:
     value: "First end-to-end pipeline test with wandb integration"
   wandb_offline: # whether to run wandb in offline mode
     value: false
+  
+  # LinGaus Benchmark Integration (evaluates on synthetic Linear-Gaussian SCMs)
+  lingaus_benchmark_eval_fidelity: # run LinGaus benchmark at each evaluation step
+    value: low  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
+  lingaus_benchmark_final_fidelity: # run LinGaus benchmark at end of training
+    value: "high"  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
+  lingaus_benchmark_dir: # directory containing LinGaus benchmark configs and data
+    value: "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints"  # Results saved to <this_dir>/benchmark_res/
