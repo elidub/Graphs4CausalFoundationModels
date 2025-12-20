@@ -729,5 +729,5 @@ class InterventionalDataset(Dataset):
                 # Give up and return the last sampled data to avoid infinite loop
                 break
         
-        breakpoint()
+        #breakpoint()
         return last_result
