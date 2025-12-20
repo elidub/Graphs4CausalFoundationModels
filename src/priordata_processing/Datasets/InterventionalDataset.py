@@ -574,7 +574,7 @@ class InterventionalDataset(Dataset):
                 remove_outliers=preprocessing_params["remove_outliers"],
                 outlier_quantile=preprocessing_params["outlier_quantile"],
                 shuffle_samples=preprocessing_params["shuffle_data"],
-                shuffle_features=False,  # Default
+                shuffle_features=True,  # Default
                 y_clip_quantile=preprocessing_params.get("y_clip_quantile"),
                 eps=preprocessing_params.get("eps", 1e-8),
                 device=None,  # Default
@@ -630,13 +630,20 @@ class InterventionalDataset(Dataset):
                 if has_treatment:
                     # Get the target feature and kept features from BasicProcessing
                     target_node = processor.selected_target_feature
-                    kept_features = processor.kept_feature_indices  # Node names after dropout
+                    kept_features = processor.kept_feature_indices  # Node names after dropout AND shuffling
                     
                     # Build ordered list to match model's feature ordering: [treatment, outcome, features]
                     # Model has: [T, Y, X_0, X_1, ..., X_{L-1}]
                     # So adjacency matrix must use the same ordering
-                    # CRITICAL: kept_features is already in the order that columns appear in X
-                    # Do NOT sort them - use the exact order from the processor
+                    # 
+                    # IMPORTANT: kept_features now correctly reflects the POST-SHUFFLE column order!
+                    # If shuffle_features=True was used in BasicProcessing, the Preprocessor
+                    # tracks the permutation and BasicProcessing updates kept_feature_indices
+                    # to match the actual column order in X. This ensures perfect alignment:
+                    # - X[:, i] contains data from node kept_features[i]
+                    # - adjacency[i+2, j+2] describes the edge between kept_features[i] and kept_features[j]
+                    #
+                    # Do NOT sort kept_features - use the exact order from the processor!
                     ordered_nodes = []
                     
                     # Add treatment and outcome first
@@ -644,7 +651,7 @@ class InterventionalDataset(Dataset):
                     ordered_nodes.append(target_node)
                     
                     # Then add kept features in the SAME order as they appear in X
-                    # (kept_features is already ordered to match X columns)
+                    # (kept_features already reflects any shuffling that was applied)
                     ordered_nodes.extend(kept_features)
                     
                     # Get adjacency matrix with this specific ordering: [T, Y, X_0, ..., X_{L-1}]
@@ -722,4 +729,5 @@ class InterventionalDataset(Dataset):
                 # Give up and return the last sampled data to avoid infinite loop
                 break
         
+        breakpoint()
         return last_result

@@ -85,6 +85,9 @@ class Preprocessor:
 
         self.device = device
         self.dtype = dtype
+        
+        # Track the feature permutation from shuffling
+        self.feature_permutation = None
 
     # ------------------------ public API ------------------------
 
@@ -177,6 +180,11 @@ class Preprocessor:
         if self.shuffle_features:
             perm_cols = torch.randperm(F, device=X.device)
             X = X[:, :, perm_cols]
+            # Store the permutation for later use (e.g., to reorder adjacency matrix)
+            self.feature_permutation = perm_cols
+        else:
+            # No shuffling - identity permutation
+            self.feature_permutation = torch.arange(F, device=X.device)
 
         return X, Y
 

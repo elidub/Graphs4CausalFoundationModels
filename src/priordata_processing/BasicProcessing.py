@@ -195,7 +195,9 @@ class BasicProcessing:
         kept_cols = kept_cols[: self.n_features]
         
         # Store the feature indices (node names) that were kept for later access
+        # This is the PRE-SHUFFLE order
         self.kept_feature_indices = [feature_indices[col] for col in kept_cols]
+        # We'll update this to the POST-SHUFFLE order after preprocessing
 
         X_no_target = data_tensor[:, kept_cols]  # (N, n_features)
         Y_tensor = target_values.unsqueeze(-1)
@@ -246,6 +248,17 @@ class BasicProcessing:
         X_test = X_test_b[0]
         Y_train = Y_train_b[0].unsqueeze(-1)
         Y_test = Y_test_b[0].unsqueeze(-1)
+        
+        # Apply feature permutation to kept_feature_indices if features were shuffled
+        if preproc.feature_permutation is not None:
+            # The permutation tells us: new_position[i] came from old_position[perm[i]]
+            # We need to reorder kept_feature_indices according to this permutation
+            perm = preproc.feature_permutation.cpu().tolist()
+            # Only apply permutation to the actual features (not dummy or padding)
+            num_real_features = len(self.kept_feature_indices)
+            if len(perm) >= num_real_features:
+                # Reorder kept_feature_indices according to the permutation
+                self.kept_feature_indices = [self.kept_feature_indices[perm[i]] for i in range(num_real_features)]
 
         if intervened_tensor is None:
             return X_train, Y_train, X_test, Y_test
