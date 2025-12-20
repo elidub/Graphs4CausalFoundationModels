@@ -197,17 +197,17 @@ class GraphConditionedInterventionalPFNSklearn:
                 # If not explicitly set, infer from graph_conditioning_mode
                 if use_attention_masking is None or use_gcn is None or use_adaln is None or use_soft_attention_bias is None:
                     # Map mode names to flag settings: (use_attention_masking, use_gcn, use_adaln, use_soft_attention_bias)
-                    # Note: soft attention bias and hard attention masking are mutually exclusive in most cases
+                    # Note: soft attention bias REQUIRES attention masking to be enabled
                     mode_to_flags = {
                         'ultimate_hard_attention_only': (True, False, False, False),
                         'ultimate_gcn_only': (False, True, True, False),
                         'ultimate_gcn_and_hard_attention': (True, True, True, False),
-                        'ultimate_soft_attention': (True, False, False, True),  # Soft bias only, no hard masking
-                        'ultimate_gcn_and_soft_attention': (False, True, True, True),  # GCN+AdaLN+soft bias, no hard masking
+                        'ultimate_soft_attention': (True, False, False, True),  # Soft bias requires attention masking
+                        'ultimate_gcn_and_soft_attention': (True, True, True, True),  # GCN+AdaLN+soft bias requires attention masking
                         # Legacy modes
                         'hard_attention_only': (True, False, False, False),
-                        'soft_learned_bias': (False, False, False, True),  # Soft bias only
-                        'hybrid_half_and_half': (False, False, False, True),  # Soft bias only
+                        'soft_learned_bias': (True, False, False, True),  # Soft bias requires attention masking
+                        'hybrid_half_and_half': (True, False, False, True),  # Soft bias requires attention masking
                     }
                     
                     if self.graph_conditioning_mode in mode_to_flags:
