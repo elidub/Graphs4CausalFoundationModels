@@ -20,11 +20,29 @@ import json
 
 from sklearn.metrics import r2_score, mean_squared_error
 
-# Add src to path - get the repo root directory
+# Add both repo root and src to path - get the repo root directory
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 src_path = os.path.join(repo_root, 'src')
+
+# Debug logging for import issues
+import_debug_log = "/tmp/lingaus_import_debug.log"
+with open(import_debug_log, "w") as f:
+    f.write(f"LinGaus Benchmark Import Debug\n")
+    f.write(f"="*80 + "\n")
+    f.write(f"repo_root: {repo_root}\n")
+    f.write(f"src_path: {src_path}\n")
+    f.write(f"sys.path before: {sys.path}\n")
+
+# Add repo root FIRST so 'src.models' imports work
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+# Then add src path so direct imports work
 if src_path not in sys.path:
     sys.path.insert(0, src_path)
+
+with open(import_debug_log, "a") as f:
+    f.write(f"sys.path after: {sys.path}\n")
+    f.write(f"="*80 + "\n")
 
 from priordata_processing.Datasets.InterventionalDataset import InterventionalDataset
 from models.GraphConditionedInterventionalPFN_sklearn import GraphConditionedInterventionalPFNSklearn
@@ -407,6 +425,8 @@ class LinGausBenchmark:
                 checkpoint_path=checkpoint_path,
                 verbose=verbose,
                 **model_kwargs,
+                n_estimators = 1,
+                max_n_train = 1000
             )
         
         model.load()

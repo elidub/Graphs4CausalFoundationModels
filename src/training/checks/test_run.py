@@ -37,7 +37,7 @@ def load_and_modify_existing_config(config_path):
     
     # Reduce training iterations for quick test
 
-    config['training_config']['max_steps'] = {'value': 5}  # Very few steps
+    config['training_config']['max_steps'] = {'value': 2}  # Very few steps
     config['training_config']['batch_size'] = {'value': 2}  # Small batch
     config['training_config']['device'] = {'value': 'cpu'}  # Force CPU usage
     config['training_config']['num_workers'] = {'value': 0}  # Avoid multiprocessing issues
@@ -48,6 +48,8 @@ def load_and_modify_existing_config(config_path):
     config['training_config']['eval_batches'] = {'value': 5}  # Fewer eval batches
     config['training_config']['accumulate_grad_batches'] = {'value': 1}  # More frequent logging
     config['training_config']['eval_every'] = {'value': 3}  # Smaller eval dataset
+
+    config['training_config']['lingaus_benchmark_dir'] = {'value': "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/LinGaus/"}
     
     # Reduce dataset size for speed
     #if 'dataset_config' in config:
@@ -115,7 +117,7 @@ def run_simple_run_test(config_path):
 
 def main():
 
-    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "GraphConditioning" / "configs_5node_benchmarked" / "lingaus_5node_benchmarked_gcn.yaml"
+    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "GraphConditioning" / "configs_5node_benchmarked" / "lingaus_5node_benchmarked_baseline.yaml"
     
     """Main test function."""
     print("=" * 60)
