@@ -26,3 +26,4 @@ src/benchmarking/results
 /experiments/GraphConditioning/checkpoints
 /experiments/GraphConditioning/Benchmarks/LinGaus/benchmark_res/
 /experiments/GraphConditioning/Benchmarks/LinGaus/data_cache
+experiments/GraphConditioning/lingaus_benchmark_data.zip
