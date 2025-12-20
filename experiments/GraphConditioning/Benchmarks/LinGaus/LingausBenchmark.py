@@ -877,6 +877,7 @@ class LinGausBenchmark:
         fidelity: str,
         checkpoint_path: str,
         config_path: Optional[str] = None,
+        output_dir: Optional[str] = None,
     ) -> Dict[int, Dict[str, Any]]:
         """
         Run LinGaus benchmark with specified fidelity level.
@@ -892,6 +893,7 @@ class LinGausBenchmark:
             fidelity: Fidelity level ("minimal", "low", or "high")
             checkpoint_path: Path to the model checkpoint .pt file
             config_path: Path to the model config YAML file (uses self._current_config_path if None)
+            output_dir: Directory to save results (default: benchmark_dir/benchmark_res/model_name)
             
         Returns:
             Dictionary mapping node_count -> aggregated_results
@@ -954,6 +956,7 @@ class LinGausBenchmark:
                 node_counts=[2, 5, 10, 20, 35, 50],
                 model=self.model,
                 config_path=config_path,
+                output_dir=output_dir,
                 n_bootstrap=1000,
                 num_samples=1000,
                 base_seed=42,

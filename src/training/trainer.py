@@ -1630,17 +1630,52 @@ class Trainer:
             raise RuntimeError("Trainer.lingaus_benchmark is None; please construct a LinGausBenchmark in run.py and pass it into Trainer.")
 
         # Ensure we have a run directory for outputs
-        out_dir = self.run_save_dir or "."
+        base_out_dir = self.run_save_dir or "."
+        
+        # Create a dedicated subfolder for this benchmark run (e.g., "lingaus_step1000")
+        benchmark_subdir = f"lingaus_{tag}"
+        benchmark_out_dir = os.path.join(base_out_dir, benchmark_subdir)
+        os.makedirs(benchmark_out_dir, exist_ok=True)
         
         print(f"[Trainer] Running LinGaus benchmark ({fidelity}) with checkpoint: {checkpoint_path}")
+        print(f"[Trainer] Results will be saved to: {benchmark_out_dir}")
         
         try:
-            # Run the benchmark
+            # Run the benchmark - pass output_dir so JSON files are saved in dedicated subfolder
             results = self.lingaus_benchmark.run(
                 fidelity=fidelity,
                 checkpoint_path=checkpoint_path,
                 config_path=self.config_path,
+                output_dir=benchmark_out_dir,
             )
+            
+            # Save results to CSV and JSON in the benchmark subfolder for HTCondor transfer
+            import json
+            import pandas as pd
+            
+            # Create results filename in the benchmark subfolder
+            results_json_path = os.path.join(benchmark_out_dir, f"lingaus_benchmark_{tag}.json")
+            results_csv_path = os.path.join(benchmark_out_dir, f"lingaus_benchmark_{tag}.csv")
+            
+            # Save JSON (complete results with all statistics)
+            with open(results_json_path, 'w') as f:
+                json.dump(results, f, indent=2)
+            print(f"[Trainer] Saved LinGaus benchmark JSON results to: {results_json_path}")
+            
+            # Save CSV (flattened for easy viewing)
+            rows = []
+            for node_count, node_results in results.items():
+                row = {'node_count': node_count}
+                for metric_name in ['mse', 'r2', 'nll']:
+                    if metric_name in node_results:
+                        for stat_name, stat_value in node_results[metric_name].items():
+                            row[f'{metric_name}_{stat_name}'] = stat_value
+                rows.append(row)
+            
+            if rows:
+                df = pd.DataFrame(rows)
+                df.to_csv(results_csv_path, index=False)
+                print(f"[Trainer] Saved LinGaus benchmark CSV results to: {results_csv_path}")
             
             # Print summary of results
             print(f"\n[LinGaus Benchmark] Results for {len(results)} node configurations:")

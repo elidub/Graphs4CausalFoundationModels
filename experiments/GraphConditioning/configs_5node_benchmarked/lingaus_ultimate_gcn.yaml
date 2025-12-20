@@ -492,4 +492,4 @@ training_config:
   lingaus_benchmark_final_fidelity: # run LinGaus benchmark at end of training
     value: "high"  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
   lingaus_benchmark_dir: # directory containing LinGaus benchmark configs and data
-    value: "experiments/GraphConditioning/Benchmarks/LinGaus"  # Results saved to <this_dir>/benchmark_res/
+    value: "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints"  # Results saved to <this_dir>/benchmark_res/
