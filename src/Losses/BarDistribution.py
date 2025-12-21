@@ -57,7 +57,8 @@ class BarDistribution(PosteriorPredictive):
         self.use_simple_equidistant_fit = bool(use_simple_equidistant_fit)
 
         self.device = device if device is not None else torch.device("cpu")
-        self.dtype = dtype if dtype is not None else torch.float32
+        # ALWAYS use float32 for BarDistribution, regardless of AMP or other precision settings
+        self.dtype = torch.float32
 
         # Learned geometry (via .fit)
         self.centers: Optional[Tensor] = None   # (K,)
@@ -100,9 +101,10 @@ class BarDistribution(PosteriorPredictive):
         return torch.log(torch.clamp(x, min=self._tiny))
 
     def _adopt_pred_ctx(self, pred: Tensor) -> Tuple[torch.device, torch.dtype]:
-        # Everything follows pred's device/dtype if possible (backward compatible with constructor defaults)
+        # Always use float32 for BarDistribution, even if pred is float16 from AMP
+        # Convert pred to float32 immediately to avoid numerical issues
         device = pred.device if pred.is_cuda or pred.device != torch.device("cpu") else self.device
-        dtype = pred.dtype if pred.dtype is not None else self.dtype
+        dtype = torch.float32  # ALWAYS use float32, ignore pred.dtype
         self._ensure_consts(device, dtype)
         return device, dtype
 
@@ -190,8 +192,8 @@ class BarDistribution(PosteriorPredictive):
         if not ys:
             raise ValueError("No y data collected for fit().")
 
-        # Use double precision for the geometry, then cast down
-        y_all = torch.cat(ys, dim=0).to(torch.float64)
+        # Use float32 for the geometry (ALWAYS, regardless of input dtype)
+        y_all = torch.cat(ys, dim=0).to(torch.float32)
         y_all = y_all[torch.isfinite(y_all)]
         if y_all.numel() == 0:
             raise ValueError("All y are non-finite in fit().")
@@ -218,7 +220,7 @@ class BarDistribution(PosteriorPredictive):
             print(f"[BarDistribution] Using simple equidistant fitting method")
             
             # Create K+1 evenly spaced edges from y_min to y_max
-            edges = torch.linspace(float(y_min), float(y_max), steps=K + 1, dtype=torch.float64)
+            edges = torch.linspace(float(y_min), float(y_max), steps=K + 1, dtype=torch.float32)
             
             # Centers are midpoints of edges
             centers = 0.5 * (edges[:-1] + edges[1:])
@@ -232,7 +234,7 @@ class BarDistribution(PosteriorPredictive):
         else:
             # Original quantile-based centers; robust monotonic enforcement
             print(f"[BarDistribution] Using quantile-based fitting method")
-            probs = torch.linspace(0.0, 1.0, steps=K + 1, dtype=torch.float64)
+            probs = torch.linspace(0.0, 1.0, steps=K + 1, dtype=torch.float32)
             mids = (probs[:-1] + probs[1:]) * 0.5
             try:
                 centers = torch.quantile(y_all, mids, method="linear")
@@ -241,15 +243,15 @@ class BarDistribution(PosteriorPredictive):
 
             # Strictly increasing centers (epsilon grows with K and span)
             eps = max(1e-12, 1e-9 * K) * float(y_max - y_min)
-            eps = torch.tensor(eps, dtype=torch.float64)
+            eps = torch.tensor(eps, dtype=torch.float32)
             for i in range(K - 1):
                 if centers[i + 1] <= centers[i]:
                     centers[i + 1] = centers[i] + eps
 
-            edges = torch.empty(K + 1, dtype=torch.float64)
+            edges = torch.empty(K + 1, dtype=torch.float32)
             if K == 1:
                 # Use IQR for width, fall back to small width if degenerate
-                q25, q75 = torch.quantile(y_all, torch.tensor([0.25, 0.75], dtype=torch.float64))
+                q25, q75 = torch.quantile(y_all, torch.tensor([0.25, 0.75], dtype=torch.float32))
                 width = float(max(q75 - q25, self.min_width))
                 edges[0] = centers[0] - 0.5 * width
                 edges[1] = centers[0] + 0.5 * width
@@ -270,14 +272,14 @@ class BarDistribution(PosteriorPredictive):
         base_s_left = float(max(widths[0].item(), self.min_width))
         base_s_right = float(max(widths[-1].item(), self.min_width))
 
-        # Cast to target dtype/device
-        self.centers = centers.to(self.device, self.dtype)
-        self.edges = edges.to(self.device, self.dtype)
-        self.widths = widths.to(self.device, self.dtype)
-        self.base_s_left = torch.tensor(base_s_left, device=self.device, dtype=self.dtype)
-        self.base_s_right = torch.tensor(base_s_right, device=self.device, dtype=self.dtype)
+        # Cast to target dtype/device (ALWAYS float32)
+        self.centers = centers.to(self.device, torch.float32)
+        self.edges = edges.to(self.device, torch.float32)
+        self.widths = widths.to(self.device, torch.float32)
+        self.base_s_left = torch.tensor(base_s_left, device=self.device, dtype=torch.float32)
+        self.base_s_right = torch.tensor(base_s_right, device=self.device, dtype=torch.float32)
         # Refresh constants
-        self._ensure_consts(self.device, self.dtype)
+        self._ensure_consts(self.device, torch.float32)
         
         # Compute loss with constant (uniform) prediction on fitting data
         self._compute_constant_prediction_loss(y_all)
@@ -343,6 +345,10 @@ class BarDistribution(PosteriorPredictive):
         """
         # Numerically stable: operate purely in log-space
         self._check_ready()
+        
+        # ALWAYS convert to float32 for numerical stability
+        pred = pred.to(dtype=torch.float32)
+        
         B, M = y.shape
         K = self.num_bars
         self._validate_pred(pred, (B, M, K + 4))
@@ -421,6 +427,10 @@ class BarDistribution(PosteriorPredictive):
         Argmax among: left edge (tail), the densest bar, right edge (tail).
         """
         self._check_ready()
+        
+        # ALWAYS convert to float32 for numerical stability
+        pred = pred.to(dtype=torch.float32)
+        
         B, M, _ = pred.shape
         K = self.num_bars
         self._validate_pred(pred, (B, M, K + 4))
@@ -468,6 +478,10 @@ class BarDistribution(PosteriorPredictive):
         Right half-Gaussian: E[y | right] = edge_right + sR * sqrt(2/π)
         """
         self._check_ready()
+        
+        # ALWAYS convert to float32 for numerical stability
+        pred = pred.to(dtype=torch.float32)
+        
         B, M, _ = pred.shape
         K = self.num_bars
         self._validate_pred(pred, (B, M, K + 4))
@@ -503,6 +517,10 @@ class BarDistribution(PosteriorPredictive):
         self._check_ready()
         if num_samples <= 0:
             raise ValueError("num_samples must be positive.")
+        
+        # ALWAYS convert to float32 for numerical stability
+        pred = pred.to(dtype=torch.float32)
+        
         B, M, _ = pred.shape
         K = self.num_bars
         self._validate_pred(pred, (B, M, K + 4))
@@ -595,6 +613,9 @@ class BarDistribution(PosteriorPredictive):
         Vectorized pdf(y) with mixture params from pred.
         y: (B,M)  -> returns (B,M)
         """
+        # ALWAYS convert to float32 for numerical stability
+        pred = pred.to(dtype=torch.float32)
+        
         B, M = y.shape
         device, dtype = self._adopt_pred_ctx(pred)
 
