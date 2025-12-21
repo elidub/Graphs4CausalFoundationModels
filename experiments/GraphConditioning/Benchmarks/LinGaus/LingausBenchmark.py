@@ -442,13 +442,15 @@ class LinGausBenchmark:
                 **model_kwargs,
             )
         else:
+            # InterventionalPFNSklearn (batched version) only accepts:
+            # config_path, checkpoint_path, device, verbose
+            # Filter model_kwargs to only include these supported parameters
+            supported_kwargs = {k: v for k, v in model_kwargs.items() if k in ['device']}
             model = InterventionalPFNSklearn(
                 config_path=config_path,
                 checkpoint_path=checkpoint_path,
                 verbose=verbose,
-                **model_kwargs,
-                n_estimators = 1,
-                max_n_train = 1000
+                **supported_kwargs,
             )
         
         model.load()

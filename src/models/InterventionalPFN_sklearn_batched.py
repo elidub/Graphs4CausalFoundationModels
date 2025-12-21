@@ -114,6 +114,9 @@ class InterventionalPFNSklearn:
         """
         Load config, build model, and load checkpoint.
         
+        CRITICAL: Model architecture config is loaded from checkpoint to ensure exact match.
+        External config file is only used as fallback if checkpoint doesn't contain config.
+        
         Args:
             override_kwargs: Optional dict to override config parameters
             
@@ -125,59 +128,96 @@ class InterventionalPFNSklearn:
             print(f"  Config: {self.config_path}")
             print(f"  Checkpoint: {self.checkpoint_path}")
         
-        # Load config
+        # Helper to get value from wandb-style or flat config
+        def _get_cfg_value(cfg_dict, key, default=None):
+            if key in cfg_dict:
+                val = cfg_dict[key]
+                return val['value'] if isinstance(val, dict) and 'value' in val else val
+            return default
+        
+        # Load checkpoint FIRST to get the training config
+        checkpoint_config = None
+        if self.checkpoint_path:
+            checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
+            
+            # Try to extract config from checkpoint
+            if 'config' in checkpoint:
+                checkpoint_config = checkpoint['config']
+                if self.verbose:
+                    print(f"  ✓ Found config in checkpoint (will use for model architecture)")
+        
+        # Load external config file as fallback
+        external_config = None
         if self.config_path:
             with open(self.config_path, 'r') as f:
-                config = yaml.safe_load(f)
-            
-            # Helper to get value from wandb-style or flat config
-            def _get_cfg_value(cfg_dict, key, default=None):
-                if key in cfg_dict:
-                    val = cfg_dict[key]
-                    return val['value'] if isinstance(val, dict) and 'value' in val else val
-                return default
-            
-            model_config = config.get('model_config', config.get('model', {}))
-            bar_config = config.get('bar_distribution', {})
-            
-            # Extract model parameters
-            self.model_kwargs = {
-                'num_features': _get_cfg_value(model_config, 'num_features'),
-                'd_model': _get_cfg_value(model_config, 'd_model', 256),
-                'depth': _get_cfg_value(model_config, 'depth', 6),
-                'heads_feat': _get_cfg_value(model_config, 'heads_feat', 4),
-                'heads_samp': _get_cfg_value(model_config, 'heads_samp', 4),
-                'dropout': _get_cfg_value(model_config, 'dropout', 0.0),
-                'use_same_row_mlp': _get_cfg_value(model_config, 'use_same_row_mlp', True),
-                'n_sample_attention_sink_rows': _get_cfg_value(model_config, 'n_sample_attention_sink_rows', 0),
-                'n_feature_attention_sink_cols': _get_cfg_value(model_config, 'n_feature_attention_sink_cols', 0),
-            }
-            
-            # BarDistribution config
-            self.use_bar_distribution = _get_cfg_value(bar_config, 'use_bar_distribution', 
-                                                       _get_cfg_value(model_config, 'use_bar_distribution', False))
-            
-            if self.use_bar_distribution:
-                num_bars = _get_cfg_value(bar_config, 'num_bars', _get_cfg_value(model_config, 'num_bars', 50))
-                output_dim = num_bars + 4  # K bars + 4 tail params
-                self.model_kwargs['output_dim'] = output_dim
-                
-                if self.verbose:
-                    print(f"  BarDistribution enabled: {num_bars} bars, output_dim={output_dim}")
-                
-                self.bar_distribution = BarDistribution(
-                    num_bars=num_bars,
-                    min_width=_get_cfg_value(bar_config, 'min_width', 1e-6),
-                    scale_floor=_get_cfg_value(bar_config, 'scale_floor', 1e-6),
-                )
-            else:
-                self.model_kwargs['output_dim'] = 1
-                
-        else:
-            raise ValueError("config_path is required")
+                external_config = yaml.safe_load(f)
         
-        # Apply overrides
+        # Determine which config to use (checkpoint takes priority)
+        if checkpoint_config:
+            config = checkpoint_config
+            if self.verbose:
+                print(f"  Using config from checkpoint (exact training config)")
+        elif external_config:
+            config = external_config
+            if self.verbose:
+                print(f"  Warning: Using external config (checkpoint has no config)")
+        else:
+            raise ValueError("No config available (neither in checkpoint nor config_path)")
+        
+        model_config = config.get('model_config', config.get('model', {}))
+        bar_config = config.get('bar_distribution', {})
+        
+        # Extract model architecture parameters (MUST match training exactly)
+        self.model_kwargs = {
+            'num_features': _get_cfg_value(model_config, 'num_features'),
+            'd_model': _get_cfg_value(model_config, 'd_model', 256),
+            'depth': _get_cfg_value(model_config, 'depth', 6),
+            'heads_feat': _get_cfg_value(model_config, 'heads_feat', 4),
+            'heads_samp': _get_cfg_value(model_config, 'heads_samp', 4),
+            'dropout': _get_cfg_value(model_config, 'dropout', 0.0),
+            'hidden_mult': _get_cfg_value(model_config, 'hidden_mult', 4),  # CRITICAL: must match training
+            'use_same_row_mlp': _get_cfg_value(model_config, 'use_same_row_mlp', True),
+            'n_sample_attention_sink_rows': _get_cfg_value(model_config, 'n_sample_attention_sink_rows', 0),
+            'n_feature_attention_sink_cols': _get_cfg_value(model_config, 'n_feature_attention_sink_cols', 0),
+        }
+        
+        # BarDistribution config
+        self.use_bar_distribution = _get_cfg_value(bar_config, 'use_bar_distribution', 
+                                                   _get_cfg_value(model_config, 'use_bar_distribution', False))
+        
+        if self.use_bar_distribution:
+            num_bars = _get_cfg_value(bar_config, 'num_bars', _get_cfg_value(model_config, 'num_bars', 50))
+            output_dim = num_bars + 4  # K bars + 4 tail params
+            self.model_kwargs['output_dim'] = output_dim
+            
+            if self.verbose:
+                print(f"  BarDistribution enabled: {num_bars} bars, output_dim={output_dim}")
+            
+            self.bar_distribution = BarDistribution(
+                num_bars=num_bars,
+                min_width=_get_cfg_value(bar_config, 'min_width', 1e-6),
+                scale_floor=_get_cfg_value(bar_config, 'scale_floor', 1e-6),
+            )
+        else:
+            self.model_kwargs['output_dim'] = 1
+        
+        if self.verbose:
+            print(f"  Model architecture:")
+            print(f"    - d_model: {self.model_kwargs['d_model']}")
+            print(f"    - hidden_mult: {self.model_kwargs['hidden_mult']}")
+            print(f"    - depth: {self.model_kwargs['depth']}")
+            print(f"    - num_features: {self.model_kwargs['num_features']}")
+        if self.verbose:
+            print(f"  Model architecture:")
+            print(f"    - d_model: {self.model_kwargs['d_model']}")
+            print(f"    - hidden_mult: {self.model_kwargs['hidden_mult']}")
+            print(f"    - depth: {self.model_kwargs['depth']}")
+            print(f"    - num_features: {self.model_kwargs['num_features']}")
+        
+        # Apply overrides (only for non-critical parameters)
         if override_kwargs:
+            if self.verbose:
+                print(f"  Applying overrides: {override_kwargs}")
             self.model_kwargs.update(override_kwargs)
         
         # Sanity check
@@ -190,14 +230,12 @@ class InterventionalPFNSklearn:
         
         self.model = InterventionalPFN(**self.model_kwargs).to(self.device)
         
-        # Load checkpoint
+        # Load checkpoint weights
         if self.checkpoint_path:
             if self.verbose:
-                print(f"  Loading checkpoint from {self.checkpoint_path}")
+                print(f"  Loading checkpoint weights from {self.checkpoint_path}")
             
-            checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
-            
-            # Handle different checkpoint formats
+            # Checkpoint was already loaded earlier, extract state dict
             if 'model_state_dict' in checkpoint:
                 state_dict = checkpoint['model_state_dict']
             elif 'state_dict' in checkpoint:
@@ -205,14 +243,24 @@ class InterventionalPFNSklearn:
             else:
                 state_dict = checkpoint
             
-            # Load model weights
-            missing_keys, unexpected_keys = self.model.load_state_dict(state_dict, strict=False)
-            
-            if self.verbose and (missing_keys or unexpected_keys):
-                if missing_keys:
-                    print(f"  Warning: Missing keys: {missing_keys[:5]}{'...' if len(missing_keys) > 5 else ''}")
-                if unexpected_keys:
-                    print(f"  Warning: Unexpected keys: {unexpected_keys[:5]}{'...' if len(unexpected_keys) > 5 else ''}")
+            # Load model weights with strict=True (should match exactly now)
+            try:
+                missing_keys, unexpected_keys = self.model.load_state_dict(state_dict, strict=False)
+                
+                if missing_keys or unexpected_keys:
+                    if self.verbose:
+                        if missing_keys:
+                            print(f"  Warning: Missing keys: {missing_keys[:5]}{'...' if len(missing_keys) > 5 else ''}")
+                        if unexpected_keys:
+                            print(f"  Warning: Unexpected keys: {unexpected_keys[:5]}{'...' if len(unexpected_keys) > 5 else ''}")
+                else:
+                    if self.verbose:
+                        print(f"  ✓ All checkpoint weights loaded successfully")
+            except RuntimeError as e:
+                raise RuntimeError(
+                    f"Failed to load checkpoint weights. This usually means the model architecture "
+                    f"doesn't match the checkpoint. Error: {e}"
+                )
             
             # Load BarDistribution state if available
             if self.use_bar_distribution and 'bar_distribution' in checkpoint:
@@ -224,7 +272,7 @@ class InterventionalPFNSklearn:
                         setattr(self.bar_distribution, key, value)
                 
                 if self.verbose:
-                    print(f"  BarDistribution state loaded from checkpoint")
+                    print(f"  ✓ BarDistribution state loaded from checkpoint")
         
         self.model.eval()
         

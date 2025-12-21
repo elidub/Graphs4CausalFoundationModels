@@ -132,14 +132,29 @@ class BarDistribution(PosteriorPredictive):
                 break
             # Accept various tuple formats:
             # - 4-tuple: (X_train, y_train, X_test, y_test)
-            # - 6-tuple: (X_train, y_train, X_test, y_test, t, alpha) with curriculum metadata
+            # - 6-tuple: AMBIGUOUS - could be either:
+            #   a) Curriculum: (X_train, y_train, X_test, y_test, t, alpha)
+            #   b) Interventional: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
             # - 7-tuple: (X_train, T_train, y_train, X_test, T_test, y_test, adjacency_matrix) with treatment/graph
             # - 9-tuple: (X_train, T_train, y_train, X_test, T_test, y_test, adjacency_matrix, scm, processor, intervention_node) full debug
             if isinstance(batch, (list, tuple)):
                 if len(batch) == 4:
                     _, y_tr, _, y_te = batch
                 elif len(batch) == 6:
-                    _, y_tr, _, y_te, _t, _alpha = batch  # ignore curriculum metadata
+                    # Disambiguate 6-tuple: check if element 4 looks like a treatment tensor or curriculum scalar
+                    # - Interventional: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv) where T_intv has shape (B, N, D)
+                    # - Curriculum: (X_train, y_train, X_test, y_test, t, alpha) where t is a scalar or (B,) tensor
+                    elem_4 = batch[4]  # Could be T_intv (interventional) or t (curriculum time scalar)
+                    
+                    # Check if element 4 is a multi-dimensional tensor (treatment) or a scalar/1D tensor (curriculum)
+                    # Treatment tensors have shape (B, N_samples, D_features) with ndim=3
+                    # Curriculum t/alpha are scalars or (B,) tensors with ndim <= 1
+                    if isinstance(elem_4, torch.Tensor) and elem_4.ndim == 3:
+                        # Interventional format: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
+                        _, _T_obs, y_tr, _, _T_intv, y_te = batch
+                    else:
+                        # Curriculum format: (X_train, y_train, X_test, y_test, t, alpha)
+                        _, y_tr, _, y_te, _t, _alpha = batch  # ignore curriculum metadata
                 elif len(batch) == 7:
                     _, _T_tr, y_tr, _, _T_te, y_te, _adj = batch  # ignore treatment and adjacency
                 elif len(batch) == 9:
