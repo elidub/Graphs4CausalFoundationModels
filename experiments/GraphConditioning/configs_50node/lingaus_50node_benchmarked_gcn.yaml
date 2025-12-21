@@ -27,7 +27,7 @@ scm_config:
       beta: 3.0
   graph_seed:
     distribution: "discrete_uniform"
-    distribu tion_parameters:
+    distribution_parameters:
       low: 0
       high: 100000
   xgboost_prob:
