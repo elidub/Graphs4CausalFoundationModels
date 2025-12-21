@@ -46,7 +46,12 @@ with open(import_debug_log, "a") as f:
 
 from priordata_processing.Datasets.InterventionalDataset import InterventionalDataset
 from models.GraphConditionedInterventionalPFN_sklearn import GraphConditionedInterventionalPFNSklearn
-from models.InterventionalPFN_sklearn import InterventionalPFNSklearn
+# Import the new batched version
+try:
+    from models.InterventionalPFN_sklearn_batched import InterventionalPFNSklearn
+except ImportError:
+    # Fallback to old version if new one not available
+    from models.InterventionalPFN_sklearn import InterventionalPFNSklearn
 
 
 class LinGausBenchmark:
@@ -101,6 +106,7 @@ class LinGausBenchmark:
         
         # Store loaded model
         self.model: Optional[Any] = None  # Can be either GraphConditionedInterventionalPFNSklearn or InterventionalPFNSklearn
+        self.batch_size: Optional[int] = None  # Batch size for inference
         
         if self.verbose:
             print(f"LinGausBenchmark initialized")
@@ -408,8 +414,24 @@ class LinGausBenchmark:
         # Check if graph conditioning is used
         use_graph_conditioning = config.get('model_config', {}).get('use_graph_conditioning', {}).get('value', False)
         
+        # Extract batch size from config (for batched inference)
+        # Helper to get value from wandb-style or flat config
+        def _get_cfg_value(cfg_dict, key, default=None):
+            if key in cfg_dict:
+                val = cfg_dict[key]
+                return val['value'] if isinstance(val, dict) and 'value' in val else val
+            return default
+        
+        # Try to get batch_size from training_config first, then model_config
+        self.batch_size = _get_cfg_value(config.get('training_config', {}), 'batch_size', None)
+        if self.batch_size is None:
+            self.batch_size = _get_cfg_value(config.get('model_config', {}), 'batch_size', None)
+        
         if verbose:
             print(f"  Model type: {'Graph-Conditioned' if use_graph_conditioning else 'Standard'} InterventionalPFN")
+            if self.batch_size:
+                print(f"  Batch size from config: {self.batch_size}")
+
         
         # Create and load the appropriate model
         if use_graph_conditioning:
@@ -571,7 +593,9 @@ class LinGausBenchmark:
         verbose: Optional[bool] = None,
     ) -> List[Dict[str, float]]:
         """
-        Evaluate model on a full dataset.
+        Evaluate model on a full dataset with optional batched inference.
+        
+        Uses batched inference if self.batch_size is set, otherwise processes one sample at a time.
         
         Args:
             data: List of data items
@@ -584,12 +608,33 @@ class LinGausBenchmark:
         if verbose is None:
             verbose = self.verbose
         
+        if model is None:
+            model = self.model
+        
         # Limit to max_samples if specified
         if self.max_samples is not None and len(data) > self.max_samples:
             data = data[:self.max_samples]
             if verbose:
                 print(f"  Limiting evaluation to first {self.max_samples} samples")
         
+        # Check if model supports batched inference
+        use_graph = hasattr(model, 'predict') and 'adjacency_matrix' in model.predict.__code__.co_varnames
+        has_batched_param = hasattr(model, 'predict') and 'batched' in model.predict.__code__.co_varnames
+        
+        # Use batched inference if batch_size is set and model supports it
+        if self.batch_size is not None and self.batch_size > 1 and has_batched_param:
+            return self._evaluate_dataset_batched(data, model, use_graph, verbose)
+        else:
+            # Fall back to single-sample evaluation
+            return self._evaluate_dataset_sequential(data, model, verbose)
+    
+    def _evaluate_dataset_sequential(
+        self,
+        data: List[Dict[str, Any]],
+        model: Any,
+        verbose: bool,
+    ) -> List[Dict[str, float]]:
+        """Evaluate dataset one sample at a time (original behavior)."""
         results = []
         iterator = tqdm(data, desc="Evaluating") if verbose else data
         
@@ -601,6 +646,175 @@ class LinGausBenchmark:
                 if verbose:
                     print(f"\nWarning: Failed to evaluate sample: {e}")
                 continue
+        
+        return results
+    
+    def _evaluate_dataset_batched(
+        self,
+        data: List[Dict[str, Any]],
+        model: Any,
+        use_graph: bool,
+        verbose: bool,
+    ) -> List[Dict[str, float]]:
+        """
+        Evaluate dataset using batched inference for efficiency.
+        
+        Groups samples into batches and processes them together.
+        """
+        results = []
+        n_samples = len(data)
+        
+        # Get expected number of features from model config
+        if hasattr(self, '_current_config') and self._current_config:
+            expected_features = self._current_config.get('model_config', {}).get('num_features', {}).get('value', 3)
+        else:
+            expected_features = 3
+        
+        num_nodes = expected_features + 2
+        
+        # Process in batches
+        n_batches = (n_samples + self.batch_size - 1) // self.batch_size
+        iterator = tqdm(range(n_batches), desc=f"Evaluating (batch_size={self.batch_size})") if verbose else range(n_batches)
+        
+        for batch_idx in iterator:
+            start_idx = batch_idx * self.batch_size
+            end_idx = min(start_idx + self.batch_size, n_samples)
+            batch_data = data[start_idx:end_idx]
+            
+            try:
+                # Prepare batched arrays
+                batch_X_obs = []
+                batch_T_obs = []
+                batch_Y_obs = []
+                batch_X_intv = []
+                batch_T_intv = []
+                batch_Y_intv = []
+                batch_adj = []
+                
+                for data_item in batch_data:
+                    X_obs = data_item['X_obs']
+                    T_obs = data_item['T_obs']
+                    Y_obs = data_item['Y_obs']
+                    X_intv = data_item['X_intv']
+                    T_intv = data_item['T_intv']
+                    Y_intv = data_item['Y_intv']
+                    adj = data_item['adjacency_matrix']
+                    
+                    # Convert to numpy if needed
+                    if torch.is_tensor(X_obs):
+                        X_obs = X_obs.numpy()
+                        T_obs = T_obs.numpy()
+                        Y_obs = Y_obs.numpy()
+                        X_intv = X_intv.numpy()
+                        T_intv = T_intv.numpy()
+                        Y_intv = Y_intv.numpy()
+                        adj = adj.numpy()
+                    
+                    # Trim features to match expected dimensions
+                    if X_obs.shape[1] > expected_features:
+                        X_obs = X_obs[:, :expected_features]
+                        X_intv = X_intv[:, :expected_features]
+                    
+                    # Trim adjacency matrix
+                    if adj.shape[0] > num_nodes:
+                        adj = adj[:num_nodes, :num_nodes]
+                    
+                    # Squeeze Y arrays if they have an extra dimension
+                    if Y_obs.ndim == 2 and Y_obs.shape[1] == 1:
+                        Y_obs = Y_obs.squeeze(-1)
+                    if Y_intv.ndim == 2 and Y_intv.shape[1] == 1:
+                        Y_intv = Y_intv.squeeze(-1)
+                    
+                    batch_X_obs.append(X_obs)
+                    batch_T_obs.append(T_obs)
+                    batch_Y_obs.append(Y_obs)
+                    batch_X_intv.append(X_intv)
+                    batch_T_intv.append(T_intv)
+                    batch_Y_intv.append(Y_intv)
+                    if use_graph:
+                        batch_adj.append(adj)
+                
+                # Stack into batched arrays
+                batch_X_obs = np.stack(batch_X_obs, axis=0)  # (B, N, L)
+                batch_T_obs = np.stack(batch_T_obs, axis=0)  # (B, N, 1)
+                batch_Y_obs = np.stack(batch_Y_obs, axis=0)  # (B, N)
+                batch_X_intv = np.stack(batch_X_intv, axis=0)  # (B, M, L)
+                batch_T_intv = np.stack(batch_T_intv, axis=0)  # (B, M, 1)
+                batch_Y_intv = np.stack(batch_Y_intv, axis=0)  # (B, M)
+                if use_graph:
+                    batch_adj = np.stack(batch_adj, axis=0)  # (B, num_nodes, num_nodes)
+                
+                # Get batched predictions
+                if use_graph:
+                    preds_batch = model.predict(
+                        X_obs=batch_X_obs,
+                        T_obs=batch_T_obs,
+                        Y_obs=batch_Y_obs,
+                        X_intv=batch_X_intv,
+                        T_intv=batch_T_intv,
+                        adjacency_matrix=batch_adj,
+                        batched=True,
+                    )
+                    log_likelihood_batch = model.predict_log_likelihood(
+                        X_obs=batch_X_obs,
+                        T_obs=batch_T_obs,
+                        Y_obs=batch_Y_obs,
+                        X_intv=batch_X_intv,
+                        T_intv=batch_T_intv,
+                        Y_intv=batch_Y_intv,
+                        adjacency_matrix=batch_adj,
+                        batched=True,
+                    )
+                else:
+                    preds_batch = model.predict(
+                        X_obs=batch_X_obs,
+                        T_obs=batch_T_obs,
+                        Y_obs=batch_Y_obs,
+                        X_intv=batch_X_intv,
+                        T_intv=batch_T_intv,
+                        batched=True,
+                    )
+                    log_likelihood_batch = model.predict_log_likelihood(
+                        X_obs=batch_X_obs,
+                        T_obs=batch_T_obs,
+                        Y_obs=batch_Y_obs,
+                        X_intv=batch_X_intv,
+                        T_intv=batch_T_intv,
+                        Y_intv=batch_Y_intv,
+                        batched=True,
+                    )
+                
+                # Process each sample in the batch
+                for i in range(len(batch_data)):
+                    pred_i = preds_batch[i]  # (M,)
+                    Y_intv_i = batch_Y_intv[i]  # (M,)
+                    log_likelihood_i = log_likelihood_batch[i]  # (M,)
+                    
+                    # Compute metrics
+                    mse = mean_squared_error(Y_intv_i, pred_i)
+                    r2 = r2_score(Y_intv_i, pred_i)
+                    nll = -np.mean(log_likelihood_i)
+                    
+                    results.append({
+                        'mse': float(mse),
+                        'r2': float(r2),
+                        'nll': float(nll),
+                    })
+                    
+            except Exception as e:
+                if verbose:
+                    print(f"\nWarning: Failed to evaluate batch {batch_idx}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                # Fall back to sequential evaluation for this batch
+                for data_item in batch_data:
+                    try:
+                        metrics = self.evaluate_sample(data_item, model=model)
+                        results.append(metrics)
+                    except Exception as e2:
+                        if verbose:
+                            print(f"\nWarning: Failed to evaluate sample: {e2}")
+                        continue
         
         return results
     
