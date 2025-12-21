@@ -227,6 +227,9 @@ class InterventionalDataset(Dataset):
 
         # Rejection sampling settings (optional)
         self.min_target_variance = _get_cfg_value(self.dataset_config, "min_target_variance", None)
+        # Minimum fraction of unique target values (relative to number of samples)
+        # e.g., 0.2 means at least 20% of samples must have unique target values
+        self.min_unique_target_fraction = _get_cfg_value(self.dataset_config, "min_unique_target_fraction", None)
         # Prevent infinite loops: cap the number of re-sampling attempts
         self.max_resample_attempts = int(_get_cfg_value(self.dataset_config, "max_resample_attempts", 10) or 10)
         
@@ -699,29 +702,61 @@ class InterventionalDataset(Dataset):
             # Save latest result so we can return even if rejection keeps failing
             last_result = result
             
-            # If no threshold provided, accept immediately
-            if self.min_target_variance is None:
+            # If no thresholds provided, accept immediately
+            if self.min_target_variance is None and self.min_unique_target_fraction is None:
                 break
             
-            # Compute variances on the target for observational (train) and interventional (test)
-            # Y_* may have shape (N, 1); use flatten for variance computation
-            var_obs = torch.var(Y_obs.reshape(-1))
-            var_intv = torch.var(Y_intv.reshape(-1))
+            # --- Check 1: Variance threshold ---
+            var_threshold_ok = True
+            if self.min_target_variance is not None:
+                # Compute variances on the target for observational (train) and interventional (test)
+                # Y_* may have shape (N, 1); use flatten for variance computation
+                var_obs = torch.var(Y_obs.reshape(-1))
+                var_intv = torch.var(Y_intv.reshape(-1))
+                
+                # Normalize threshold to float if provided as str in YAML
+                threshold = self.min_target_variance
+                if isinstance(threshold, str):
+                    try:
+                        threshold = float(threshold)
+                    except ValueError:
+                        # If parsing fails, disable variance check
+                        threshold = None
+                
+                if threshold is not None:
+                    var_threshold_ok = (var_obs.item() >= threshold) and (var_intv.item() >= threshold)
             
-            # Normalize threshold to float if provided as str in YAML
-            threshold = self.min_target_variance
-            if threshold is not None and isinstance(threshold, str):
-                try:
-                    threshold = float(threshold)
-                except ValueError:
-                    # If parsing fails, disable rejection to avoid crashing
-                    threshold = None
+            # --- Check 2: Unique values threshold ---
+            unique_threshold_ok = True
+            if self.min_unique_target_fraction is not None:
+                # Normalize threshold to float if provided as str in YAML
+                unique_fraction = self.min_unique_target_fraction
+                if isinstance(unique_fraction, str):
+                    try:
+                        unique_fraction = float(unique_fraction)
+                    except ValueError:
+                        # If parsing fails, disable unique check
+                        unique_fraction = None
+                
+                if unique_fraction is not None:
+                    # Count unique values in observational and interventional targets
+                    Y_obs_flat = Y_obs.reshape(-1)
+                    Y_intv_flat = Y_intv.reshape(-1)
+                    
+                    n_unique_obs = torch.unique(Y_obs_flat).numel()
+                    n_unique_intv = torch.unique(Y_intv_flat).numel()
+                    
+                    n_obs = Y_obs_flat.numel()
+                    n_intv = Y_intv_flat.numel()
+                    
+                    # Check if fraction of unique values meets threshold
+                    obs_unique_ok = (n_unique_obs / n_obs) >= unique_fraction if n_obs > 0 else True
+                    intv_unique_ok = (n_unique_intv / n_intv) >= unique_fraction if n_intv > 0 else True
+                    
+                    unique_threshold_ok = obs_unique_ok and intv_unique_ok
             
-            # Check threshold
-            if threshold is None:
-                break  # Accept since no valid threshold
-            
-            if (var_obs.item() >= threshold) and (var_intv.item() >= threshold):
+            # Accept if both checks pass
+            if var_threshold_ok and unique_threshold_ok:
                 break  # Accept
             
             retry_attempt += 1
