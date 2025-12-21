@@ -233,19 +233,22 @@ dataset_config:
       low: 1
       high: 500
 
-  # Adjacency matrix output (only used when graph conditioning is enabled)
   return_adjacency_matrix:  # whether to include adjacency matrix in dataset output
-    value: false  # Will be auto-enabled when use_graph_conditioning=true
+    value: true  # Will be auto-enabled when use_graph_conditioning=true
 
   # Rejection sampling: ensure target variance is sufficiently large
   # If either train or test target variance falls below this threshold, resample the dataset.
   # Set to null to disable rejection.
   min_target_variance:
-    value: 1e-3
+    value: 1e-2
+
+  # New unique values threshold (20% by default)
+  min_unique_target_fraction:
+    value: 0.2  # At least 20% of samples must have unique target values
 
   # Safety cap on number of re-sampling attempts to avoid infinite loops
   max_resample_attempts:
-    value: 10
+    value: 100
 
 
   max_number_features:

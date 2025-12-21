@@ -253,11 +253,15 @@ dataset_config:
   # If either train or test target variance falls below this threshold, resample the dataset.
   # Set to null to disable rejection.
   min_target_variance:
-    value: 1e-3
+    value: 1e-2
+
+  # New unique values threshold (20% by default)
+  min_unique_target_fraction:
+    value: 0.2  # At least 20% of samples must have unique target values
 
   # Safety cap on number of re-sampling attempts to avoid infinite loops
   max_resample_attempts:
-    value: 10
+    value: 100
 
 
   max_number_features:
