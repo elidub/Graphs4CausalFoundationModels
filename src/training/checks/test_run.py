@@ -117,7 +117,7 @@ def run_simple_run_test(config_path):
 
 def main():
 
-    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "GraphConditioning" / "configs_5node_benchmarked" / "lingaus_5node_benchmarked_gcn_and_hartatt.yaml"
+    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "GraphConditioning" / "configs_5node_benchmarked" / "lingaus_5node_benchmarked_baseline.yaml"
     
     """Main test function."""
     print("=" * 60)
