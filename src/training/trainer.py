@@ -148,6 +148,9 @@ class Trainer:
         # Move model to device
         self.model = self.model.to(device)
         
+        # Check if Flash Attention is being used
+        self._check_flash_attention()
+        
         # Setup optimizer and loss
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         
@@ -290,6 +293,76 @@ class Trainer:
 
         print(f"Unknown scheduler type: {sched_type}, using constant learning rate")
         return None
+    
+    def _check_flash_attention(self):
+        """Check if Flash Attention is being used in the model."""
+        flash_attention_found = False
+        flash_attention_modules = []
+        
+        try:
+            # Check if flash_attn is available
+            import importlib.util
+            flash_attn_available = importlib.util.find_spec("flash_attn") is not None
+            
+            # Walk through all modules in the model
+            for name, module in self.model.named_modules():
+                module_type = type(module).__name__
+                module_class = type(module).__module__
+                
+                # Check for Flash Attention patterns
+                if 'flash' in module_type.lower() or 'flash' in module_class.lower():
+                    flash_attention_found = True
+                    flash_attention_modules.append(f"{name} ({module_type})")
+                
+                # Check for specific Flash Attention class names
+                if module_type in ['FlashAttention', 'FlashMHA', 'FlashSelfAttention', 'FlashCrossAttention']:
+                    flash_attention_found = True
+                    flash_attention_modules.append(f"{name} ({module_type})")
+            
+            # Also check model attributes for flash attention flags
+            if hasattr(self.model, 'use_flash_attention'):
+                if self.model.use_flash_attention:
+                    flash_attention_found = True
+                    print(f"\n{'='*80}")
+                    print(f"FLASH ATTENTION STATUS: ENABLED (via model.use_flash_attention flag)")
+                    print(f"{'='*80}\n")
+                else:
+                    print(f"\n{'='*80}")
+                    print(f"FLASH ATTENTION STATUS: DISABLED (model.use_flash_attention=False)")
+                    print(f"{'='*80}\n")
+            elif hasattr(self.model, 'config') and hasattr(self.model.config, 'use_flash_attention'):
+                if self.model.config.use_flash_attention:
+                    flash_attention_found = True
+                    print(f"\n{'='*80}")
+                    print(f"FLASH ATTENTION STATUS: ENABLED (via config.use_flash_attention flag)")
+                    print(f"{'='*80}\n")
+                else:
+                    print(f"\n{'='*80}")
+                    print(f"FLASH ATTENTION STATUS: DISABLED (config.use_flash_attention=False)")
+                    print(f"{'='*80}\n")
+            elif flash_attention_found:
+                print(f"\n{'='*80}")
+                print(f"FLASH ATTENTION STATUS: ENABLED")
+                print(f"  Flash Attention modules detected:")
+                for mod in flash_attention_modules[:5]:  # Show first 5
+                    print(f"    - {mod}")
+                if len(flash_attention_modules) > 5:
+                    print(f"    ... and {len(flash_attention_modules) - 5} more")
+                print(f"{'='*80}\n")
+            else:
+                print(f"\n{'='*80}")
+                print(f"FLASH ATTENTION STATUS: NOT DETECTED")
+                if flash_attn_available:
+                    print(f"  Note: flash_attn package is installed but not used in model")
+                else:
+                    print(f"  Note: flash_attn package is not installed")
+                print(f"{'='*80}\n")
+                
+        except Exception as e:
+            print(f"\n{'='*80}")
+            print(f"FLASH ATTENTION STATUS: CHECK FAILED")
+            print(f"  Error: {e}")
+            print(f"{'='*80}\n")
 
     def _process_batch(self, batch):
         """
