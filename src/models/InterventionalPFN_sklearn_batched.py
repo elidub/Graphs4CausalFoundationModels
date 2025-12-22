@@ -1,114 +1,89 @@
 """
-Sklearn-like wrapper for Graph-Conditioned InterventionalPFN models.
+Sklearn-like wrapper for InterventionalPFN models with batched inference support.
 
-This module provides a scikit-learn-style interface for graph-conditioned models
-including GraphConditionedInterventionalPFN, UltimateGraphConditionedInterventionalPFN,
-and FlatGraphConditionedInterventionalPFN.
+This module provides a simplified scikit-learn-style interface for InterventionalPFN,
+analogous to GraphConditionedInterventionalPFN_sklearn but without adjacency matrix.
 
-Key differences from InterventionalPFN_sklearn:
-- Requires adjacency_matrix as input for all predictions
-- Simpler API: only supports basic prediction and log-likelihood
-- No ensemble, clustering, entropy, or variance methods (use full wrapper for those)
+Key features:
+- Batched and non-batched inference modes
+- BarDistribution support for distributional predictions
+- Clean, minimal API focused on core prediction functionality
 
-Adjacency Matrix Format:
-- Shape: (L+2, L+2) where L is the number of features
-- Position ordering: [X_0, X_1, ..., X_{L-1}, T, Y]
-  * Positions 0 to L-1: Feature variables (sorted order, kept after dropout)
-  * Position L: Treatment variable (intervention node)
-  * Position L+1: Outcome variable (target feature)
-- Edge semantics: A[i,j] = 1 means directed edge from i to j (i causes j)
-- The matrix is transposed internally so that j can attend to i (effects attend to causes)
-- Self-loops are added automatically by the model for self-attention
+Key differences from GraphConditionedInterventionalPFN_sklearn:
+- Does NOT require adjacency_matrix as input
+- Otherwise identical API and functionality
 
 Usage:
     # Basic usage
-    wrapper = GraphConditionedInterventionalPFNSklearn(
+    wrapper = InterventionalPFNSklearn(
         config_path="config.yaml",
         checkpoint_path="model.pt"
     )
     wrapper.load()
     
-    # Prediction with adjacency matrix
+    # Non-batched prediction (default)
     preds = wrapper.predict(
         X_obs, T_obs, Y_obs,
         X_intv, T_intv,
-        adjacency_matrix,  # (L+2, L+2) - A[i,j]=1 means i→j
         prediction_type="mode"
     )
     
-    # Log-likelihood (requires BarDistribution)
+    # Batched prediction
+    preds_batched = wrapper.predict(
+        X_obs_batch, T_obs_batch, Y_obs_batch,  # (B, N, ...) shapes
+        X_intv_batch, T_intv_batch,              # (B, M, ...) shapes
+        prediction_type="mode",
+        batched=True
+    )
+    
+    # Log-likelihood
     log_probs = wrapper.log_likelihood(
         X_obs, T_obs, Y_obs,
-        X_intv, T_intv, Y_intv,
-        adjacency_matrix  # (L+2, L+2) - A[i,j]=1 means i→j
+        X_intv, T_intv, Y_intv
     )
     
-    # Or use alias
-    log_probs = wrapper.predict_log_likelihood(
-        X_obs, T_obs, Y_obs,
-        X_intv, T_intv, Y_intv,
-        adjacency_matrix
-    )
-    
-    # Negative log-likelihood (NLL) for loss computation
+    # Negative log-likelihood
     nll = wrapper.predict_negative_log_likelihood(
         X_obs, T_obs, Y_obs,
-        X_intv, T_intv, Y_intv,
-        adjacency_matrix
+        X_intv, T_intv, Y_intv
     )
 """
 
 from __future__ import annotations
 from typing import Optional, Any, Literal
-import sys
-import os
 import numpy as np
 import torch
 import yaml
+import os
+import sys
 from pathlib import Path
 
 # Robust import - try without 'src.' prefix first, then with 'src.' prefix
 try:
-    from models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
-    from models.UltimateGraphConditionedInterventionalPFN import UltimateGraphConditionedInterventionalPFN
-    from models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
+    from models.InterventionalPFN import InterventionalPFN
     from Losses.BarDistribution import BarDistribution
 except Exception:
     try:
-        from src.models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
-        from src.models.UltimateGraphConditionedInterventionalPFN import UltimateGraphConditionedInterventionalPFN
-        from src.models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
+        from src.models.InterventionalPFN import InterventionalPFN
         from src.Losses.BarDistribution import BarDistribution
     except Exception:
         repo_root = Path(__file__).resolve().parents[2]
         if str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
-        from src.models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
-        from src.models.UltimateGraphConditionedInterventionalPFN import UltimateGraphConditionedInterventionalPFN
-        from src.models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
+        from src.models.InterventionalPFN import InterventionalPFN
         from src.Losses.BarDistribution import BarDistribution
 
 
-class GraphConditionedInterventionalPFNSklearn:
+class InterventionalPFNSklearn:
     """
-    Simplified sklearn-like wrapper for graph-conditioned InterventionalPFN models.
+    Simplified sklearn-like wrapper for InterventionalPFN models.
     
     This wrapper focuses on core functionality: prediction and log-likelihood computation
-    for models that require causal graph structure (adjacency matrix) as input.
+    for interventional causal inference without graph structure requirements.
     
-    Supported models (automatically detected from config):
-    - GraphConditionedInterventionalPFN (hard attention masking only) 
-      → graph_conditioning_mode: not specified or basic modes
-    - UltimateGraphConditionedInterventionalPFN (flexible graph conditioning)
-      → graph_conditioning_mode: 'ultimate_soft_attention', 'ultimate_gcn', 
-         'ultimate_gcn_and_soft_attention', or legacy modes
-      → Controlled by flags: use_attention_masking, use_gcn, use_adaln, use_soft_attention_bias
-      → Note: soft attention bias and hard attention masking are typically mutually exclusive
-    - FlatGraphConditionedInterventionalPFN (flat adjacency append)
-      → graph_conditioning_mode: "flat_append"
-    
-    For advanced features like ensemble, clustering, entropy, and variance,
-    use the full InterventionalPFN_sklearn wrapper.
+    Supports both batched and non-batched inference:
+    - batched=False (default): Process single instance (N, L) shapes
+    - batched=True: Process multiple instances simultaneously (B, N, L) shapes
     
     Parameters:
         config_path (str): Path to YAML config file
@@ -134,11 +109,13 @@ class GraphConditionedInterventionalPFNSklearn:
         self.model_kwargs = None
         self.bar_distribution = None
         self.use_bar_distribution = False
-        self.graph_conditioning_mode = None  # Track which model type to use
         
-    def load(self, override_kwargs: Optional[dict[str, Any]] = None) -> "GraphConditionedInterventionalPFNSklearn":
+    def load(self, override_kwargs: Optional[dict[str, Any]] = None) -> "InterventionalPFNSklearn":
         """
         Load config, build model, and load checkpoint.
+        
+        CRITICAL: Model architecture config is loaded from checkpoint to ensure exact match.
+        External config file is only used as fallback if checkpoint doesn't contain config.
         
         Args:
             override_kwargs: Optional dict to override config parameters
@@ -147,173 +124,118 @@ class GraphConditionedInterventionalPFNSklearn:
             self for method chaining
         """
         if self.verbose:
-            print(f"[GraphConditionedInterventionalPFNSklearn] Loading model...")
+            print(f"[InterventionalPFNSklearn] Loading model...")
             print(f"  Config: {self.config_path}")
             print(f"  Checkpoint: {self.checkpoint_path}")
         
-        # Load config
+        # Helper to get value from wandb-style or flat config
+        def _get_cfg_value(cfg_dict, key, default=None):
+            if key in cfg_dict:
+                val = cfg_dict[key]
+                return val['value'] if isinstance(val, dict) and 'value' in val else val
+            return default
+        
+        # Load checkpoint FIRST to get the training config
+        checkpoint_config = None
+        if self.checkpoint_path:
+            checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
+            
+            # Try to extract config from checkpoint
+            if 'config' in checkpoint:
+                checkpoint_config = checkpoint['config']
+                if self.verbose:
+                    print(f"  ✓ Found config in checkpoint (will use for model architecture)")
+        
+        # Load external config file as fallback
+        external_config = None
         if self.config_path:
             with open(self.config_path, 'r') as f:
-                config = yaml.safe_load(f)
-            
-            # Helper function to get value from config (handles both direct values and nested "value" keys)
-            def get_config_value(config_dict, key, default):
-                if key not in config_dict:
-                    return default
-                val = config_dict[key]
-                # If it's a dict with "value" key, extract the value
-                if isinstance(val, dict) and "value" in val:
-                    return val["value"]
-                return val
-            
-            # Extract model kwargs from config
-            self.model_kwargs = {}
-            
-            # Core architecture parameters (look for 'model_config' key, which is the standard)
-            if 'model_config' in config:
-                model_cfg = config['model_config']
-                self.model_kwargs['num_features'] = get_config_value(model_cfg, 'num_features', None)
-                self.model_kwargs['d_model'] = get_config_value(model_cfg, 'd_model', 256)
-                self.model_kwargs['depth'] = get_config_value(model_cfg, 'depth', 8)
-                self.model_kwargs['heads_feat'] = get_config_value(model_cfg, 'heads_feat', 8)
-                self.model_kwargs['heads_samp'] = get_config_value(model_cfg, 'heads_samp', 8)
-                self.model_kwargs['dropout'] = get_config_value(model_cfg, 'dropout', 0.0)
-                self.model_kwargs['hidden_mult'] = get_config_value(model_cfg, 'hidden_mult', 4)
-                self.model_kwargs['normalize_features'] = get_config_value(model_cfg, 'normalize_features', True)
-                self.model_kwargs['use_same_row_mlp'] = get_config_value(model_cfg, 'use_same_row_mlp', True)
-                self.model_kwargs['n_sample_attention_sink_rows'] = get_config_value(model_cfg, 'n_sample_attention_sink_rows', 0)
-                self.model_kwargs['n_feature_attention_sink_cols'] = get_config_value(model_cfg, 'n_feature_attention_sink_cols', 0)
-                
-                # Detect graph conditioning mode
-                self.graph_conditioning_mode = get_config_value(model_cfg, 'graph_conditioning_mode', 'hard_attention_only')
-                
-                # UltimateGraphConditionedInterventionalPFN-specific parameters
-                # First try to get explicit values from config
-                use_attention_masking = get_config_value(model_cfg, 'use_attention_masking', None)
-                use_gcn = get_config_value(model_cfg, 'use_gcn', None)
-                use_adaln = get_config_value(model_cfg, 'use_adaln', None)
-                use_soft_attention_bias = get_config_value(model_cfg, 'use_soft_attention_bias', None)
-                
-                # If not explicitly set, infer from graph_conditioning_mode
-                if use_attention_masking is None or use_gcn is None or use_adaln is None or use_soft_attention_bias is None:
-                    # Map mode names to flag settings: (use_attention_masking, use_gcn, use_adaln, use_soft_attention_bias)
-                    # Note: soft attention bias REQUIRES attention masking to be enabled
-                    mode_to_flags = {
-                        'ultimate_hard_attention_only': (True, False, False, False),
-                        'ultimate_gcn_only': (False, True, True, False),
-                        'ultimate_gcn_and_hard_attention': (True, True, True, False),
-                        'ultimate_soft_attention': (True, False, False, True),  # Soft bias requires attention masking
-                        'ultimate_gcn_and_soft_attention': (True, True, True, True),  # GCN+AdaLN+soft bias requires attention masking
-                        # Legacy modes
-                        'hard_attention_only': (True, False, False, False),
-                        'soft_learned_bias': (True, False, False, True),  # Soft bias requires attention masking
-                        'hybrid_half_and_half': (True, False, False, True),  # Soft bias requires attention masking
-                    }
-                    
-                    if self.graph_conditioning_mode in mode_to_flags:
-                        inferred_masking, inferred_gcn, inferred_adaln, inferred_soft = mode_to_flags[self.graph_conditioning_mode]
-                        if use_attention_masking is None:
-                            use_attention_masking = inferred_masking
-                        if use_gcn is None:
-                            use_gcn = inferred_gcn
-                        if use_adaln is None:
-                            use_adaln = inferred_adaln
-                        if use_soft_attention_bias is None:
-                            use_soft_attention_bias = inferred_soft
-                    else:
-                        # Default fallback
-                        if use_attention_masking is None:
-                            use_attention_masking = True
-                        if use_gcn is None:
-                            use_gcn = False
-                        if use_adaln is None:
-                            use_adaln = False
-                        if use_soft_attention_bias is None:
-                            use_soft_attention_bias = False
-                
-                self.model_kwargs['use_attention_masking'] = use_attention_masking
-                self.model_kwargs['use_gcn'] = use_gcn
-                self.model_kwargs['use_adaln'] = use_adaln
-                self.model_kwargs['use_soft_attention_bias'] = use_soft_attention_bias
-                self.model_kwargs['soft_bias_init'] = get_config_value(model_cfg, 'soft_bias_init', 5.0)
-                
-                # BarDistribution configuration
-                use_bar = get_config_value(model_cfg, 'use_bar_distribution', False)
-                if use_bar:
-                    self.use_bar_distribution = True
-                    num_bars = get_config_value(model_cfg, 'num_bars', 100)
-                    self.model_kwargs['output_dim'] = num_bars + 4  # BarDistribution requires K + 4 parameters
-                    
-                    # Create BarDistribution
-                    self.bar_distribution = BarDistribution(
-                        num_bars=num_bars,
-                        min_width=float(get_config_value(model_cfg, 'min_width', 1e-6)),
-                        scale_floor=float(get_config_value(model_cfg, 'scale_floor', 1e-6)),
-                        device=self.device,
-                        max_fit_items=get_config_value(model_cfg, 'max_fit_items', None),
-                        log_prob_clip_min=float(get_config_value(model_cfg, 'log_prob_clip_min', -50.0)),
-                        log_prob_clip_max=float(get_config_value(model_cfg, 'log_prob_clip_max', 50.0)),
-                    )
-                    if self.verbose:
-                        print(f"  BarDistribution enabled: {self.bar_distribution.num_bars} bars, "
-                              f"output_dim={self.model_kwargs['output_dim']}")
-                else:
-                    self.model_kwargs['output_dim'] = 1
-                    self.use_bar_distribution = False
-            else:
-                raise ValueError("'model_config' not found in config file")
-        else:
-            raise ValueError("config_path is required")
+                external_config = yaml.safe_load(f)
         
-        # Apply overrides
+        # Determine which config to use (checkpoint takes priority)
+        if checkpoint_config:
+            config = checkpoint_config
+            if self.verbose:
+                print(f"  Using config from checkpoint (exact training config)")
+        elif external_config:
+            config = external_config
+            if self.verbose:
+                print(f"  Warning: Using external config (checkpoint has no config)")
+        else:
+            raise ValueError("No config available (neither in checkpoint nor config_path)")
+        
+        model_config = config.get('model_config', config.get('model', {}))
+        bar_config = config.get('bar_distribution', {})
+        
+        # Extract model architecture parameters (MUST match training exactly)
+        self.model_kwargs = {
+            'num_features': _get_cfg_value(model_config, 'num_features'),
+            'd_model': _get_cfg_value(model_config, 'd_model', 256),
+            'depth': _get_cfg_value(model_config, 'depth', 6),
+            'heads_feat': _get_cfg_value(model_config, 'heads_feat', 4),
+            'heads_samp': _get_cfg_value(model_config, 'heads_samp', 4),
+            'dropout': _get_cfg_value(model_config, 'dropout', 0.0),
+            'hidden_mult': _get_cfg_value(model_config, 'hidden_mult', 4),  # CRITICAL: must match training
+            'use_same_row_mlp': _get_cfg_value(model_config, 'use_same_row_mlp', True),
+            'n_sample_attention_sink_rows': _get_cfg_value(model_config, 'n_sample_attention_sink_rows', 0),
+            'n_feature_attention_sink_cols': _get_cfg_value(model_config, 'n_feature_attention_sink_cols', 0),
+        }
+        
+        # BarDistribution config
+        self.use_bar_distribution = _get_cfg_value(bar_config, 'use_bar_distribution', 
+                                                   _get_cfg_value(model_config, 'use_bar_distribution', False))
+        
+        if self.use_bar_distribution:
+            num_bars = _get_cfg_value(bar_config, 'num_bars', _get_cfg_value(model_config, 'num_bars', 50))
+            output_dim = num_bars + 4  # K bars + 4 tail params
+            self.model_kwargs['output_dim'] = output_dim
+            
+            if self.verbose:
+                print(f"  BarDistribution enabled: {num_bars} bars, output_dim={output_dim}")
+            
+            self.bar_distribution = BarDistribution(
+                num_bars=num_bars,
+                min_width=_get_cfg_value(bar_config, 'min_width', 1e-6),
+                scale_floor=_get_cfg_value(bar_config, 'scale_floor', 1e-6),
+            )
+        else:
+            self.model_kwargs['output_dim'] = 1
+        
+        if self.verbose:
+            print(f"  Model architecture:")
+            print(f"    - d_model: {self.model_kwargs['d_model']}")
+            print(f"    - hidden_mult: {self.model_kwargs['hidden_mult']}")
+            print(f"    - depth: {self.model_kwargs['depth']}")
+            print(f"    - num_features: {self.model_kwargs['num_features']}")
+        if self.verbose:
+            print(f"  Model architecture:")
+            print(f"    - d_model: {self.model_kwargs['d_model']}")
+            print(f"    - hidden_mult: {self.model_kwargs['hidden_mult']}")
+            print(f"    - depth: {self.model_kwargs['depth']}")
+            print(f"    - num_features: {self.model_kwargs['num_features']}")
+        
+        # Apply overrides (only for non-critical parameters)
         if override_kwargs:
+            if self.verbose:
+                print(f"  Applying overrides: {override_kwargs}")
             self.model_kwargs.update(override_kwargs)
         
         # Sanity check
         if not self.model_kwargs.get("num_features"):
-            raise ValueError("num_features not found in config")
+            raise ValueError("num_features must be specified in config")
         
-        # Build model based on graph conditioning mode
+        # Build model
         if self.verbose:
-            print(f"  Graph conditioning mode: {self.graph_conditioning_mode}")
             print(f"  Building model with {self.model_kwargs['num_features']} features...")
         
-        # Remove parameters not supported by specific model types
-        model_kwargs_filtered = self.model_kwargs.copy()
+        self.model = InterventionalPFN(**self.model_kwargs).to(self.device)
         
-        # Map graph_conditioning_mode to UltimateGraphConditionedInterventionalPFN flags
-        if self.graph_conditioning_mode == 'flat_append':
-            if self.verbose:
-                print(f"  Creating FlatGraphConditionedInterventionalPFN (flat adjacency append)")
-            self.model = FlatGraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
-        elif self.graph_conditioning_mode in ['ultimate_hard_attention_only', 'ultimate_gcn_only', 'ultimate_gcn_and_hard_attention',
-                                               'ultimate_soft_attention', 'ultimate_gcn_and_soft_attention', 
-                                               'soft_learned_bias', 'hybrid_half_and_half', 'hard_attention_only']:
-            # All these modes use UltimateGraphConditionedInterventionalPFN with different flag combinations
-            if self.verbose:
-                print(f"  Creating UltimateGraphConditionedInterventionalPFN")
-                print(f"    use_attention_masking: {model_kwargs_filtered.get('use_attention_masking', True)}")
-                print(f"    use_gcn: {model_kwargs_filtered.get('use_gcn', False)}")
-                print(f"    use_adaln: {model_kwargs_filtered.get('use_adaln', False)}")
-                print(f"    use_soft_attention_bias: {model_kwargs_filtered.get('use_soft_attention_bias', False)}")
-            self.model = UltimateGraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
-        else:  
-            # Default: use basic GraphConditionedInterventionalPFN (hard attention masking only)
-            if self.verbose:
-                print(f"  Creating GraphConditionedInterventionalPFN (hard attention masking)")
-            # Remove UltimateGraphConditionedInterventionalPFN-specific parameters
-            for key in ['use_attention_masking', 'use_gcn', 'use_adaln', 'use_soft_attention_bias', 'soft_bias_init']:
-                model_kwargs_filtered.pop(key, None)
-            self.model = GraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
-        
-        # Load checkpoint
+        # Load checkpoint weights
         if self.checkpoint_path:
             if self.verbose:
-                print(f"  Loading checkpoint from {self.checkpoint_path}...")
+                print(f"  Loading checkpoint weights from {self.checkpoint_path}")
             
-            checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
-            
-            # Handle different checkpoint formats
+            # Checkpoint was already loaded earlier, extract state dict
             if 'model_state_dict' in checkpoint:
                 state_dict = checkpoint['model_state_dict']
             elif 'state_dict' in checkpoint:
@@ -321,37 +243,42 @@ class GraphConditionedInterventionalPFNSklearn:
             else:
                 state_dict = checkpoint
             
-            # Load model state
-            self.model.load_state_dict(state_dict, strict=True)
+            # Load model weights with strict=True (should match exactly now)
+            try:
+                missing_keys, unexpected_keys = self.model.load_state_dict(state_dict, strict=False)
+                
+                if missing_keys or unexpected_keys:
+                    if self.verbose:
+                        if missing_keys:
+                            print(f"  Warning: Missing keys: {missing_keys[:5]}{'...' if len(missing_keys) > 5 else ''}")
+                        if unexpected_keys:
+                            print(f"  Warning: Unexpected keys: {unexpected_keys[:5]}{'...' if len(unexpected_keys) > 5 else ''}")
+                else:
+                    if self.verbose:
+                        print(f"  ✓ All checkpoint weights loaded successfully")
+            except RuntimeError as e:
+                raise RuntimeError(
+                    f"Failed to load checkpoint weights. This usually means the model architecture "
+                    f"doesn't match the checkpoint. Error: {e}"
+                )
             
             # Load BarDistribution state if available
             if self.use_bar_distribution and 'bar_distribution' in checkpoint:
                 bar_state = checkpoint['bar_distribution']
-                # Load all BarDistribution state fields
-                if 'centers' in bar_state:
-                    self.bar_distribution.centers = bar_state['centers']
-                if 'edges' in bar_state:
-                    self.bar_distribution.edges = bar_state['edges']
-                if 'widths' in bar_state:
-                    self.bar_distribution.widths = bar_state['widths']
-                if 'base_s_left' in bar_state:
-                    self.bar_distribution.base_s_left = bar_state['base_s_left']
-                if 'base_s_right' in bar_state:
-                    self.bar_distribution.base_s_right = bar_state['base_s_right']
+                for key, value in bar_state.items():
+                    if isinstance(value, torch.Tensor):
+                        setattr(self.bar_distribution, key, value.to(self.device))
+                    else:
+                        setattr(self.bar_distribution, key, value)
                 
-                if self.verbose and self.bar_distribution.centers is not None:
-                    print(f"  BarDistribution state loaded from checkpoint")
-                    print(f"    centers shape: {self.bar_distribution.centers.shape}")
-                    print(f"    edges shape: {self.bar_distribution.edges.shape if self.bar_distribution.edges is not None else 'None'}")
-            
-            if self.verbose:
-                print(f"  Checkpoint loaded successfully")
+                if self.verbose:
+                    print(f"  ✓ BarDistribution state loaded from checkpoint")
         
         self.model.eval()
         
         if self.verbose:
-            total_params = sum(p.numel() for p in self.model.parameters())
-            print(f"  Model loaded with {total_params:,} parameters")
+            n_params = sum(p.numel() for p in self.model.parameters())
+            print(f"  Model loaded with {n_params:,} parameters")
         
         return self
     
@@ -362,13 +289,12 @@ class GraphConditionedInterventionalPFNSklearn:
         Y_obs: Any,
         X_intv: Any,
         T_intv: Any,
-        adjacency_matrix: Any,
         prediction_type: Literal["point", "mode", "mean", "sample"] = "mean",
         num_samples: int = 100,
         batched: bool = False,
     ) -> np.ndarray:
         """
-        Make predictions for interventional test data with graph conditioning.
+        Make predictions for interventional test data.
         
         Args:
             X_obs: Observational features
@@ -386,20 +312,6 @@ class GraphConditionedInterventionalPFNSklearn:
             T_intv: Interventional intervened feature
                 - If batched=False: (M,) or (M, 1)
                 - If batched=True: (B, M) or (B, M, 1)
-            adjacency_matrix: Causal graph adjacency matrix
-                - If batched=False: (L+2, L+2)
-                - If batched=True: (B, L+2, L+2)
-                
-                Position ordering (matches internal embedding order):
-                  - Position 0 to L-1: Feature variables (X[:,0] to X[:,L-1])
-                  - Position L: Treatment variable (T)
-                  - Position L+1: Outcome variable (Y)
-                
-                Edge semantics:
-                  - A[i,j] = 1 means directed edge from i to j (i causes j)
-                  - The matrix is transposed internally so j can attend to i
-                  - This ensures effects attend to their causes for causal inference
-                  - Self-loops are added automatically for self-attention
             prediction_type: Type of prediction
                 - "point": Direct model output (requires BarDistribution disabled)
                 - "mode": Most likely value from BarDistribution
@@ -436,54 +348,41 @@ class GraphConditionedInterventionalPFNSklearn:
             X_intv = X_intv.values
         if hasattr(T_intv, "values"):
             T_intv = T_intv.values
-        if hasattr(adjacency_matrix, "values"):
-            adjacency_matrix = adjacency_matrix.values
         
         X_obs = np.asarray(X_obs, dtype=np.float32)
         T_obs = np.asarray(T_obs, dtype=np.float32)
         Y_obs = np.asarray(Y_obs, dtype=np.float32)
         X_intv = np.asarray(X_intv, dtype=np.float32)
         T_intv = np.asarray(T_intv, dtype=np.float32)
-        adjacency_matrix = np.asarray(adjacency_matrix, dtype=np.float32)
         
         # Ensure T arrays are 2D
         if T_obs.ndim == 1:
-            T_obs = T_obs.reshape(-1, 1)
+            T_obs = T_obs[:, None]
         if T_intv.ndim == 1:
-            T_intv = T_intv.reshape(-1, 1)
+            T_intv = T_intv[:, None]
         if Y_obs.ndim == 2 and Y_obs.shape[1] == 1:
-            Y_obs = Y_obs.squeeze(-1)
+            Y_obs = Y_obs.squeeze(1)
         
         # Validate and convert to torch tensors based on batched flag
         if batched:
-            # Batched input: expect (B, ...) shapes
-            if adjacency_matrix.ndim != 3:
-                raise ValueError(f"adjacency_matrix must be 3D when batched=True, got shape {adjacency_matrix.shape}")
-            
-            # Convert to torch tensors (already have batch dimension)
+            # Batched mode: inputs should have shape (B, N, ...) and (B, M, ...)
             X_obs_t = torch.from_numpy(X_obs).to(self.device)  # (B, N, L)
             T_obs_t = torch.from_numpy(T_obs).to(self.device)  # (B, N, 1)
             Y_obs_t = torch.from_numpy(Y_obs).to(self.device)  # (B, N)
             X_intv_t = torch.from_numpy(X_intv).to(self.device)  # (B, M, L)
             T_intv_t = torch.from_numpy(T_intv).to(self.device)  # (B, M, 1)
-            adjacency_matrix_t = torch.from_numpy(adjacency_matrix).to(self.device)  # (B, L+2, L+2)
         else:
-            # Non-batched input: add batch dimension
-            if adjacency_matrix.ndim != 2:
-                raise ValueError(f"adjacency_matrix must be 2D when batched=False, got shape {adjacency_matrix.shape}")
-            
-            # Convert to torch tensors and add batch dimension
+            # Non-batched mode: add batch dimension
             X_obs_t = torch.from_numpy(X_obs).unsqueeze(0).to(self.device)  # (1, N, L)
             T_obs_t = torch.from_numpy(T_obs).unsqueeze(0).to(self.device)  # (1, N, 1)
             Y_obs_t = torch.from_numpy(Y_obs).unsqueeze(0).to(self.device)  # (1, N)
             X_intv_t = torch.from_numpy(X_intv).unsqueeze(0).to(self.device)  # (1, M, L)
             T_intv_t = torch.from_numpy(T_intv).unsqueeze(0).to(self.device)  # (1, M, 1)
-            adjacency_matrix_t = torch.from_numpy(adjacency_matrix).unsqueeze(0).to(self.device)  # (1, L+2, L+2)
         
         # Forward pass
         self.model.eval()
         with torch.no_grad():
-            out = self.model(X_obs_t, T_obs_t, Y_obs_t, X_intv_t, T_intv_t, adjacency_matrix_t)
+            out = self.model(X_obs_t, T_obs_t, Y_obs_t, X_intv_t, T_intv_t)
             predictions = out["predictions"]  # (B, M) or (B, M, output_dim)
         
         # Process predictions based on type
@@ -531,7 +430,6 @@ class GraphConditionedInterventionalPFNSklearn:
         X_intv: Any,
         T_intv: Any,
         Y_intv: Any,
-        adjacency_matrix: Any,
         batched: bool = False,
     ) -> np.ndarray:
         """
@@ -558,20 +456,6 @@ class GraphConditionedInterventionalPFNSklearn:
             Y_intv: Interventional targets (ground truth)
                 - If batched=False: (M,) or (M, 1)
                 - If batched=True: (B, M) or (B, M, 1)
-            adjacency_matrix: Causal graph adjacency matrix
-                - If batched=False: (L+2, L+2)
-                - If batched=True: (B, L+2, L+2)
-                
-                Position ordering (matches internal embedding order):
-                  - Position 0 to L-1: Feature variables (X[:,0] to X[:,L-1])
-                  - Position L: Treatment variable (T)
-                  - Position L+1: Outcome variable (Y)
-                
-                Edge semantics:
-                  - A[i,j] = 1 means directed edge from i to j (i causes j)
-                  - The matrix is transposed internally so j can attend to i
-                  - This ensures effects attend to their causes for causal inference
-                  - Self-loops are added automatically for self-attention
             batched: If True, expects inputs with leading batch dimension (B, ...)
                     If False (default), expects single-instance inputs (no batch dim)
             
@@ -599,8 +483,6 @@ class GraphConditionedInterventionalPFNSklearn:
             T_intv = T_intv.values
         if hasattr(Y_intv, "values"):
             Y_intv = Y_intv.values
-        if hasattr(adjacency_matrix, "values"):
-            adjacency_matrix = adjacency_matrix.values
         
         X_obs = np.asarray(X_obs, dtype=np.float32)
         T_obs = np.asarray(T_obs, dtype=np.float32)
@@ -608,61 +490,50 @@ class GraphConditionedInterventionalPFNSklearn:
         X_intv = np.asarray(X_intv, dtype=np.float32)
         T_intv = np.asarray(T_intv, dtype=np.float32)
         Y_intv = np.asarray(Y_intv, dtype=np.float32)
-        adjacency_matrix = np.asarray(adjacency_matrix, dtype=np.float32)
         
         # Ensure T arrays are 2D
         if T_obs.ndim == 1:
-            T_obs = T_obs.reshape(-1, 1)
+            T_obs = T_obs[:, None]
         if T_intv.ndim == 1:
-            T_intv = T_intv.reshape(-1, 1)
+            T_intv = T_intv[:, None]
         if Y_obs.ndim == 2 and Y_obs.shape[1] == 1:
-            Y_obs = Y_obs.squeeze(-1)
+            Y_obs = Y_obs.squeeze(1)
         if Y_intv.ndim == 2 and Y_intv.shape[1] == 1:
-            Y_intv = Y_intv.squeeze(-1)
+            Y_intv = Y_intv.squeeze(1)
         
         # Validate and convert to torch tensors based on batched flag
         if batched:
-            # Batched input: expect (B, ...) shapes
-            if adjacency_matrix.ndim != 3:
-                raise ValueError(f"adjacency_matrix must be 3D when batched=True, got shape {adjacency_matrix.shape}")
-            
-            # Convert to torch tensors (already have batch dimension)
+            # Batched mode
             X_obs_t = torch.from_numpy(X_obs).to(self.device)  # (B, N, L)
             T_obs_t = torch.from_numpy(T_obs).to(self.device)  # (B, N, 1)
             Y_obs_t = torch.from_numpy(Y_obs).to(self.device)  # (B, N)
             X_intv_t = torch.from_numpy(X_intv).to(self.device)  # (B, M, L)
             T_intv_t = torch.from_numpy(T_intv).to(self.device)  # (B, M, 1)
             Y_intv_t = torch.from_numpy(Y_intv).to(self.device)  # (B, M)
-            adjacency_matrix_t = torch.from_numpy(adjacency_matrix).to(self.device)  # (B, L+2, L+2)
         else:
-            # Non-batched input: add batch dimension
-            if adjacency_matrix.ndim != 2:
-                raise ValueError(f"adjacency_matrix must be 2D when batched=False, got shape {adjacency_matrix.shape}")
-            
-            # Convert to torch tensors and add batch dimension
+            # Non-batched mode: add batch dimension
             X_obs_t = torch.from_numpy(X_obs).unsqueeze(0).to(self.device)  # (1, N, L)
             T_obs_t = torch.from_numpy(T_obs).unsqueeze(0).to(self.device)  # (1, N, 1)
             Y_obs_t = torch.from_numpy(Y_obs).unsqueeze(0).to(self.device)  # (1, N)
             X_intv_t = torch.from_numpy(X_intv).unsqueeze(0).to(self.device)  # (1, M, L)
             T_intv_t = torch.from_numpy(T_intv).unsqueeze(0).to(self.device)  # (1, M, 1)
             Y_intv_t = torch.from_numpy(Y_intv).unsqueeze(0).to(self.device)  # (1, M)
-            adjacency_matrix_t = torch.from_numpy(adjacency_matrix).unsqueeze(0).to(self.device)  # (1, L+2, L+2)
         
         # BarDistribution must be loaded from checkpoint
         if self.bar_distribution.centers is None:
             raise RuntimeError(
-                "BarDistribution is not fitted. This should have been loaded from the checkpoint. "
-                "Make sure your checkpoint contains the bar_distribution state."
+                "BarDistribution is not fitted. This should have been loaded from the checkpoint."
             )
         
         # Forward pass
         self.model.eval()
         with torch.no_grad():
-            out = self.model(X_obs_t, T_obs_t, Y_obs_t, X_intv_t, T_intv_t, adjacency_matrix_t)
+            out = self.model(X_obs_t, T_obs_t, Y_obs_t, X_intv_t, T_intv_t)
             predictions = out["predictions"]  # (B, M, output_dim)
-            
-            # Compute log-likelihood
             log_probs = self.bar_distribution._logpdf_from_pred(predictions, Y_intv_t)  # (B, M)
+            # Clamp for numerical stability
+            log_probs = torch.clamp(log_probs, min=self.bar_distribution.log_prob_clip_min, 
+                                   max=self.bar_distribution.log_prob_clip_max)
         
         if batched:
             return log_probs.cpu().numpy()  # (B, M)
@@ -677,11 +548,10 @@ class GraphConditionedInterventionalPFNSklearn:
         X_intv: Any,
         T_intv: Any,
         Y_intv: Any,
-        adjacency_matrix: Any,
         batched: bool = False,
     ) -> np.ndarray:
         """
-        Alias for log_likelihood method for consistency with SimplePFN_sklearn.
+        Alias for log_likelihood method for consistency with other wrappers.
         
         Compute log-likelihood of test targets under the predictive distribution.
         Requires BarDistribution to be enabled.
@@ -705,20 +575,6 @@ class GraphConditionedInterventionalPFNSklearn:
             Y_intv: Interventional targets (ground truth)
                 - If batched=False: (M,) or (M, 1)
                 - If batched=True: (B, M) or (B, M, 1)
-            adjacency_matrix: Causal graph adjacency matrix
-                - If batched=False: (L+2, L+2)
-                - If batched=True: (B, L+2, L+2)
-                
-                Position ordering (matches internal embedding order):
-                  - Position 0 to L-1: Feature variables (X[:,0] to X[:,L-1])
-                  - Position L: Treatment variable (T)
-                  - Position L+1: Outcome variable (Y)
-                
-                Edge semantics:
-                  - A[i,j] = 1 means directed edge from i to j (i causes j)
-                  - The matrix is transposed internally so j can attend to i
-                  - This ensures effects attend to their causes for causal inference
-                  - Self-loops are added automatically for self-attention
             batched: If True, expects inputs with leading batch dimension (B, ...)
                     If False (default), expects single-instance inputs (no batch dim)
             
@@ -727,7 +583,7 @@ class GraphConditionedInterventionalPFNSklearn:
             - If batched=False: shape (M,)
             - If batched=True: shape (B, M)
         """
-        return self.log_likelihood(X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adjacency_matrix, batched=batched)
+        return self.log_likelihood(X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, batched=batched)
     
     def predict_negative_log_likelihood(
         self,
@@ -737,57 +593,23 @@ class GraphConditionedInterventionalPFNSklearn:
         X_intv: Any,
         T_intv: Any,
         Y_intv: Any,
-        adjacency_matrix: Any,
         batched: bool = False,
     ) -> np.ndarray:
         """
-        Compute negative log-likelihood (NLL) of test targets.
+        Compute negative log-likelihood (NLL) for use as a loss metric.
         
-        This is simply the negative of log_likelihood, commonly used as a loss metric.
-        Requires BarDistribution to be enabled.
+        This is simply the negative of log_likelihood, provided for convenience
+        when you want a loss value (lower is better) instead of likelihood (higher is better).
         
         Args:
-            X_obs: Observational features
-                - If batched=False: (N, L)
-                - If batched=True: (B, N, L)
-            T_obs: Observational intervened feature
-                - If batched=False: (N,) or (N, 1)
-                - If batched=True: (B, N) or (B, N, 1)
-            Y_obs: Observational targets
-                - If batched=False: (N,) or (N, 1)
-                - If batched=True: (B, N) or (B, N, 1)
-            X_intv: Interventional features
-                - If batched=False: (M, L)
-                - If batched=True: (B, M, L)
-            T_intv: Interventional intervened feature
-                - If batched=False: (M,) or (M, 1)
-                - If batched=True: (B, M) or (B, M, 1)
-            Y_intv: Interventional targets (ground truth)
-                - If batched=False: (M,) or (M, 1)
-                - If batched=True: (B, M) or (B, M, 1)
-            adjacency_matrix: Causal graph adjacency matrix
-                - If batched=False: (L+2, L+2)
-                - If batched=True: (B, L+2, L+2)
-                
-                Position ordering (matches internal embedding order):
-                  - Position 0 to L-1: Feature variables (X[:,0] to X[:,L-1])
-                  - Position L: Treatment variable (T)
-                  - Position L+1: Outcome variable (Y)
-                
-                Edge semantics:
-                  - A[i,j] = 1 means directed edge from i to j (i causes j)
-                  - The matrix is transposed internally so j can attend to i
-                  - This ensures effects attend to their causes for causal inference
-                  - Self-loops are added automatically for self-attention
-            batched: If True, expects inputs with leading batch dimension (B, ...)
-                    If False (default), expects single-instance inputs (no batch dim)
+            Same as log_likelihood()
             
         Returns:
             Negative log-likelihood values
             - If batched=False: shape (M,)
             - If batched=True: shape (B, M)
         """
-        return -self.log_likelihood(X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adjacency_matrix, batched=batched)
+        return -self.log_likelihood(X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, batched=batched)
 
 
 if __name__ == "__main__":
@@ -806,26 +628,23 @@ if __name__ == "__main__":
        - log_likelihood() and all variants on batched inputs
        - Correct output shapes: (B, M) for scalars, (B, num_samples, M) for samples
     
-    3. Shape validation:
-       - Ensures 2D adjacency matrix with batched=True raises ValueError
-       - Ensures 3D adjacency matrix with batched=False raises ValueError
-    
-    4. Method consistency:
+    3. Method consistency:
        - predict_log_likelihood() returns same values as log_likelihood()
        - predict_negative_log_likelihood() returns negative of log_likelihood()
     
-    5. Batched vs non-batched consistency:
+    4. Batched vs non-batched consistency:
        - Verifies that batched predictions match B separate non-batched calls
        - Tests mode, mean, and log-likelihood computations
        - Ensures batching is just an efficiency optimization, not changing results
     """
-    # Test the graph-conditioned wrapper
+    import tempfile
+    
+    # Test the wrapper
     print("\n" + "="*80)
-    print("TEST: GraphConditionedInterventionalPFNSklearn")
+    print("TEST: InterventionalPFNSklearn")
     print("="*80)
     
     # For testing, we'll create a minimal config
-    import tempfile
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
         yaml.dump({
             'model_config': {
@@ -839,13 +658,12 @@ if __name__ == "__main__":
                 'num_bars': {'value': 50},
                 'min_width': {'value': 1e-6},
                 'scale_floor': {'value': 1e-6},
-                'graph_conditioning_mode': {'value': 'ultimate_gcn_only'},
             }
         }, f)
         cfg_path = f.name
     
     # Create wrapper
-    wrapper = GraphConditionedInterventionalPFNSklearn(
+    wrapper = InterventionalPFNSklearn(
         config_path=cfg_path,
         checkpoint_path=None,  # No checkpoint for this test
         device="cpu",
@@ -901,32 +719,28 @@ if __name__ == "__main__":
     T_intv = np.random.randn(M, 1).astype(np.float32)
     Y_intv = np.random.randn(M).astype(np.float32)
     
-    # Create dummy adjacency matrix (fully connected for testing)
-    adjacency_matrix = np.ones((num_features + 2, num_features + 2), dtype=np.float32)
-    
     print("\n" + "="*80)
     print("TEST 1: Non-Batched Mode (batched=False, default)")
     print("="*80)
     print(f"  X_obs: {X_obs.shape}, T_obs: {T_obs.shape}, Y_obs: {Y_obs.shape}")
     print(f"  X_intv: {X_intv.shape}, T_intv: {T_intv.shape}")
-    print(f"  adjacency_matrix: {adjacency_matrix.shape}")
     
     # Test non-batched predictions
     try:
-        preds_mode = wrapper.predict(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix, 
+        preds_mode = wrapper.predict(X_obs, T_obs, Y_obs, X_intv, T_intv, 
                                      prediction_type="mode", batched=False)
         print(f"\n✓ Mode predictions shape: {preds_mode.shape} (expected: ({M},))")
         assert preds_mode.shape == (M,), f"Expected shape ({M},), got {preds_mode.shape}"
         print(f"  Sample predictions: {preds_mode[:3]}")
         
-        preds_mean = wrapper.predict(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix, 
+        preds_mean = wrapper.predict(X_obs, T_obs, Y_obs, X_intv, T_intv, 
                                      prediction_type="mean", batched=False)
         print(f"\n✓ Mean predictions shape: {preds_mean.shape} (expected: ({M},))")
         assert preds_mean.shape == (M,), f"Expected shape ({M},), got {preds_mean.shape}"
         print(f"  Sample predictions: {preds_mean[:3]}")
         
         num_samples = 10
-        preds_sample = wrapper.predict(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix, 
+        preds_sample = wrapper.predict(X_obs, T_obs, Y_obs, X_intv, T_intv, 
                                        prediction_type="sample", num_samples=num_samples, batched=False)
         print(f"\n✓ Sample predictions shape: {preds_sample.shape} (expected: ({num_samples}, {M}))")
         assert preds_sample.shape == (num_samples, M), f"Expected shape ({num_samples}, {M}), got {preds_sample.shape}"
@@ -939,21 +753,18 @@ if __name__ == "__main__":
     
     # Test non-batched log-likelihood
     try:
-        log_probs = wrapper.log_likelihood(X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, 
-                                          adjacency_matrix, batched=False)
+        log_probs = wrapper.log_likelihood(X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, batched=False)
         print(f"\n✓ Log-likelihood shape: {log_probs.shape} (expected: ({M},))")
         assert log_probs.shape == (M,), f"Expected shape ({M},), got {log_probs.shape}"
         print(f"  Sample log-likelihoods: {log_probs[:3]}")
         
         # Test alias method
-        log_probs_alias = wrapper.predict_log_likelihood(X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, 
-                                                         adjacency_matrix, batched=False)
+        log_probs_alias = wrapper.predict_log_likelihood(X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, batched=False)
         print(f"\n✓ predict_log_likelihood shape: {log_probs_alias.shape}")
         assert np.allclose(log_probs, log_probs_alias), "log_likelihood and predict_log_likelihood should return the same values"
         
         # Test negative log-likelihood
-        nll = wrapper.predict_negative_log_likelihood(X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, 
-                                                      adjacency_matrix, batched=False)
+        nll = wrapper.predict_negative_log_likelihood(X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, batched=False)
         print(f"\n✓ Negative log-likelihood shape: {nll.shape} (expected: ({M},))")
         assert nll.shape == (M,), f"Expected shape ({M},), got {nll.shape}"
         print(f"  Sample NLL: {nll[:3]}")
@@ -976,27 +787,23 @@ if __name__ == "__main__":
     T_intv_batch = np.random.randn(B, M, 1).astype(np.float32)
     Y_intv_batch = np.random.randn(B, M).astype(np.float32)
     
-    # Create batched adjacency matrices
-    adjacency_matrix_batch = np.ones((B, num_features + 2, num_features + 2), dtype=np.float32)
-    
     print("\n" + "="*80)
     print("TEST 2: Batched Mode (batched=True)")
     print("="*80)
     print(f"  X_obs_batch: {X_obs_batch.shape}, T_obs_batch: {T_obs_batch.shape}, Y_obs_batch: {Y_obs_batch.shape}")
     print(f"  X_intv_batch: {X_intv_batch.shape}, T_intv_batch: {T_intv_batch.shape}")
-    print(f"  adjacency_matrix_batch: {adjacency_matrix_batch.shape}")
     
     # Test batched predictions
     try:
         preds_mode_batch = wrapper.predict(X_obs_batch, T_obs_batch, Y_obs_batch, 
-                                          X_intv_batch, T_intv_batch, adjacency_matrix_batch,
+                                          X_intv_batch, T_intv_batch,
                                           prediction_type="mode", batched=True)
         print(f"\n✓ Mode predictions shape: {preds_mode_batch.shape} (expected: ({B}, {M}))")
         assert preds_mode_batch.shape == (B, M), f"Expected shape ({B}, {M}), got {preds_mode_batch.shape}"
         print(f"  Sample predictions [0]: {preds_mode_batch[0, :3]}")
         
         preds_mean_batch = wrapper.predict(X_obs_batch, T_obs_batch, Y_obs_batch,
-                                          X_intv_batch, T_intv_batch, adjacency_matrix_batch,
+                                          X_intv_batch, T_intv_batch,
                                           prediction_type="mean", batched=True)
         print(f"\n✓ Mean predictions shape: {preds_mean_batch.shape} (expected: ({B}, {M}))")
         assert preds_mean_batch.shape == (B, M), f"Expected shape ({B}, {M}), got {preds_mean_batch.shape}"
@@ -1004,7 +811,7 @@ if __name__ == "__main__":
         
         num_samples = 10
         preds_sample_batch = wrapper.predict(X_obs_batch, T_obs_batch, Y_obs_batch,
-                                            X_intv_batch, T_intv_batch, adjacency_matrix_batch,
+                                            X_intv_batch, T_intv_batch,
                                             prediction_type="sample", num_samples=num_samples, batched=True)
         print(f"\n✓ Sample predictions shape: {preds_sample_batch.shape} (expected: ({B}, {num_samples}, {M}))")
         assert preds_sample_batch.shape == (B, num_samples, M), f"Expected shape ({B}, {num_samples}, {M}), got {preds_sample_batch.shape}"
@@ -1018,23 +825,20 @@ if __name__ == "__main__":
     # Test batched log-likelihood
     try:
         log_probs_batch = wrapper.log_likelihood(X_obs_batch, T_obs_batch, Y_obs_batch,
-                                                X_intv_batch, T_intv_batch, Y_intv_batch,
-                                                adjacency_matrix_batch, batched=True)
+                                                X_intv_batch, T_intv_batch, Y_intv_batch, batched=True)
         print(f"\n✓ Log-likelihood shape: {log_probs_batch.shape} (expected: ({B}, {M}))")
         assert log_probs_batch.shape == (B, M), f"Expected shape ({B}, {M}), got {log_probs_batch.shape}"
         print(f"  Sample log-likelihoods [0]: {log_probs_batch[0, :3]}")
         
         # Test alias method
         log_probs_alias_batch = wrapper.predict_log_likelihood(X_obs_batch, T_obs_batch, Y_obs_batch,
-                                                               X_intv_batch, T_intv_batch, Y_intv_batch,
-                                                               adjacency_matrix_batch, batched=True)
+                                                               X_intv_batch, T_intv_batch, Y_intv_batch, batched=True)
         print(f"\n✓ predict_log_likelihood shape: {log_probs_alias_batch.shape}")
         assert np.allclose(log_probs_batch, log_probs_alias_batch), "log_likelihood and predict_log_likelihood should return the same values"
         
         # Test negative log-likelihood
         nll_batch = wrapper.predict_negative_log_likelihood(X_obs_batch, T_obs_batch, Y_obs_batch,
-                                                           X_intv_batch, T_intv_batch, Y_intv_batch,
-                                                           adjacency_matrix_batch, batched=True)
+                                                           X_intv_batch, T_intv_batch, Y_intv_batch, batched=True)
         print(f"\n✓ Negative log-likelihood shape: {nll_batch.shape} (expected: ({B}, {M}))")
         assert nll_batch.shape == (B, M), f"Expected shape ({B}, {M}), got {nll_batch.shape}"
         print(f"  Sample NLL [0]: {nll_batch[0, :3]}")
@@ -1048,34 +852,9 @@ if __name__ == "__main__":
     
     print("\n✓ All batched tests passed!")
     
-    # Test shape validation errors
-    print("\n" + "="*80)
-    print("TEST 3: Shape Validation")
-    print("="*80)
-    
-    try:
-        # Should fail: 2D adjacency matrix with batched=True
-        wrapper.predict(X_obs_batch, T_obs_batch, Y_obs_batch, X_intv_batch, T_intv_batch,
-                       adjacency_matrix, prediction_type="mean", batched=True)
-        print("\n✗ Should have raised ValueError for 2D adjacency matrix with batched=True")
-        sys.exit(1)
-    except ValueError as e:
-        print(f"\n✓ Correctly caught error for 2D adjacency matrix with batched=True: {e}")
-    
-    try:
-        # Should fail: 3D adjacency matrix with batched=False
-        wrapper.predict(X_obs, T_obs, Y_obs, X_intv, T_intv, adjacency_matrix_batch,
-                       prediction_type="mean", batched=False)
-        print("\n✗ Should have raised ValueError for 3D adjacency matrix with batched=False")
-        sys.exit(1)
-    except ValueError as e:
-        print(f"\n✓ Correctly caught error for 3D adjacency matrix with batched=False: {e}")
-    
-    print("\n✓ All validation tests passed!")
-    
     # Test consistency between batched and non-batched modes
     print("\n" + "="*80)
-    print("TEST 4: Batched vs Non-Batched Consistency")
+    print("TEST 3: Batched vs Non-Batched Consistency")
     print("="*80)
     print("Verifying that batched predictions match multiple non-batched calls...")
     
@@ -1085,16 +864,15 @@ if __name__ == "__main__":
     
     # Run batched prediction once
     preds_mode_batched = wrapper.predict(X_obs_batch, T_obs_batch, Y_obs_batch,
-                                        X_intv_batch, T_intv_batch, adjacency_matrix_batch,
+                                        X_intv_batch, T_intv_batch,
                                         prediction_type="mode", batched=True)
     
     preds_mean_batched = wrapper.predict(X_obs_batch, T_obs_batch, Y_obs_batch,
-                                        X_intv_batch, T_intv_batch, adjacency_matrix_batch,
+                                        X_intv_batch, T_intv_batch,
                                         prediction_type="mean", batched=True)
     
     log_probs_batched = wrapper.log_likelihood(X_obs_batch, T_obs_batch, Y_obs_batch,
-                                               X_intv_batch, T_intv_batch, Y_intv_batch,
-                                               adjacency_matrix_batch, batched=True)
+                                               X_intv_batch, T_intv_batch, Y_intv_batch, batched=True)
     
     # Run non-batched predictions B times
     preds_mode_nonbatched = []
@@ -1103,18 +881,17 @@ if __name__ == "__main__":
     
     for i in range(B):
         mode_i = wrapper.predict(X_obs_batch[i], T_obs_batch[i], Y_obs_batch[i],
-                                X_intv_batch[i], T_intv_batch[i], adjacency_matrix_batch[i],
+                                X_intv_batch[i], T_intv_batch[i],
                                 prediction_type="mode", batched=False)
         preds_mode_nonbatched.append(mode_i)
         
         mean_i = wrapper.predict(X_obs_batch[i], T_obs_batch[i], Y_obs_batch[i],
-                                X_intv_batch[i], T_intv_batch[i], adjacency_matrix_batch[i],
+                                X_intv_batch[i], T_intv_batch[i],
                                 prediction_type="mean", batched=False)
         preds_mean_nonbatched.append(mean_i)
         
         log_prob_i = wrapper.log_likelihood(X_obs_batch[i], T_obs_batch[i], Y_obs_batch[i],
-                                           X_intv_batch[i], T_intv_batch[i], Y_intv_batch[i],
-                                           adjacency_matrix_batch[i], batched=False)
+                                           X_intv_batch[i], T_intv_batch[i], Y_intv_batch[i], batched=False)
         log_probs_nonbatched.append(log_prob_i)
     
     # Stack non-batched results
@@ -1177,6 +954,5 @@ if __name__ == "__main__":
     print("  ✓ Non-batched log-likelihood and NLL")
     print("  ✓ Batched predictions (mode, mean, sample)")
     print("  ✓ Batched log-likelihood and NLL")
-    print("  ✓ Shape validation for batched flag")
     print("  ✓ Batched vs non-batched consistency")
     print("="*80)

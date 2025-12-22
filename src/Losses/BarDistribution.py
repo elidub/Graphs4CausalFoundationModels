@@ -57,7 +57,8 @@ class BarDistribution(PosteriorPredictive):
         self.use_simple_equidistant_fit = bool(use_simple_equidistant_fit)
 
         self.device = device if device is not None else torch.device("cpu")
-        self.dtype = dtype if dtype is not None else torch.float32
+        # ALWAYS use float32 for BarDistribution, regardless of AMP or other precision settings
+        self.dtype = torch.float32
 
         # Learned geometry (via .fit)
         self.centers: Optional[Tensor] = None   # (K,)
@@ -100,9 +101,10 @@ class BarDistribution(PosteriorPredictive):
         return torch.log(torch.clamp(x, min=self._tiny))
 
     def _adopt_pred_ctx(self, pred: Tensor) -> Tuple[torch.device, torch.dtype]:
-        # Everything follows pred's device/dtype if possible (backward compatible with constructor defaults)
+        # Always use float32 for BarDistribution, even if pred is float16 from AMP
+        # Convert pred to float32 immediately to avoid numerical issues
         device = pred.device if pred.is_cuda or pred.device != torch.device("cpu") else self.device
-        dtype = pred.dtype if pred.dtype is not None else self.dtype
+        dtype = torch.float32  # ALWAYS use float32, ignore pred.dtype
         self._ensure_consts(device, dtype)
         return device, dtype
 
@@ -128,31 +130,41 @@ class BarDistribution(PosteriorPredictive):
         for batch in dataloader:
             if max_batches is not None and batch_count >= max_batches:
                 break
-            # Accept classic 4-tuple, interventional 6-tuple, interventional+graph 7-tuple, or curriculum 6-tuple
+            # Accept various tuple formats:
+            # - 4-tuple: (X_train, y_train, X_test, y_test)
+            # - 6-tuple: AMBIGUOUS - could be either:
+            #   a) Curriculum: (X_train, y_train, X_test, y_test, t, alpha)
+            #   b) Interventional: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
+            # - 7-tuple: (X_train, T_train, y_train, X_test, T_test, y_test, adjacency_matrix) with treatment/graph
+            # - 9-tuple: (X_train, T_train, y_train, X_test, T_test, y_test, adjacency_matrix, scm, processor, intervention_node) full debug
             if isinstance(batch, (list, tuple)):
                 if len(batch) == 4:
-                    # Observational format: (X_train, y_train, X_test, y_test)
                     _, y_tr, _, y_te = batch
-                elif len(batch) == 7:
-                    # Interventional format with adjacency matrix: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adj_matrix)
-                    _, _, y_tr, _, _, y_te, _ = batch
                 elif len(batch) == 6:
-                    # Check if this is interventional or curriculum format
-                    # Interventional: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
-                    # Curriculum: (X_train, y_train, X_test, y_test, t, alpha)
-                    # Distinguish by shape: T_obs/T_intv are 3D, t/alpha are scalars
-                    if batch[1].dim() >= 2:
-                        # Interventional format
-                        _, _, y_tr, _, _, y_te = batch
+                    # Disambiguate 6-tuple: check if element 4 looks like a treatment tensor or curriculum scalar
+                    # - Interventional: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv) where T_intv has shape (B, N, D)
+                    # - Curriculum: (X_train, y_train, X_test, y_test, t, alpha) where t is a scalar or (B,) tensor
+                    elem_4 = batch[4]  # Could be T_intv (interventional) or t (curriculum time scalar)
+                    
+                    # Check if element 4 is a multi-dimensional tensor (treatment) or a scalar/1D tensor (curriculum)
+                    # Treatment tensors have shape (B, N_samples, D_features) with ndim=3
+                    # Curriculum t/alpha are scalars or (B,) tensors with ndim <= 1
+                    if isinstance(elem_4, torch.Tensor) and elem_4.ndim == 3:
+                        # Interventional format: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
+                        _, _T_obs, y_tr, _, _T_intv, y_te = batch
                     else:
-                        # Curriculum format (legacy)
-                        _, y_tr, _, y_te, _t, _alpha = batch
+                        # Curriculum format: (X_train, y_train, X_test, y_test, t, alpha)
+                        _, y_tr, _, y_te, _t, _alpha = batch  # ignore curriculum metadata
+                elif len(batch) == 7:
+                    _, _T_tr, y_tr, _, _T_te, y_te, _adj = batch  # ignore treatment and adjacency
+                elif len(batch) == 9:
+                    _, _T_tr, y_tr, _, _T_te, y_te, _adj, _scm, _proc, _intv = batch  # ignore extras
                 else:
                     raise ValueError(
-                        f"Each dataloader item must be (X_train, y_train, X_test, y_test), 6-element, or 7-element format; got length {len(batch)}"
+                        f"Each dataloader item must be 4, 6, 7, or 9 elements; got length {len(batch)}"
                     )
             else:
-                raise ValueError("Dataloader batch must be a tuple/list of length 4, 6, or 7.")
+                raise ValueError("Dataloader batch must be a tuple/list.")
             
             # Handle both (B, N) and (B, N, 1) shapes
             if y_tr.ndim == 3 and y_tr.shape[-1] == 1:
@@ -195,8 +207,8 @@ class BarDistribution(PosteriorPredictive):
         if not ys:
             raise ValueError("No y data collected for fit().")
 
-        # Use double precision for the geometry, then cast down
-        y_all = torch.cat(ys, dim=0).to(torch.float64)
+        # Use float32 for the geometry (ALWAYS, regardless of input dtype)
+        y_all = torch.cat(ys, dim=0).to(torch.float32)
         y_all = y_all[torch.isfinite(y_all)]
         if y_all.numel() == 0:
             raise ValueError("All y are non-finite in fit().")
@@ -223,7 +235,7 @@ class BarDistribution(PosteriorPredictive):
             print(f"[BarDistribution] Using simple equidistant fitting method")
             
             # Create K+1 evenly spaced edges from y_min to y_max
-            edges = torch.linspace(float(y_min), float(y_max), steps=K + 1, dtype=torch.float64)
+            edges = torch.linspace(float(y_min), float(y_max), steps=K + 1, dtype=torch.float32)
             
             # Centers are midpoints of edges
             centers = 0.5 * (edges[:-1] + edges[1:])
@@ -237,7 +249,7 @@ class BarDistribution(PosteriorPredictive):
         else:
             # Original quantile-based centers; robust monotonic enforcement
             print(f"[BarDistribution] Using quantile-based fitting method")
-            probs = torch.linspace(0.0, 1.0, steps=K + 1, dtype=torch.float64)
+            probs = torch.linspace(0.0, 1.0, steps=K + 1, dtype=torch.float32)
             mids = (probs[:-1] + probs[1:]) * 0.5
             try:
                 centers = torch.quantile(y_all, mids, method="linear")
@@ -246,15 +258,15 @@ class BarDistribution(PosteriorPredictive):
 
             # Strictly increasing centers (epsilon grows with K and span)
             eps = max(1e-12, 1e-9 * K) * float(y_max - y_min)
-            eps = torch.tensor(eps, dtype=torch.float64)
+            eps = torch.tensor(eps, dtype=torch.float32)
             for i in range(K - 1):
                 if centers[i + 1] <= centers[i]:
                     centers[i + 1] = centers[i] + eps
 
-            edges = torch.empty(K + 1, dtype=torch.float64)
+            edges = torch.empty(K + 1, dtype=torch.float32)
             if K == 1:
                 # Use IQR for width, fall back to small width if degenerate
-                q25, q75 = torch.quantile(y_all, torch.tensor([0.25, 0.75], dtype=torch.float64))
+                q25, q75 = torch.quantile(y_all, torch.tensor([0.25, 0.75], dtype=torch.float32))
                 width = float(max(q75 - q25, self.min_width))
                 edges[0] = centers[0] - 0.5 * width
                 edges[1] = centers[0] + 0.5 * width
@@ -275,14 +287,14 @@ class BarDistribution(PosteriorPredictive):
         base_s_left = float(max(widths[0].item(), self.min_width))
         base_s_right = float(max(widths[-1].item(), self.min_width))
 
-        # Cast to target dtype/device
-        self.centers = centers.to(self.device, self.dtype)
-        self.edges = edges.to(self.device, self.dtype)
-        self.widths = widths.to(self.device, self.dtype)
-        self.base_s_left = torch.tensor(base_s_left, device=self.device, dtype=self.dtype)
-        self.base_s_right = torch.tensor(base_s_right, device=self.device, dtype=self.dtype)
+        # Cast to target dtype/device (ALWAYS float32)
+        self.centers = centers.to(self.device, torch.float32)
+        self.edges = edges.to(self.device, torch.float32)
+        self.widths = widths.to(self.device, torch.float32)
+        self.base_s_left = torch.tensor(base_s_left, device=self.device, dtype=torch.float32)
+        self.base_s_right = torch.tensor(base_s_right, device=self.device, dtype=torch.float32)
         # Refresh constants
-        self._ensure_consts(self.device, self.dtype)
+        self._ensure_consts(self.device, torch.float32)
         
         # Compute loss with constant (uniform) prediction on fitting data
         self._compute_constant_prediction_loss(y_all)
@@ -348,6 +360,10 @@ class BarDistribution(PosteriorPredictive):
         """
         # Numerically stable: operate purely in log-space
         self._check_ready()
+        
+        # ALWAYS convert to float32 for numerical stability
+        pred = pred.to(dtype=torch.float32)
+        
         B, M = y.shape
         K = self.num_bars
         self._validate_pred(pred, (B, M, K + 4))
@@ -396,9 +412,7 @@ class BarDistribution(PosteriorPredictive):
             z = (yL - edges[0]) / sL_sel  # negative values
             log_gauss = self._log_norm_const - torch.log(sL_sel) - 0.5 * z * z
             log_pdf_left = torch.log(torch.tensor(2.0, device=device, dtype=dtype)) + log_pL[left_mask] + log_gauss
-            log_pdf_left = torch.clamp(log_pdf_left, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
-            # Ensure dtype matches destination (important under AMP)
-            logpdf[left_mask] = log_pdf_left.to(dtype=logpdf.dtype)
+            logpdf[left_mask] = torch.clamp(log_pdf_left, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
 
         # Right half-Gaussian
         if right_mask.any():
@@ -407,9 +421,7 @@ class BarDistribution(PosteriorPredictive):
             z = (yR - edges[-1]) / sR_sel  # nonnegative
             log_gauss = self._log_norm_const - torch.log(sR_sel) - 0.5 * z * z
             log_pdf_right = torch.log(torch.tensor(2.0, device=device, dtype=dtype)) + log_pR[right_mask] + log_gauss
-            log_pdf_right = torch.clamp(log_pdf_right, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
-            # Ensure dtype matches destination
-            logpdf[right_mask] = log_pdf_right.to(dtype=logpdf.dtype)
+            logpdf[right_mask] = torch.clamp(log_pdf_right, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
 
         # Bars (constant density within bar): log f(y) = log p_k - log width_k for the active bar
         if mid_mask.any():
@@ -420,8 +432,7 @@ class BarDistribution(PosteriorPredictive):
             # Gather log p_k for active bar
             log_pk = log_pBars_all.gather(dim=-1, index=k.view(-1, 1)).squeeze(-1)
             log_dens_mid = log_pk - torch.log(widths_k)
-            log_dens_mid = torch.clamp(log_dens_mid, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
-            logpdf[mid_mask] = log_dens_mid.to(dtype=logpdf.dtype)
+            logpdf[mid_mask] = torch.clamp(log_dens_mid, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
 
         # Final clamp for safety
         return torch.clamp(logpdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
@@ -431,6 +442,10 @@ class BarDistribution(PosteriorPredictive):
         Argmax among: left edge (tail), the densest bar, right edge (tail).
         """
         self._check_ready()
+        
+        # ALWAYS convert to float32 for numerical stability
+        pred = pred.to(dtype=torch.float32)
+        
         B, M, _ = pred.shape
         K = self.num_bars
         self._validate_pred(pred, (B, M, K + 4))
@@ -478,6 +493,10 @@ class BarDistribution(PosteriorPredictive):
         Right half-Gaussian: E[y | right] = edge_right + sR * sqrt(2/π)
         """
         self._check_ready()
+        
+        # ALWAYS convert to float32 for numerical stability
+        pred = pred.to(dtype=torch.float32)
+        
         B, M, _ = pred.shape
         K = self.num_bars
         self._validate_pred(pred, (B, M, K + 4))
@@ -513,6 +532,10 @@ class BarDistribution(PosteriorPredictive):
         self._check_ready()
         if num_samples <= 0:
             raise ValueError("num_samples must be positive.")
+        
+        # ALWAYS convert to float32 for numerical stability
+        pred = pred.to(dtype=torch.float32)
+        
         B, M, _ = pred.shape
         K = self.num_bars
         self._validate_pred(pred, (B, M, K + 4))
@@ -605,6 +628,9 @@ class BarDistribution(PosteriorPredictive):
         Vectorized pdf(y) with mixture params from pred.
         y: (B,M)  -> returns (B,M)
         """
+        # ALWAYS convert to float32 for numerical stability
+        pred = pred.to(dtype=torch.float32)
+        
         B, M = y.shape
         device, dtype = self._adopt_pred_ctx(pred)
 
@@ -628,20 +654,20 @@ class BarDistribution(PosteriorPredictive):
         mid_mask = ~(left_mask | right_mask)
 
         # Left half-Gaussian: f(y) = 2 pL * N(y; edge_left, sL)
-        if mid_mask.any():
-            internal = edges[1:-1]  # (K-1,)
-            k = torch.bucketize(y[mid_mask], internal, right=False)  # (num_mid,), values in [0, K-1]
-            widths_k = widths[k]  # (num_mid,)
-            
-            # log f(y in bar k) = log pBar_k - log width_k
-            # Gather the active bar probability for each y using k as index
-            idx = k.view(-1, 1)
-            p_mid = pBars[mid_mask]
-            log_p_active = torch.gather(torch.log(p_mid), dim=1, index=idx).squeeze(-1)
-            log_density_mid = log_p_active - torch.log(widths_k)
-            log_density_mid = torch.clamp(log_density_mid, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
-            # Ensure dtype matches destination
-            logpdf[mid_mask] = log_density_mid.to(dtype=logpdf.dtype)
+        if left_mask.any():
+            yL = y[left_mask]
+            sL_sel = sL[left_mask]
+            z = (yL - edges[0]) / sL_sel  # negative values
+            # log N = log_norm_const - log s - 0.5 z^2
+            log_gauss = self._log_norm_const - torch.log(sL_sel) - 0.5 * z * z
+            log_pdf = torch.log(torch.tensor(2.0, device=device, dtype=dtype)) + torch.log(pL[left_mask]) + log_gauss
+            clamped_log = torch.clamp(log_pdf, min=self.log_prob_clip_min, max=self.log_prob_clip_max)
+            pdf[left_mask] = torch.exp(clamped_log).to(dtype=pdf.dtype)
+
+        # Right half-Gaussian
+        if right_mask.any():
+            yR = y[right_mask]
+            sR_sel = sR[right_mask]
             z = (yR - edges[-1]) / sR_sel  # nonnegative
             log_gauss = self._log_norm_const - torch.log(sR_sel) - 0.5 * z * z
             log_pdf = torch.log(torch.tensor(2.0, device=device, dtype=dtype)) + torch.log(pR[right_mask]) + log_gauss
@@ -671,112 +697,3 @@ class BarDistribution(PosteriorPredictive):
     def num_params(self) -> int:
         """Number of parameters your model must output per test point."""
         return self.num_bars + 4
-
-    def plot(
-        self,
-        pred: Tensor,
-        idx: int = 0,
-        y_range: Optional[Tuple[float, float]] = None,
-        num_points: int = 500,
-        ax=None,
-        show_edges: bool = True,
-        show_probabilities: bool = True,
-        title: Optional[str] = None,
-        **kwargs
-    ):
-        """
-        Plot the bar distribution for a single prediction.
-
-        Args:
-            pred: Prediction tensor of shape (B, num_params) or (num_params,)
-            idx: Which prediction to plot if pred is batched (default: 0)
-            y_range: Tuple (y_min, y_max) for plotting range. If None, uses edges ± 3*max_tail_scale
-            num_points: Number of points to evaluate the PDF
-            ax: Matplotlib axis object. If None, creates a new figure
-            show_edges: Whether to show vertical lines at bar edges
-            show_probabilities: Whether to annotate bar and tail probabilities
-            title: Optional title for the plot
-            **kwargs: Additional kwargs passed to ax.plot() for the PDF curve
-
-        Returns:
-            ax: The matplotlib axis object
-        """
-        try:
-            import matplotlib.pyplot as plt
-        except ImportError:
-            raise ImportError("matplotlib is required for plotting. Install with: pip install matplotlib")
-
-        # Ensure pred has proper shape for BarDistribution methods
-        # Expected shape: (B, M, num_params) where B=batch, M=number of test points
-        if pred.dim() == 1:
-            # (num_params,) -> (1, 1, num_params)
-            pred = pred.unsqueeze(0).unsqueeze(0)
-        elif pred.dim() == 2:
-            # (M, num_params) -> (1, M, num_params)
-            pred = pred.unsqueeze(0)
-        
-        if idx >= pred.shape[1]:
-            raise ValueError(f"idx={idx} out of range for M={pred.shape[1]} test points")
-
-        # Extract single prediction: (1, 1, num_params)
-        pred_single = pred[:, idx:idx+1, :]  # (B=1, M=1, num_params)
-
-        # Unpack prediction parameters
-        device, dtype = self._adopt_pred_ctx(pred_single)
-        w_logits, sL_raw, sR_raw = self._unpack(pred_single)
-        probs = torch.softmax(w_logits, dim=-1)  # (1, 1, K+2)
-        pLeft = probs[0, 0, 0].item()
-        pBars = probs[0, 0, 1:-1]  # (K,)
-        pRight = probs[0, 0, -1].item()
-
-        sL = self._safe_scale(self.base_s_left.to(device, dtype), sL_raw[0, 0], device, dtype).item()
-        sR = self._safe_scale(self.base_s_right.to(device, dtype), sR_raw[0, 0], device, dtype).item()
-
-        edges = self.edges.to(device=device, dtype=dtype)
-
-        # Determine plotting range
-        if y_range is None:
-            edge_left = edges[0].item()
-            edge_right = edges[-1].item()
-            max_scale = max(sL, sR)
-            y_min = edge_left - 3 * max_scale
-            y_max = edge_right + 3 * max_scale
-        else:
-            y_min, y_max = y_range
-
-        # Create y values
-        y_vals = torch.linspace(y_min, y_max, num_points, device=device, dtype=dtype)
-
-        # Evaluate PDF by exponentiating log PDF
-        pred_repeated = pred_single.expand(1, num_points, -1)
-        
-        with torch.no_grad():
-            # Use _logpdf_from_pred which is properly implemented
-            logpdf_vals = self._logpdf_from_pred(pred_repeated, y_vals.unsqueeze(0))  # (1, num_points)
-            pdf_vals = torch.exp(logpdf_vals[0]).cpu().numpy()  # (num_points,)
-            y_vals_np = y_vals.cpu().numpy()
-            edges_np = edges.cpu().numpy()
-            pBars_np = pBars.cpu().numpy()
-
-        # Create plot
-        if ax is None:
-            fig, ax = plt.subplots(figsize=(10, 6))
-
-        # Plot PDF
-        plot_kwargs = {'linewidth': 2, 'color': 'blue'}
-        plot_kwargs.update(kwargs)
-        ax.plot(y_vals_np, pdf_vals, label='PDF', **plot_kwargs)
-
-        # Show bar edges (only outer edges by default to avoid clutter)
-        if show_edges:
-            # Only show first and last edge to avoid visual clutter with many bars
-            ax.axvline(edges_np[0], color='gray', linestyle='--', alpha=0.5, linewidth=1, label='Bar boundaries')
-            ax.axvline(edges_np[-1], color='gray', linestyle='--', alpha=0.5, linewidth=1)
-
-        ax.set_xlabel('y', fontsize=12)
-        ax.set_ylabel('Density', fontsize=12)
-        ax.set_title(title if title else 'Bar Distribution', fontsize=14)
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-
-        return ax

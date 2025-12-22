@@ -143,6 +143,9 @@ class ObservationalDataset(Dataset):
 
         # Rejection sampling settings (optional)
         self.min_target_variance = _get_cfg_value(self.dataset_config, "min_target_variance", None)
+        # Minimum fraction of unique target values (relative to number of samples)
+        # e.g., 0.2 means at least 20% of samples must have unique target values
+        self.min_unique_target_fraction = _get_cfg_value(self.dataset_config, "min_unique_target_fraction", None)
         # Prevent infinite loops: cap the number of re-sampling attempts
         self.max_resample_attempts = int(_get_cfg_value(self.dataset_config, "max_resample_attempts", 10) or 10)
         
@@ -435,29 +438,61 @@ class ObservationalDataset(Dataset):
             last_X_train, last_Y_train = X_train, Y_train
             last_X_test, last_Y_test = X_test, Y_test
             
-            # If no threshold provided, accept immediately
-            if self.min_target_variance is None:
+            # If no thresholds provided, accept immediately
+            if self.min_target_variance is None and self.min_unique_target_fraction is None:
                 break
             
-            # Compute variances on the target for train and test
-            # Y_* may have shape (N, 1); use flatten for variance computation
-            var_train = torch.var(Y_train.reshape(-1))
-            var_test = torch.var(Y_test.reshape(-1))
+            # --- Check 1: Variance threshold ---
+            var_threshold_ok = True
+            if self.min_target_variance is not None:
+                # Compute variances on the target for train and test
+                # Y_* may have shape (N, 1); use flatten for variance computation
+                var_train = torch.var(Y_train.reshape(-1))
+                var_test = torch.var(Y_test.reshape(-1))
+                
+                # Normalize threshold to float if provided as str in YAML
+                threshold = self.min_target_variance
+                if isinstance(threshold, str):
+                    try:
+                        threshold = float(threshold)
+                    except ValueError:
+                        # If parsing fails, disable variance check
+                        threshold = None
+                
+                if threshold is not None:
+                    var_threshold_ok = (var_train.item() >= threshold) and (var_test.item() >= threshold)
             
-            # Normalize threshold to float if provided as str in YAML
-            threshold = self.min_target_variance
-            if threshold is not None and isinstance(threshold, str):
-                try:
-                    threshold = float(threshold)
-                except ValueError:
-                    # If parsing fails, disable rejection to avoid crashing
-                    threshold = None
+            # --- Check 2: Unique values threshold ---
+            unique_threshold_ok = True
+            if self.min_unique_target_fraction is not None:
+                # Normalize threshold to float if provided as str in YAML
+                unique_fraction = self.min_unique_target_fraction
+                if isinstance(unique_fraction, str):
+                    try:
+                        unique_fraction = float(unique_fraction)
+                    except ValueError:
+                        # If parsing fails, disable unique check
+                        unique_fraction = None
+                
+                if unique_fraction is not None:
+                    # Count unique values in train and test targets
+                    Y_train_flat = Y_train.reshape(-1)
+                    Y_test_flat = Y_test.reshape(-1)
+                    
+                    n_unique_train = torch.unique(Y_train_flat).numel()
+                    n_unique_test = torch.unique(Y_test_flat).numel()
+                    
+                    n_train = Y_train_flat.numel()
+                    n_test = Y_test_flat.numel()
+                    
+                    # Check if fraction of unique values meets threshold
+                    train_unique_ok = (n_unique_train / n_train) >= unique_fraction if n_train > 0 else True
+                    test_unique_ok = (n_unique_test / n_test) >= unique_fraction if n_test > 0 else True
+                    
+                    unique_threshold_ok = train_unique_ok and test_unique_ok
             
-            # Check threshold
-            if threshold is None:
-                break  # Accept since no valid threshold
-            
-            if (var_train.item() >= threshold) and (var_test.item() >= threshold):
+            # Accept if both checks pass
+            if var_threshold_ok and unique_threshold_ok:
                 break  # Accept
             
             attempt += 1
