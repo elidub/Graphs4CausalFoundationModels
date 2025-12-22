@@ -85,6 +85,8 @@ class Trainer:
         if self.eval_dataloaders is not None:
             if len(self.eval_dataloaders) == 2:
                 self._eval_set_names = ["head", "tail"]
+            elif len(self.eval_dataloaders) == 1:
+                self._eval_set_names = ["head"]
             else:
                 self._eval_set_names = [f"set{i}" for i in range(len(self.eval_dataloaders))]
         else:
@@ -224,6 +226,8 @@ class Trainer:
             if not hasattr(self, '_eval_set_names') or len(self._eval_set_names) != len(self.eval_dataloaders):
                 if len(self.eval_dataloaders) == 2:
                     self._eval_set_names = ["head", "tail"]
+                elif len(self.eval_dataloaders) == 1:
+                    self._eval_set_names = ["head"]
                 else:
                     self._eval_set_names = [f"set{i}" for i in range(len(self.eval_dataloaders))]
             # Overall placeholders (also mirror legacy top-level)
@@ -732,6 +736,8 @@ class Trainer:
         else:
             if num_sets == 2:
                 set_names = ["head", "tail"]
+            elif num_sets == 1:
+                set_names = ["head"]
             else:
                 set_names = [f"set{i}" for i in range(num_sets)]
 

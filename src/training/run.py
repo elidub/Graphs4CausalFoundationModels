@@ -596,27 +596,20 @@ def main():
                 print("   Warning: eval_batches * batch_size <= 0; disabling evaluation")
             else:
                 max_per_subset = max(1, min(n_eval_requested, total_len))
-                if max_per_subset * 2 > total_len:
-                    print("   Note: Requested eval slice size causes overlap (dataset too small). Proceeding with overlap.")
                 head_end = min(max_per_subset, total_len)
-                tail_start = max(0, total_len - max_per_subset)
                 head_indices = list(range(0, head_end))
-                tail_indices = list(range(tail_start, total_len))
                 t0 = time.time()
                 head_subset = Subset(dataset, head_indices)
-                tail_subset = Subset(dataset, tail_indices)
                 head_loader = DataLoader(head_subset, batch_size=batch_size, shuffle=False, num_workers=0)
-                tail_loader = DataLoader(tail_subset, batch_size=batch_size, shuffle=False, num_workers=0)
                 build_time = time.time() - t0
-                eval_dataloaders = [head_loader, tail_loader]
-                print(f"   Created 2 evaluation dataloaders (head & tail)")
+                eval_dataloaders = [head_loader]
+                print(f"   Created 1 evaluation dataloader (head only)")
                 print(f"   Head subset size: {len(head_subset)} (indices 0..{head_end-1})")
-                print(f"   Tail subset size: {len(tail_subset)} (indices {tail_start}..{total_len-1})")
-                print(f"   Batches per subset (requested): {eval_batches} (will cap by subset length)")
+                print(f"   Batches (requested): {eval_batches} (will cap by subset length)")
                 print(f"   Eval build time: {build_time:.4f}s")
-                print(f"   Using dedicated evaluation dataloaders (training dataloader will NOT be used for evaluation)")
+                print(f"   Using dedicated evaluation dataloader (training dataloader will NOT be used for evaluation)")
                 if wandb_run:
-                    wandb_run.log({'eval/build_time': build_time, 'eval/head_size': len(head_subset), 'eval/tail_size': len(tail_subset)})
+                    wandb_run.log({'eval/build_time': build_time, 'eval/head_size': len(head_subset)})
                 print(f"   Evaluation setup complete")
         else:
             print(f"\nEVALUATION: Disabled (eval_enabled={eval_enabled}, eval_every={eval_every})")
