@@ -264,6 +264,12 @@ def main():
                 print(f"   API key: Not found in environment")
             
             try:
+                # Extract config filename (without extension) for run name
+                config_name = "simple_pfn"  # Default fallback
+                if args.config:
+                    # Get the filename without path and extension
+                    config_name = Path(args.config).stem
+                
                 # Determine the run name based on HTCondor job ID (same format as log files)
                 cluster_id = os.environ.get('CLUSTER_ID', '')  # HTCondor sets this
                 proc_id = os.environ.get('PROCESS_ID', '0')    # HTCondor sets this
@@ -280,12 +286,12 @@ def main():
                     except Exception as e:
                         print(f"Warning: Could not read job ID from Condor job ad: {e}")
                 
-                # Use job ID for run name if available, otherwise use config name
+                # Use config name + job ID for run name if available, otherwise use config name
                 if cluster_id:
-                    run_name = f"simple_pfn_{cluster_id}.{proc_id}"
-                    print(f"   Using log file name as run name: {run_name}")
+                    run_name = f"{config_name}_{cluster_id}.{proc_id}"
+                    print(f"   Using config-based run name: {run_name}")
                 else:
-                    run_name = wandb_config.get('wandb_run_name', config.get('experiment_name'))
+                    run_name = wandb_config.get('wandb_run_name', config.get('experiment_name', config_name))
                     print(f"   Using config name as run name: {run_name}")
                 
                 wandb_run = wandb.init(
