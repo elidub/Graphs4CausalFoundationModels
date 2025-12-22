@@ -395,11 +395,11 @@ training_config:
   # Data Loading Parameters
   # Data Loading Parameters
   batch_size: # batch size
-    value: 6
+    value: 8
   accumulate_grad_batches:
-    value: 6
+    value: 4
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
-    value: 70
+    value: 100
 
 
   # Training Control
@@ -424,9 +424,9 @@ training_config:
   device:
     value: "cuda"
   use_amp:  # Enable automatic mixed precision (float16) for faster training on GPU
-    value: false
+    value: true
   precision: # precision for training. 
-    value: "32"
+    value: "bf16"
 
   # Experiment Organization
   experiment_name: # name of the experiment, used for logging 

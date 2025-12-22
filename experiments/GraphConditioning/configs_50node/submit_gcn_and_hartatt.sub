@@ -14,7 +14,7 @@ environment = "HOME=/tmp/wandb_home WANDB_API_KEY=e5ba90a037256650557e4644545bd2
 
 request_gpus   = 1
 request_memory = 128GB
-request_cpus   = 52
+request_cpus   = 102
 request_disk   = 128GB
 
 # Pin to H100 nodes

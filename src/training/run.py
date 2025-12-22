@@ -532,6 +532,7 @@ def main():
             dataset,
             batch_size=batch_size,
             shuffle=False,
+            prefetch_factor=4,
             num_workers=num_workers,
             collate_fn=collator,
             persistent_workers=num_workers > 0  # Only use persistent workers when num_workers > 0
