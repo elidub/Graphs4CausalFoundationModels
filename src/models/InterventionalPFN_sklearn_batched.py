@@ -193,10 +193,15 @@ class InterventionalPFNSklearn:
             if self.verbose:
                 print(f"  BarDistribution enabled: {num_bars} bars, output_dim={output_dim}")
             
+            # Parse device string to torch.device object
+            device_obj = torch.device(self.device)
+            
             self.bar_distribution = BarDistribution(
                 num_bars=num_bars,
                 min_width=_get_cfg_value(bar_config, 'min_width', 1e-6),
                 scale_floor=_get_cfg_value(bar_config, 'scale_floor', 1e-6),
+                device=device_obj,
+                dtype=torch.float32,
             )
         else:
             self.model_kwargs['output_dim'] = 1
