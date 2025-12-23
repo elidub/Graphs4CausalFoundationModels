@@ -92,7 +92,9 @@ class BarDistribution(PosteriorPredictive):
     def _safe_scale(self, base: Tensor, raw: Tensor, device: torch.device, dtype: torch.dtype) -> Tensor:
         # s = base * (softplus(raw) + floor); clamp to dtype eps to avoid 0
         sp = self._safe_softplus(raw)
-        out = base * (sp + self.scale_floor)
+        # Convert scale_floor to tensor on correct device to avoid device mismatch
+        scale_floor_tensor = torch.tensor(self.scale_floor, device=device, dtype=dtype)
+        out = base * (sp + scale_floor_tensor)
         eps = torch.finfo(dtype).eps
         return torch.clamp(out, min=eps)
 
