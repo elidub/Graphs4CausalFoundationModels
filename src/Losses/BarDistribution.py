@@ -91,9 +91,15 @@ class BarDistribution(PosteriorPredictive):
 
     def _safe_scale(self, base: Tensor, raw: Tensor, device: torch.device, dtype: torch.dtype) -> Tensor:
         # s = base * (softplus(raw) + floor); clamp to dtype eps to avoid 0
+        # Ensure all tensors are on the same device (use base's device as the target)
+        target_device = base.device if isinstance(base, Tensor) else device
+        
+        # Move raw to target device if needed
+        if raw.device != target_device:
+            raw = raw.to(target_device)
+        
         sp = self._safe_softplus(raw)
-        # Convert scale_floor to tensor on correct device to avoid device mismatch
-        scale_floor_tensor = torch.tensor(self.scale_floor, device=device, dtype=dtype)
+        scale_floor_tensor = torch.tensor(self.scale_floor, device=target_device, dtype=dtype)
         out = base * (sp + scale_floor_tensor)
         eps = torch.finfo(dtype).eps
         return torch.clamp(out, min=eps)
@@ -371,6 +377,9 @@ class BarDistribution(PosteriorPredictive):
         self._validate_pred(pred, (B, M, K + 4))
 
         device, dtype = self._adopt_pred_ctx(pred)
+        
+        # Move pred to target device to ensure all operations happen on same device
+        pred = pred.to(device=device, dtype=dtype)
         y = y.to(device=device, dtype=dtype)
 
         logpdf = self._logpdf_from_pred(pred, y)  # (B,M), fully log-space
@@ -384,6 +393,10 @@ class BarDistribution(PosteriorPredictive):
         """
         B, M = y.shape
         device, dtype = self._adopt_pred_ctx(pred)
+        
+        # Move both pred and y to target device to ensure all operations happen on same device
+        pred = pred.to(device=device, dtype=dtype)
+        y = y.to(device=device, dtype=dtype)
 
         w_logits, sL_raw, sR_raw = self._unpack(pred)
         # Log-probabilities for mixture components
@@ -453,6 +466,9 @@ class BarDistribution(PosteriorPredictive):
         self._validate_pred(pred, (B, M, K + 4))
 
         device, dtype = self._adopt_pred_ctx(pred)
+        
+        # Move pred to target device to ensure all operations happen on same device
+        pred = pred.to(device=device, dtype=dtype)
 
         w_logits, sL_raw, sR_raw = self._unpack(pred)
         probs = torch.softmax(w_logits, dim=-1)  # (B,M,K+2)
@@ -504,6 +520,9 @@ class BarDistribution(PosteriorPredictive):
         self._validate_pred(pred, (B, M, K + 4))
 
         device, dtype = self._adopt_pred_ctx(pred)
+        
+        # Move pred to target device to ensure all operations happen on same device
+        pred = pred.to(device=device, dtype=dtype)
 
         w_logits, sL_raw, sR_raw = self._unpack(pred)
         probs = torch.softmax(w_logits, dim=-1)
@@ -543,9 +562,12 @@ class BarDistribution(PosteriorPredictive):
         self._validate_pred(pred, (B, M, K + 4))
 
         device, dtype = self._adopt_pred_ctx(pred)
+        
+        # Move pred to target device to ensure all operations happen on same device
+        pred = pred.to(device=device, dtype=dtype)
 
         w_logits, sL_raw, sR_raw = self._unpack(pred)
-        probs = torch.softmax(w_logits, dim=-1).to(device=device, dtype=dtype)  # (B,M,K+2)
+        probs = torch.softmax(w_logits, dim=-1)  # (B,M,K+2) - already on correct device
 
         sL = self._safe_scale(self.base_s_left.to(device, dtype), sL_raw, device, dtype)  # (B,M)
         sR = self._safe_scale(self.base_s_right.to(device, dtype), sR_raw, device, dtype)  # (B,M)
@@ -635,6 +657,10 @@ class BarDistribution(PosteriorPredictive):
         
         B, M = y.shape
         device, dtype = self._adopt_pred_ctx(pred)
+        
+        # Move both pred and y to target device to ensure all operations happen on same device
+        pred = pred.to(device=device, dtype=dtype)
+        y = y.to(device=device, dtype=dtype)
 
         w_logits, sL_raw, sR_raw = self._unpack(pred)
         probs = torch.softmax(w_logits, dim=-1)  # (B,M,K+2)
