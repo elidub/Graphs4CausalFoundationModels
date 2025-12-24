@@ -68,7 +68,7 @@ fi
 
 # Run SimplePFN training with config
 cd src/training
-python3 run.py --config "../../experiments/GraphConditioning/configs_20node_ancestor/lingaus_ancestor_20node_gcn.yaml"
+python3 run.py --config "../../configs_20node_ancestor/lingaus_ancestor_20node_gcn.yaml"
 
 # Display debug log if it exists
 echo "=== LinGaus Import Debug Log ==="
