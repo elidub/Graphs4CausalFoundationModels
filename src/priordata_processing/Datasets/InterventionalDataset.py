@@ -17,14 +17,30 @@ from priors.causal_prior.scm.SCMSampler import SCMSampler
 from priordata_processing.BasicProcessing import BasicProcessing
 from utils import FixedSampler, TorchDistributionSampler, CategoricalSampler, DiscreteUniformSampler
 
+# Import ancestor matrix computation function
+try:
+    from utils.graph_utils import adjacency_to_ancestor_matrix
+except ImportError:
+    # Try alternative import path
+    try:
+        from src.utils.graph_utils import adjacency_to_ancestor_matrix
+    except ImportError:
+        # Final fallback
+        import sys
+        from pathlib import Path
+        utils_path = Path(__file__).resolve().parents[2] / "utils"
+        if str(utils_path) not in sys.path:
+            sys.path.insert(0, str(utils_path))
+        from graph_utils import adjacency_to_ancestor_matrix
+
 
 class InterventionalDataset(Dataset):
     """
-    Dataset for interventional causal data with optional adjacency matrix output.
+    Dataset for interventional causal data with optional adjacency or ancestor matrix output.
     
     This class directly accepts SCM, preprocessing, and dataset configurations,
     internally creating SCMSampler and sampling hyperparameters on-the-fly.
-    Supports returning the causal graph's adjacency matrix alongside the data.
+    Supports returning the causal graph's adjacency matrix or ancestor matrix alongside the data.
     
     Parameters
     ----------
@@ -41,12 +57,14 @@ class InterventionalDataset(Dataset):
         Configuration for dataset parameters (size, max samples, etc.)
         Special keys:
         - return_adjacency_matrix (bool): If True, include adjacency matrix in output
+        - return_ancestor_matrix (bool): If True, include ancestor matrix in output
+        Note: Only one of return_adjacency_matrix or return_ancestor_matrix can be True
     seed : Optional[int], default None
         Random seed for reproducibility
     
     Returns
     -------
-    When return_adjacency_matrix=False (default):
+    When return_adjacency_matrix=False and return_ancestor_matrix=False (default):
         (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv) or
         (X_obs, Y_obs, X_intv, Y_intv) depending on treatment variable inclusion
         
@@ -54,6 +72,11 @@ class InterventionalDataset(Dataset):
         Same as above plus adjacency matrix as the last element:
         (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adj_matrix) or
         (X_obs, Y_obs, X_intv, Y_intv, adj_matrix)
+        
+    When return_ancestor_matrix=True:
+        Same as above plus ancestor matrix as the last element:
+        (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, anc_matrix) or
+        (X_obs, Y_obs, X_intv, Y_intv, anc_matrix)
         
         The adjacency matrix has a specific node ordering that aligns with the data:
         - Position 0: Treatment variable T (the intervened node)
@@ -100,10 +123,21 @@ class InterventionalDataset(Dataset):
         variable at position i to the variable at position j.
         
         Examples:
-        - adj_matrix[0, 1] = 1.0 means treatment T causes outcome Y
-        - adj_matrix[2, 1] = 1.0 means feature X[:,0] causes outcome Y
-        - adj_matrix[0, 2] = 1.0 means treatment T causes feature X[:,0]
-        - adj_matrix[2, 3] = 1.0 means feature X[:,0] causes feature X[:,1]
+        - adj_matrix[0, 1] = 1.0 means treatment T causes outcome Y (direct edge)
+        - adj_matrix[2, 1] = 1.0 means feature X[:,0] causes outcome Y (direct edge)
+        - adj_matrix[0, 2] = 1.0 means treatment T causes feature X[:,0] (direct edge)
+        - adj_matrix[2, 3] = 1.0 means feature X[:,0] causes feature X[:,1] (direct edge)
+        
+        The ancestor matrix follows the same node ordering as the adjacency matrix,
+        but represents the transitive closure of the adjacency matrix.
+        Matrix entry anc_matrix[i,j] = 1.0 indicates that variable i is an ancestor
+        of variable j (there exists a directed path from i to j, not necessarily direct).
+        
+        Examples:
+        - anc_matrix[0, 1] = 1.0 means treatment T is an ancestor of outcome Y
+        - anc_matrix[2, 1] = 1.0 means feature X[:,0] is an ancestor of outcome Y
+        - If there's a path T -> X[:,0] -> Y, then anc_matrix[0, 1] = 1.0 even if
+          there's no direct edge from T to Y (i.e., adj_matrix[0, 1] = 0.0)
         
     Examples
     --------
@@ -112,6 +146,7 @@ class InterventionalDataset(Dataset):
     ...     "endo_p_zero": {"value": 0.3},  # 30% of endogenous noise is zero
     ...     # ... other parameters
     ... }
+    >>> # Example 1: Return adjacency matrix
     >>> dataset_config = {
     ...     "dataset_size": {"value": 100},
     ...     "return_adjacency_matrix": {"value": True},  # Enable adjacency matrix output
@@ -120,6 +155,17 @@ class InterventionalDataset(Dataset):
     >>> dataset = InterventionalDataset(scm_config, preprocessing_config, dataset_config)
     >>> X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adj = dataset[0]
     >>> print(adj.shape)  # torch.Size([num_nodes, num_nodes])
+    >>> # adj[i, j] = 1 means direct edge from i to j
+    >>> 
+    >>> # Example 2: Return ancestor matrix
+    >>> dataset_config = {
+    ...     "dataset_size": {"value": 100},
+    ...     "return_ancestor_matrix": {"value": True},  # Enable ancestor matrix output
+    ...     # ... other parameters
+    ... }
+    >>> dataset = InterventionalDataset(scm_config, preprocessing_config, dataset_config)
+    >>> X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, anc = dataset[0]
+    >>> print(anc.shape)  # torch.Size([num_nodes, num_nodes])
     >>> # If L features kept, adj is (L+2) x (L+2)
     >>> # adj[0, 1] tells if treatment causes outcome
     >>> # adj[2, 1] tells if first feature (X[:,0]) causes outcome  
@@ -210,7 +256,8 @@ class InterventionalDataset(Dataset):
             preprocessing_config: Preprocessing hyperparameter configuration
             dataset_config: Dataset configuration (size, max samples, etc.)
             seed: Random seed for reproducibility
-            return_scm: If True, also return the SCM object in __getitem__ (for debugging)
+            return_scm: If True, also 
+              the SCM object in __getitem__ (for debugging)
         """
         self.scm_config = scm_config
         self.preprocessing_config = preprocessing_config
@@ -233,8 +280,16 @@ class InterventionalDataset(Dataset):
         # Prevent infinite loops: cap the number of re-sampling attempts
         self.max_resample_attempts = int(_get_cfg_value(self.dataset_config, "max_resample_attempts", 10) or 10)
         
-        # Option to return adjacency matrix
+        # Options to return graph matrices (adjacency or ancestor)
         self.return_adjacency_matrix = _get_cfg_value(self.dataset_config, "return_adjacency_matrix", False)
+        self.return_ancestor_matrix = _get_cfg_value(self.dataset_config, "return_ancestor_matrix", False)
+        
+        # Validate that both flags are not True simultaneously
+        if self.return_adjacency_matrix and self.return_ancestor_matrix:
+            raise ValueError(
+                "Cannot return both adjacency matrix and ancestor matrix. "
+                "Please set only one of 'return_adjacency_matrix' or 'return_ancestor_matrix' to True."
+            )
         
         # Build samplers for preprocessing and dataset parameters
         self.preprocessing_samplers = self._build_samplers(
@@ -601,8 +656,8 @@ class InterventionalDataset(Dataset):
                 result = (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
                 has_treatment = True
             
-            # Optionally add adjacency matrix with proper node ordering
-            if self.return_adjacency_matrix:
+            # Optionally add adjacency or ancestor matrix with proper node ordering
+            if self.return_adjacency_matrix or self.return_ancestor_matrix:
                 # Construct adjacency matrix with specific ordering to match model's data layout:
                 # Position 0: Treatment variable (intervention_node)
                 # Position 1: Outcome variable (processor.selected_target_feature)
@@ -629,6 +684,9 @@ class InterventionalDataset(Dataset):
                 #
                 # The adjacency matrix entry [i,j] = 1.0 indicates a directed edge from 
                 # variable at position i to variable at position j in this ordering.
+                #
+                # The ancestor matrix has the same ordering and shape as adjacency matrix,
+                # but entry [i,j] = 1.0 indicates that i is an ancestor of j (transitive closure).
                 
                 if has_treatment:
                     # Get the target feature and kept features from BasicProcessing
@@ -662,37 +720,51 @@ class InterventionalDataset(Dataset):
                     # This will be size (len(kept_features) + 2) x (len(kept_features) + 2)
                     adj_matrix_unpadded = scm.get_adjacency_matrix(node_order=ordered_nodes)
                     
-                    # Pad adjacency matrix to match X dimensions
-                    # X has been padded to max_n_features, so adjacency needs to be (max_n_features + 2) x (max_n_features + 2)
+                    # Convert to ancestor matrix if requested
+                    if self.return_ancestor_matrix:
+                        print("Converting to ancestor matrix...")
+                        graph_matrix_unpadded = adjacency_to_ancestor_matrix(adj_matrix_unpadded)
+                    else:
+                        graph_matrix_unpadded = adj_matrix_unpadded
+            
+                    
+                    # Pad matrix to match X dimensions
+                    # X has been padded to max_n_features, so matrix needs to be (max_n_features + 2) x (max_n_features + 2)
                     # Note: The +2 accounts for treatment T and outcome Y which come AFTER the features in the ordering
                     num_real_features = len(kept_features)  # Number of real (non-padded) features
                     target_size = X_obs.shape[1] + 2  # number of features in X + 2 (treatment + outcome)
                     
-                    if adj_matrix_unpadded.shape[0] < target_size:
-                        # Need to pad the adjacency matrix
+                    if graph_matrix_unpadded.shape[0] < target_size:
+                        # Need to pad the matrix
                         # Padding maintains the ordering: [X_0, ..., X_{L-1}, T, Y, padding...]
-                        padded_adj = torch.zeros((target_size, target_size), 
-                                                dtype=adj_matrix_unpadded.dtype,
-                                                device=adj_matrix_unpadded.device)
-                        # Copy the real adjacency values into the top-left corner
-                        padded_adj[:adj_matrix_unpadded.shape[0], :adj_matrix_unpadded.shape[1]] = adj_matrix_unpadded
-                        adj_matrix = padded_adj
+                        padded_matrix = torch.zeros((target_size, target_size), 
+                                                dtype=graph_matrix_unpadded.dtype,
+                                                device=graph_matrix_unpadded.device)
+                        # Copy the real matrix values into the top-left corner
+                        padded_matrix[:graph_matrix_unpadded.shape[0], :graph_matrix_unpadded.shape[1]] = graph_matrix_unpadded
+                        graph_matrix = padded_matrix
                     else:
-                        adj_matrix = adj_matrix_unpadded
+                        graph_matrix = graph_matrix_unpadded
                 else:
                     # No treatment variable case - just use default topological ordering
                     adj_matrix = scm.get_adjacency_matrix()
                     
+                    # Convert to ancestor matrix if requested
+                    if self.return_ancestor_matrix:
+                        graph_matrix = adjacency_to_ancestor_matrix(adj_matrix)
+                    else:
+                        graph_matrix = adj_matrix
+                    
                     # Pad if needed
                     target_size = X_obs.shape[1]
-                    if adj_matrix.shape[0] < target_size:
-                        padded_adj = torch.zeros((target_size, target_size),
-                                                dtype=adj_matrix.dtype, 
-                                                device=adj_matrix.device)
-                        padded_adj[:adj_matrix.shape[0], :adj_matrix.shape[1]] = adj_matrix
-                        adj_matrix = padded_adj
+                    if graph_matrix.shape[0] < target_size:
+                        padded_matrix = torch.zeros((target_size, target_size),
+                                                dtype=graph_matrix.dtype, 
+                                                device=graph_matrix.device)
+                        padded_matrix[:graph_matrix.shape[0], :graph_matrix.shape[1]] = graph_matrix
+                        graph_matrix = padded_matrix
                 
-                result = result + (adj_matrix,)
+                result = result + (graph_matrix,)
             
             # Optionally add SCM for debugging
             if self.return_scm:

@@ -47,7 +47,7 @@ def load_and_modify_existing_config(config_path):
     config['training_config']['benchmark_final_fidelity'] = {'value': "low"}
     config['training_config']['eval_batches'] = {'value': 5}  # Fewer eval batches
     config['training_config']['accumulate_grad_batches'] = {'value': 1}  # More frequent logging
-    config['training_config']['eval_every'] = {'value': 3}  # Smaller eval dataset
+    config['training_config']['eval_every'] = {'value': 100}  # Smaller eval dataset
     config['training_config']["lingaus_benchmark_eval_fidelity"] = {'value': "low"}
     config['training_config']["lingaus_benchmark_final_fidelity"] = {'value': "low"}
 
@@ -120,7 +120,7 @@ def run_simple_run_test(config_path):
 
 def main():
 
-    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "GraphConditioning" / "configs_50node" / "lingaus_50node_benchmarked_gcn_and_hartatt.yaml"
+    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "GraphConditioning" / "configs_5node_ancestor" / "lingaus_5node_benchmarked_gcn_and_hartatt.yaml"
     
     """Main test function."""
     print("=" * 60)

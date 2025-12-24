@@ -465,10 +465,29 @@ def main():
                 )
             else:
                 print("   Creating InterventionalDataset...")
-                # Enable adjacency matrix output if graph conditioning is enabled
+                # Validate graph matrix configuration if graph conditioning is enabled
                 if use_graph_conditioning:
-                    dataset_config['return_adjacency_matrix'] = {'value': True}
-                    print("   Adjacency matrix output: ENABLED (for graph conditioning)")
+                    # Extract matrix flags from config
+                    def _get_bool_flag(cfg_dict, key):
+                        raw = cfg_dict.get(key, False)
+                        if isinstance(raw, dict) and 'value' in raw:
+                            return raw['value']
+                        return raw
+                    
+                    return_adj = _get_bool_flag(dataset_config, 'return_adjacency_matrix')
+                    return_anc = _get_bool_flag(dataset_config, 'return_ancestor_matrix')
+                    
+                    if not return_adj and not return_anc:
+                        raise ValueError(
+                            "Graph conditioning is enabled (use_graph_conditioning=True), but neither "
+                            "return_adjacency_matrix nor return_ancestor_matrix is True in dataset_config. "
+                            "At least one must be True to provide graph structure to the model."
+                        )
+                    
+                    if return_adj:
+                        print("   Graph matrix output: ADJACENCY MATRIX (for graph conditioning)")
+                    if return_anc:
+                        print("   Graph matrix output: ANCESTOR MATRIX (for graph conditioning)")
                 
                 dataset = InterventionalDataset(
                     scm_config=scm_config,
@@ -534,11 +553,17 @@ def main():
             n_test_samples_distribution=n_test_dist,
         )
 
+        if num_workers > 0:
+            prefetch_factor = 4
+            print(f"   Using prefetch_factor: {prefetch_factor}")
+        else:
+            prefetch_factor = None
+
         dataloader = DataLoader(
             dataset,
             batch_size=batch_size,
             shuffle=False,
-            prefetch_factor=4,
+            prefetch_factor=prefetch_factor,
             num_workers=num_workers,
             collate_fn=collator,
             persistent_workers=num_workers > 0  # Only use persistent workers when num_workers > 0
