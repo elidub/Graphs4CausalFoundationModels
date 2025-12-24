@@ -295,21 +295,55 @@ class Trainer:
         return None
     
     def _check_flash_attention(self):
-        """Check if Flash Attention is being used in the model."""
+        """Check if Flash Attention is being used in the model (explicit modules or PyTorch SDPA)."""
         flash_attention_found = False
         flash_attention_modules = []
+        sdpa_found = False
+        sdpa_backend = "unknown"
         
         try:
-            # Check if flash_attn is available
+            # Check if flash_attn package is available
             import importlib.util
             flash_attn_available = importlib.util.find_spec("flash_attn") is not None
+            
+            # Check PyTorch SDPA backend availability
+            sdpa_backends = []
+            sdpa_can_use_flash = False
+            if torch.cuda.is_available() and hasattr(torch.nn.functional, 'scaled_dot_product_attention'):
+                try:
+                    # Check which SDPA backends are available
+                    if hasattr(torch.backends.cuda, 'sdp_kernel'):
+                        # PyTorch 2.0+ has context manager to check backends
+                        with torch.backends.cuda.sdp_kernel(
+                            enable_flash=True, 
+                            enable_math=False, 
+                            enable_mem_efficient=False
+                        ):
+                            # If this doesn't error, Flash Attention backend is available
+                            sdpa_can_use_flash = True
+                            sdpa_backends.append("flash_attention")
+                        
+                        # Check other backends
+                        try:
+                            with torch.backends.cuda.sdp_kernel(
+                                enable_flash=False, 
+                                enable_math=False, 
+                                enable_mem_efficient=True
+                            ):
+                                sdpa_backends.append("memory_efficient")
+                        except:
+                            pass
+                        
+                        sdpa_backends.append("math")  # Always available as fallback
+                except Exception as e:
+                    pass
             
             # Walk through all modules in the model
             for name, module in self.model.named_modules():
                 module_type = type(module).__name__
                 module_class = type(module).__module__
                 
-                # Check for Flash Attention patterns
+                # Check for explicit Flash Attention modules
                 if 'flash' in module_type.lower() or 'flash' in module_class.lower():
                     flash_attention_found = True
                     flash_attention_modules.append(f"{name} ({module_type})")
@@ -318,50 +352,104 @@ class Trainer:
                 if module_type in ['FlashAttention', 'FlashMHA', 'FlashSelfAttention', 'FlashCrossAttention']:
                     flash_attention_found = True
                     flash_attention_modules.append(f"{name} ({module_type})")
+                
+                # Check if module uses scaled_dot_product_attention
+                if hasattr(module, 'forward'):
+                    try:
+                        import inspect
+                        source = inspect.getsource(module.forward)
+                        if 'scaled_dot_product_attention' in source or 'F.scaled_dot_product_attention' in source:
+                            sdpa_found = True
+                    except:
+                        pass
             
             # Also check model attributes for flash attention flags
+            has_explicit_flag = False
             if hasattr(self.model, 'use_flash_attention'):
+                has_explicit_flag = True
                 if self.model.use_flash_attention:
                     flash_attention_found = True
-                    print(f"\n{'='*80}")
-                    print(f"FLASH ATTENTION STATUS: ENABLED (via model.use_flash_attention flag)")
-                    print(f"{'='*80}\n")
-                else:
-                    print(f"\n{'='*80}")
-                    print(f"FLASH ATTENTION STATUS: DISABLED (model.use_flash_attention=False)")
-                    print(f"{'='*80}\n")
             elif hasattr(self.model, 'config') and hasattr(self.model.config, 'use_flash_attention'):
+                has_explicit_flag = True
                 if self.model.config.use_flash_attention:
                     flash_attention_found = True
-                    print(f"\n{'='*80}")
-                    print(f"FLASH ATTENTION STATUS: ENABLED (via config.use_flash_attention flag)")
-                    print(f"{'='*80}\n")
-                else:
-                    print(f"\n{'='*80}")
-                    print(f"FLASH ATTENTION STATUS: DISABLED (config.use_flash_attention=False)")
-                    print(f"{'='*80}\n")
-            elif flash_attention_found:
-                print(f"\n{'='*80}")
-                print(f"FLASH ATTENTION STATUS: ENABLED")
-                print(f"  Flash Attention modules detected:")
-                for mod in flash_attention_modules[:5]:  # Show first 5
-                    print(f"    - {mod}")
+            
+            # Print comprehensive status
+            print(f"\n{'='*80}")
+            print(f"FLASH ATTENTION STATUS")
+            print(f"{'='*80}")
+            
+            # 1. Explicit flash_attn modules
+            if flash_attention_modules:
+                print(f"  ✓ Explicit Flash Attention modules detected:")
+                for mod in flash_attention_modules[:5]:
+                    print(f"      - {mod}")
                 if len(flash_attention_modules) > 5:
-                    print(f"    ... and {len(flash_attention_modules) - 5} more")
-                print(f"{'='*80}\n")
+                    print(f"      ... and {len(flash_attention_modules) - 5} more")
             else:
-                print(f"\n{'='*80}")
-                print(f"FLASH ATTENTION STATUS: NOT DETECTED")
-                if flash_attn_available:
-                    print(f"  Note: flash_attn package is installed but not used in model")
+                print(f"  ✗ No explicit Flash Attention modules found")
+            
+            # 2. PyTorch SDPA status
+            if sdpa_found:
+                print(f"  ✓ PyTorch scaled_dot_product_attention (SDPA) detected in model")
+                if sdpa_can_use_flash:
+                    print(f"      → Flash Attention 2.0 backend: AVAILABLE")
+                    print(f"      → SDPA will automatically use Flash Attention 2.0")
                 else:
-                    print(f"  Note: flash_attn package is not installed")
-                print(f"{'='*80}\n")
+                    print(f"      → Flash Attention 2.0 backend: NOT AVAILABLE")
+                    print(f"      → SDPA will use fallback (memory_efficient or math)")
+                
+                if sdpa_backends:
+                    print(f"      → Available SDPA backends: {', '.join(sdpa_backends)}")
+            else:
+                print(f"  ✗ PyTorch scaled_dot_product_attention not detected")
+            
+            # 3. Package availability
+            if flash_attn_available:
+                print(f"  ✓ flash_attn package: INSTALLED")
+            else:
+                print(f"  ✗ flash_attn package: NOT INSTALLED")
+            
+            # 4. Hardware/CUDA status
+            if torch.cuda.is_available():
+                cuda_version = torch.version.cuda
+                device_name = torch.cuda.get_device_name(0)
+                compute_cap = torch.cuda.get_device_capability(0)
+                print(f"  ✓ CUDA available: {cuda_version}")
+                print(f"      → Device: {device_name}")
+                print(f"      → Compute capability: {compute_cap[0]}.{compute_cap[1]}")
+                # Flash Attention 2.0 requires compute capability >= 8.0 (Ampere or newer)
+                if compute_cap[0] >= 8:
+                    print(f"      → Flash Attention 2.0 supported (compute capability >= 8.0)")
+                else:
+                    print(f"      → Flash Attention 2.0 NOT supported (requires compute capability >= 8.0)")
+            else:
+                print(f"  ✗ CUDA not available (CPU mode)")
+            
+            # Summary
+            print(f"{'-'*80}")
+            if flash_attention_found or (sdpa_found and sdpa_can_use_flash):
+                print(f"  OVERALL: Flash Attention is ENABLED")
+                if flash_attention_found and sdpa_found:
+                    print(f"      → Using both explicit modules AND PyTorch SDPA")
+                elif flash_attention_found:
+                    print(f"      → Using explicit flash_attn modules")
+                elif sdpa_found and sdpa_can_use_flash:
+                    print(f"      → Using PyTorch SDPA with Flash Attention 2.0 backend")
+            else:
+                print(f"  OVERALL: Flash Attention is NOT ENABLED")
+                if sdpa_found:
+                    print(f"      → PyTorch SDPA detected but using fallback backend")
+                else:
+                    print(f"      → Using standard attention implementation")
+            print(f"{'='*80}\n")
                 
         except Exception as e:
             print(f"\n{'='*80}")
             print(f"FLASH ATTENTION STATUS: CHECK FAILED")
             print(f"  Error: {e}")
+            import traceback
+            traceback.print_exc()
             print(f"{'='*80}\n")
 
     def _process_batch(self, batch):
