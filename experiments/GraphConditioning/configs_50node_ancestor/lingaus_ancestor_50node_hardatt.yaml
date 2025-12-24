@@ -235,7 +235,9 @@ dataset_config:
 
   # Adjacency matrix output (only used when graph conditioning is enabled)
   return_adjacency_matrix:  # whether to include adjacency matrix in dataset output
-    value: true  # Will be auto-enabled when use_graph_conditioning=true
+    value: false  # Will be auto-enabled when use_graph_conditioning=true
+  return_ancestor_matrix:
+    value: true
 
   # Rejection sampling: ensure target variance is sufficiently large
   # If either train or test target variance falls below this threshold, resample the dataset.
