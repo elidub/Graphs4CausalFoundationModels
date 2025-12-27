@@ -88,7 +88,8 @@ class InterventionalPFNSklearn:
     Parameters:
         config_path (str): Path to YAML config file
         checkpoint_path (str): Path to model checkpoint
-        device (str): Device for inference ('cpu', 'cuda', 'cuda:0', etc.)
+        device (str, optional): Device for inference ('cpu', 'cuda', 'cuda:0', etc.).
+                               If None (default), automatically uses GPU if available.
         verbose (bool): Print detailed loading information
     """
     
@@ -96,12 +97,17 @@ class InterventionalPFNSklearn:
         self,
         config_path: Optional[str] = None,
         checkpoint_path: Optional[str] = None,
-        device: str = "cpu",
+        device: Optional[str] = None,
         verbose: bool = False,
     ):
         self.config_path = config_path
         self.checkpoint_path = checkpoint_path
-        self.device = device
+        # Auto-detect device if not specified
+        if device is None:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            print(f"[InterventionalPFNSklearn] Auto-selected device: {self.device}")
+        else:
+            self.device = device
         self.verbose = verbose
         
         # Model components (populated by load())
