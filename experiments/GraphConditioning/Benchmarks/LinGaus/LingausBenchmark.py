@@ -115,9 +115,6 @@ class LinGausBenchmark:
         self.verbose = verbose
         self.max_samples = max_samples
         self.use_ancestor_matrix = use_ancestor_matrix
-
-        if self.use_ancestor_matrix:
-            print("Using ancestor matrices for graph representation.")
         
         # Create cache directory if it doesn't exist
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -556,9 +553,7 @@ class LinGausBenchmark:
         # IMPORTANT: The stored data contains adjacency matrices, so we compute ancestor matrix on-the-fly
         if self.use_ancestor_matrix:
             graph_matrix = adjacency_to_ancestor_matrix(
-                adj_tensor,
-                remove_diagonal=True,
-                assume_dag=True,
+                adj_tensor
             )
             # Convert back to numpy
             adj = graph_matrix.numpy() if torch.is_tensor(graph_matrix) else graph_matrix
@@ -771,9 +766,7 @@ class LinGausBenchmark:
                     # IMPORTANT: Stored data contains adjacency matrices, compute ancestor on-the-fly
                     if self.use_ancestor_matrix:
                         adj_computed = adjacency_to_ancestor_matrix(
-                            adj_tensor,
-                            remove_diagonal=True,
-                            assume_dag=True,
+                            adj_tensor
                         )
                         adj = adj_computed.numpy() if torch.is_tensor(adj_computed) else adj_computed
                     elif torch.is_tensor(adj):
