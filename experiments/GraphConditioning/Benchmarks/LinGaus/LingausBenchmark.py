@@ -1464,7 +1464,7 @@ if __name__ == "__main__":
     print("LinGausBenchmark - Full Benchmark")
     print("="*80)
     
-    MAX_SAMPLES = 20  # Limit to 3 samples per dataset for quick testing
+    MAX_SAMPLES = 25  # Limit to 3 samples per dataset for quick testing
     USE_ANCESTOR_MATRIX = False  # Set to True to use ancestor matrix instead of adjacency
     benchmark = LinGausBenchmark(
         verbose=True, 
@@ -1478,50 +1478,49 @@ if __name__ == "__main__":
     print(f"  Loaded config keys: {list(config.keys())}")
     print(f"  Num nodes: {config['scm_config']['num_nodes']}")
     
-    # Load and run full benchmark on graph-conditioned model
-    print("\nRunning full benchmark on graph-conditioned model...")
-    print("  Node configurations: 2, 5, 10, 20, 35, 50")
-    print("  Max samples per dataset: 100")
+    # Load and run benchmark on graph-conditioned model (2-node case only)
+    print("\nRunning benchmark on graph-conditioned model...")
+    print("  Node configurations: 2")
+    print(f"  Max samples per dataset: {MAX_SAMPLES}")
     print("="*80)
     
-    config_path_gc = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/checkpoints/simple_pfn_16678198.0_five_node_lingaus_gcn_and_hard_attention/step_50000_config.yaml"
-    checkpoint_path_gc = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/checkpoints/simple_pfn_16678198.0_five_node_lingaus_gcn_and_hard_attention/step_50000.pt"
+    config_path_gc = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/lingaus_50node_benchmarked_baseline_16694707.0/best_model_config.yaml"
+    checkpoint_path_gc = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/lingaus_50node_benchmarked_baseline_16694707.0/best_model.pt"
     
     try:
-        # Run full benchmark using the convenience function
-        all_results = benchmark.quick_benchmark(
+        # Load model first
+        benchmark.load_model(
             config_path=config_path_gc,
             checkpoint_path=checkpoint_path_gc,
-            max_samples=MAX_SAMPLES,  # Limit to 100 samples per dataset for quick testing
+        )
+        
+        # Run benchmark only on 2-node case
+        all_results = benchmark.run_full_benchmark(
+            node_counts=[2],
+            model=benchmark.model,
+            config_path=config_path_gc,
+            n_bootstrap=1000,
+            num_samples=1000,
+            base_seed=42,
         )
         
         twonode_mse = all_results[2]['mse']['mean']
-        fivenode_mse = all_results[5]['mse']['mean']
-        tennode_mse = all_results[10]['mse']['mean']
-        twentynode_mse = all_results[20]['mse']['mean']
-        thirtyfivenode_mse = all_results[35]['mse']['mean']
-        fiftynode_mse = all_results[50]['mse']['mean']
 
         print(f"\nMSE Results:")
         print(f"  2 nodes: {twonode_mse:.4f}")
-        print(f"  5 nodes: {fivenode_mse:.4f}")
-        print(f"  10 nodes: {tennode_mse:.4f}")
-        print(f"  20 nodes: {twentynode_mse:.4f}")
-        print(f"  35 nodes: {thirtyfivenode_mse:.4f}")
-        print(f"  50 nodes: {fiftynode_mse:.4f}")
 
         
         print(f"\n{'='*80}")
         print("Benchmark Results Summary")
         print(f"{'='*80}")
-        for node_count, result in all_results.items():
-            print(f"\n{node_count} nodes:")
-            for metric in ['mse', 'r2', 'nll']:
-                if metric in result:
-                    stats = result[metric]
-                    print(f"  {metric.upper()}:")
-                    print(f"    Mean: {stats['mean']:.4f} [{stats['mean_ci_lower']:.4f}, {stats['mean_ci_upper']:.4f}]")
-                    print(f"    Median: {stats['median']:.4f} [{stats['median_ci_lower']:.4f}, {stats['median_ci_upper']:.4f}]")
+        print(f"\n2 nodes:")
+        result = all_results[2]
+        for metric in ['mse', 'r2', 'nll']:
+            if metric in result:
+                stats = result[metric]
+                print(f"  {metric.upper()}:")
+                print(f"    Mean: {stats['mean']:.4f} [{stats['mean_ci_lower']:.4f}, {stats['mean_ci_upper']:.4f}]")
+                print(f"    Median: {stats['median']:.4f} [{stats['median_ci_lower']:.4f}, {stats['median_ci_upper']:.4f}]")
         
     except Exception as e:
         print(f"  Error: {e}")

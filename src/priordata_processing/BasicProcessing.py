@@ -373,6 +373,279 @@ class BasicProcessing:
             return X_train, T_train, Y_train, X_test, T_test, Y_test
 
     # ------------------------------------------------------------------
+    def process_from_splits_separate(
+        self,
+        train_dataset: Dict[int, torch.Tensor],
+        test_dataset: Dict[int, torch.Tensor],
+        *,
+        mode: str = 'fast'
+    ) -> Tuple[torch.Tensor, ...]:
+        """Process train and test datasets completely independently with NO data leakage.
+        
+        This method ensures complete separation between train and test preprocessing by:
+        - Processing train data separately to get statistics (mean, std, quantiles, etc.)
+        - Processing test data separately with its own statistics
+        - Using the SAME target feature and feature selection for both
+        - Ensuring NO information from test leaks into train preprocessing
+        
+        This is critical for interventional datasets where test has a different distribution
+        due to interventions - concatenating them would corrupt both train and test statistics.
+        
+        Key Differences from process_from_splits
+        -----------------------------------------
+        - process_from_splits: Concatenates train+test, computes shared statistics, then splits
+        - process_from_splits_separate: Processes train and test INDEPENDENTLY with separate statistics
+        
+        Parameters
+        ----------
+        train_dataset : Dict[int, torch.Tensor]
+            Mapping feature index -> column tensor for training set.
+        test_dataset : Dict[int, torch.Tensor]
+            Mapping feature index -> column tensor for test set.
+        mode : {'fast','safe'}
+            Validation strictness.
+            
+        Returns
+        -------
+        X_train, Y_train, X_test, Y_test : torch.Tensor
+            OR
+        X_train, T_train, Y_train, X_test, T_test, Y_test : torch.Tensor
+            Processed tensors. Train and test have independent preprocessing statistics.
+            
+        Notes
+        -----
+        - Target feature is selected based on TRAIN variance only
+        - Feature dropout uses the SAME random selections for both (via random seed)
+        - Each dataset gets its own standardization statistics
+        - Sample shuffling is disabled to preserve ordering
+        - The SAME features are kept for both train and test (consistent structure)
+        """
+        if set(train_dataset.keys()) != set(test_dataset.keys()):
+            raise ValueError("Train and test must have identical feature index sets.")
+        if not train_dataset or not test_dataset:
+            raise ValueError("Empty train or test dataset.")
+
+        # Validate both datasets
+        self._validate(train_dataset, mode)
+        self._validate(test_dataset, mode)
+
+        n_train = next(iter(train_dataset.values())).shape[0]
+        n_test = next(iter(test_dataset.values())).shape[0]
+        if n_train != self.n_train_samples:
+            raise ValueError(f"Provided train rows {n_train} != configured n_train_samples {self.n_train_samples}.")
+        if n_test != self.n_test_samples:
+            raise ValueError(f"Provided test rows {n_test} != configured n_test_samples {self.n_test_samples}.")
+
+        # Save original settings that we'll temporarily modify
+        original_shuffle = self.shuffle_samples
+        original_target = self.target_feature
+        original_seed = self.random_seed
+        original_n_train = self.n_train_samples
+        original_n_test = self.n_test_samples
+        original_max_n_train = self.max_n_train_samples
+        original_max_n_test = self.max_n_test_samples
+        
+        # Set random seed for reproducible target selection and dropout
+        if self.random_seed is not None:
+            torch.manual_seed(self.random_seed)
+            np.random.seed(self.random_seed)
+            random.seed(self.random_seed)
+        
+        # Disable sample shuffling to preserve ordering
+        self.shuffle_samples = False
+        
+        try:
+            # Step 1: Process TRAIN data independently
+            # Temporarily configure to treat entire train dataset as "train+test" 
+            # so process() doesn't try to split it further
+            self.n_train_samples = n_train
+            self.n_test_samples = 0  # No split - take all as train
+            self.max_n_train_samples = n_train
+            self.max_n_test_samples = n_train  # Same as train for consistency
+            
+            train_result = self.process(train_dataset, mode=mode)
+            
+            # Extract the selected target and kept features from train processing
+            selected_target = self.selected_target_feature
+            kept_features = self.kept_feature_indices if hasattr(self, 'kept_feature_indices') else None
+            has_dummy = self.has_dummy_feature
+            
+            # Extract train data (it's in the "train" portion of the result)
+            if len(train_result) == 4:
+                X_train, Y_train, _, _ = train_result
+                T_train = None
+                has_treatment = False
+            elif len(train_result) == 6:
+                X_train, T_train_raw, Y_train, _, _, _ = train_result
+                has_treatment = True
+            else:
+                raise ValueError(f"Unexpected train process output length: {len(train_result)}")
+            
+            # Trim to actual train samples (process() may have padded)
+            X_train = X_train[:original_n_train]
+            Y_train = Y_train[:original_n_train]
+            if has_treatment:
+                # T from process() is RAW (unpreprocessed) - we need to preprocess it
+                T_train_raw = T_train_raw[:original_n_train]
+            
+            # Step 2: Process TEST data independently with SAME target and feature selection
+            # Fix the target feature to match train
+            self.target_feature = selected_target
+            
+            # Reset random seed to get the SAME dropout pattern
+            if self.random_seed is not None:
+                torch.manual_seed(self.random_seed)
+                np.random.seed(self.random_seed)
+                random.seed(self.random_seed)
+            
+            # Reconfigure for test dataset
+            self.n_train_samples = n_test
+            self.n_test_samples = 0  # No split - take all as train
+            self.max_n_train_samples = n_test
+            self.max_n_test_samples = n_test
+            
+            test_result = self.process(test_dataset, mode=mode)
+            
+            # Verify both have same structure (with/without intervention)
+            if len(test_result) != len(train_result):
+                raise RuntimeError(
+                    f"Train and test processing returned different structures: "
+                    f"{len(train_result)} vs {len(test_result)}"
+                )
+            
+            # Extract test data (it's in the "train" portion since we set n_test_samples=0)
+            if len(test_result) == 4:
+                X_test, Y_test, _, _ = test_result
+                T_test = None
+            elif len(test_result) == 6:
+                X_test, T_test_raw, Y_test, _, _, _ = test_result
+            else:
+                raise ValueError(f"Unexpected test process output length: {len(test_result)}")
+            
+            # Trim to actual test samples
+            X_test = X_test[:original_n_test]
+            Y_test = Y_test[:original_n_test]
+            if has_treatment:
+                # T from process() is RAW (unpreprocessed) - we need to preprocess it
+                T_test_raw = T_test_raw[:original_n_test]
+            
+            # Step 3: Preprocess treatment variable separately with INDEPENDENT statistics
+            if has_treatment:
+                from .Preprocessor import Preprocessor as TPreprocessor
+                
+                # Process train T
+                t_preproc_train = TPreprocessor(
+                    n_features=1,  # T is a single feature
+                    max_n_features=1,
+                    n_train_samples=original_n_train,
+                    max_n_train_samples=original_n_train,
+                    n_test_samples=0,
+                    max_n_test_samples=original_n_train,
+                    feature_negative_one_one_scaling=self.feature_negative_one_one_scaling,
+                    feature_standardize=self.feature_standardize,
+                    yeo_johnson=self.yeo_johnson,
+                    remove_outliers=self.remove_outliers,
+                    outlier_quantile=self.outlier_quantile,
+                    shuffle_samples=False,  # Don't shuffle - preserve order
+                    shuffle_features=False,  # Only 1 feature, no need
+                    y_clip_quantile=None,  # Not a target
+                    target_negative_one_one_scaling=False,  # T is not a target
+                    eps=self.eps,
+                    device=self.device,
+                    dtype=self.dtype,
+                )
+                
+                # Reshape for batch processing: [N,1] -> [1,N,1]
+                T_train_batch = T_train_raw.unsqueeze(0)  # [1, N_train, 1]
+                
+                # Create dummy Y (not used for T preprocessing)
+                Y_train_dummy = torch.zeros(1, original_n_train, device=T_train_raw.device, dtype=T_train_raw.dtype)
+                
+                # Process train T
+                t_train_processed = t_preproc_train.process(T_train_batch, Y_train_dummy)
+                if t_train_processed is not None:
+                    T_train, _, _, _ = t_train_processed
+                    T_train = T_train[0]  # Remove batch dimension: [1,N,1] -> [N,1]
+                else:
+                    T_train = T_train_raw
+                
+                # Process test T with independent statistics
+                t_preproc_test = TPreprocessor(
+                    n_features=1,
+                    max_n_features=1,
+                    n_train_samples=original_n_test,
+                    max_n_train_samples=original_n_test,
+                    n_test_samples=0,
+                    max_n_test_samples=original_n_test,
+                    feature_negative_one_one_scaling=self.feature_negative_one_one_scaling,
+                    feature_standardize=self.feature_standardize,
+                    yeo_johnson=self.yeo_johnson,
+                    remove_outliers=self.remove_outliers,
+                    outlier_quantile=self.outlier_quantile,
+                    shuffle_samples=False,
+                    shuffle_features=False,
+                    y_clip_quantile=None,
+                    target_negative_one_one_scaling=False,
+                    eps=self.eps,
+                    device=self.device,
+                    dtype=self.dtype,
+                )
+                
+                T_test_batch = T_test_raw.unsqueeze(0)
+                Y_test_dummy = torch.zeros(1, original_n_test, device=T_test_raw.device, dtype=T_test_raw.dtype)
+                
+                t_test_processed = t_preproc_test.process(T_test_batch, Y_test_dummy)
+                if t_test_processed is not None:
+                    T_test, _, _, _ = t_test_processed
+                    T_test = T_test[0]  # Remove batch dimension
+                else:
+                    T_test = T_test_raw
+            
+            # Now pad to the ORIGINAL max dimensions
+            # Pad train
+            if X_train.shape[0] < original_max_n_train:
+                pad_rows = original_max_n_train - X_train.shape[0]
+                X_train = torch.cat([X_train, torch.zeros(pad_rows, X_train.shape[1], dtype=X_train.dtype, device=X_train.device)], dim=0)
+                Y_train = torch.cat([Y_train, torch.zeros(pad_rows, Y_train.shape[1], dtype=Y_train.dtype, device=Y_train.device)], dim=0)
+                if has_treatment:
+                    T_train = torch.cat([T_train, torch.zeros(pad_rows, T_train.shape[1], dtype=T_train.dtype, device=T_train.device)], dim=0)
+            
+            # Pad test
+            if X_test.shape[0] < original_max_n_test:
+                pad_rows = original_max_n_test - X_test.shape[0]
+                X_test = torch.cat([X_test, torch.zeros(pad_rows, X_test.shape[1], dtype=X_test.dtype, device=X_test.device)], dim=0)
+                Y_test = torch.cat([Y_test, torch.zeros(pad_rows, Y_test.shape[1], dtype=Y_test.dtype, device=Y_test.device)], dim=0)
+                if has_treatment:
+                    T_test = torch.cat([T_test, torch.zeros(pad_rows, T_test.shape[1], dtype=T_test.dtype, device=T_test.device)], dim=0)
+            
+            # Combine results
+            if has_treatment:
+                result = (X_train, T_train, Y_train, X_test, T_test, Y_test)
+            else:
+                result = (X_train, Y_train, X_test, Y_test)
+            
+            # Apply test feature masking if requested (only to test set)
+            if self.test_feature_mask_fraction > 0.0:
+                if has_treatment:
+                    X_test = self._apply_test_feature_masking(X_test)
+                    result = (X_train, T_train, Y_train, X_test, T_test, Y_test)
+                else:
+                    X_test = self._apply_test_feature_masking(X_test)
+                    result = (X_train, Y_train, X_test, Y_test)
+            
+            return result
+            
+        finally:
+            # Restore ALL original settings
+            self.shuffle_samples = original_shuffle
+            self.target_feature = original_target
+            self.random_seed = original_seed
+            self.n_train_samples = original_n_train
+            self.n_test_samples = original_n_test
+            self.max_n_train_samples = original_max_n_train
+            self.max_n_test_samples = original_max_n_test
+
+    # ------------------------------------------------------------------
     def _validate(self, dataset: Dict[int, torch.Tensor], mode: str) -> None:
         if not dataset:
             raise ValueError("dataset empty")

@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from priors.causal_prior.noise_distributions.ResamplingDist import ResamplingDist
 from priors.causal_prior.noise_distributions.RescaledResamplingDist import RescaledResamplingDist
+from priors.causal_prior.noise_distributions.UniformResamplingDist import UniformResamplingDist
 
 from priors.causal_prior.scm.SCMSampler import SCMSampler
 from priordata_processing.BasicProcessing import BasicProcessing
@@ -187,6 +188,7 @@ class InterventionalDataset(Dataset):
         "eps": float,
         "increase_treatment_scale": bool,
         "distribution_rescale_factor": float,
+        "interventional_distribution_type": str,
         "test_feature_mask_fraction": float,
     }
     
@@ -569,19 +571,23 @@ class InterventionalDataset(Dataset):
             # Collect observational samples for the chosen intervention node (marginal)
             intervention_samples = obs1_raw[intervention_node]
 
-            # Determine whether to apply rescaling based on sampled preprocessing parameters
+            # Determine distribution type and rescaling based on preprocessing parameters
+            dist_type = preprocessing_params.get("interventional_distribution_type", "resampling")
             increase_scale = preprocessing_params.get("increase_treatment_scale", False)
             rescale_factor = preprocessing_params.get("distribution_rescale_factor", 0.0)
             
-            # Create resampling distribution (with or without rescaling)
-            if increase_scale and rescale_factor != 0.0:
+            # Create intervention distribution based on type
+            if dist_type == "uniform":
+                # Use uniform distribution over [min, max] of observational samples
+                interventional_dist = UniformResamplingDist(intervention_samples)
+            elif dist_type == "rescaled" or (increase_scale and rescale_factor != 0.0):
                 # Use rescaled distribution to increase treatment variable scale
                 interventional_dist = RescaledResamplingDist(
                     intervention_samples,
                     rescale_factor=rescale_factor
                 )
             else:
-                # Use standard resampling distribution (no rescaling)
+                # Default: use standard resampling distribution (discrete sampling without replacement)
                 interventional_dist = ResamplingDist(intervention_samples)
 
             scm.intervene(node = intervention_node) # intervene on the chosen node
@@ -640,10 +646,10 @@ class InterventionalDataset(Dataset):
             )
             
             # Process observational (train) and interventional (test) splits separately
-            processed = processor.process_from_splits(
+            processed = processor.process_from_splits_separate(
                 train_dataset=obs0,
                 test_dataset=interv1,
-                mode='fast'
+                mode = "fast"
             )
             
             # Unpack results
@@ -653,8 +659,11 @@ class InterventionalDataset(Dataset):
                 has_treatment = False
             else:
                 X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = processed
+                #T_obs = T_obs/ torch.std(T_obs)  # rescale treatment to have unit stddev
+                #T_intv = T_intv/ torch.std(T_intv)  # rescale treatment to have unit stddev
                 result = (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
                 has_treatment = True
+
             
             # Optionally add adjacency or ancestor matrix with proper node ordering
             if self.return_adjacency_matrix or self.return_ancestor_matrix:
