@@ -53,6 +53,21 @@ except ImportError:
     # Fallback to old version if new one not available
     from models.InterventionalPFN_sklearn import InterventionalPFNSklearn
 
+# Import ancestor matrix computation function
+try:
+    from utils.graph_utils import adjacency_to_ancestor_matrix
+except ImportError:
+    try:
+        from src.utils.graph_utils import adjacency_to_ancestor_matrix
+    except ImportError:
+        # Final fallback
+        import sys
+        from pathlib import Path
+        utils_path = Path(__file__).resolve().parents[3] / "src" / "utils"
+        if str(utils_path) not in sys.path:
+            sys.path.insert(0, str(utils_path))
+        from graph_utils import adjacency_to_ancestor_matrix
+
 
 class LinGausBenchmark:
     """
@@ -83,6 +98,7 @@ class LinGausBenchmark:
         cache_dir: Optional[str] = None,
         verbose: bool = True,
         max_samples: Optional[int] = None,
+        use_ancestor_matrix: bool = False,
     ):
         """
         Initialize the benchmark.
@@ -92,11 +108,13 @@ class LinGausBenchmark:
             cache_dir: Directory to store/load cached data (default: benchmark_dir/data_cache)
             verbose: Whether to print progress messages
             max_samples: Maximum number of samples to evaluate per dataset (default: None = all samples)
+            use_ancestor_matrix: If True, compute and use ancestor matrix instead of adjacency matrix (default: False)
         """
         self.benchmark_dir = Path(benchmark_dir)
         self.cache_dir = Path(cache_dir) if cache_dir else self.benchmark_dir / "data_cache"
         self.verbose = verbose
         self.max_samples = max_samples
+        self.use_ancestor_matrix = use_ancestor_matrix
         
         # Create cache directory if it doesn't exist
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -114,6 +132,7 @@ class LinGausBenchmark:
             print(f"  Cache dir: {self.cache_dir}")
             if max_samples is not None:
                 print(f"  Max samples per dataset: {max_samples}")
+            print(f"  Use ancestor matrix: {use_ancestor_matrix}")
     
     def load_config(self, node_count: int) -> Dict[str, Any]:
         """
@@ -181,11 +200,17 @@ class LinGausBenchmark:
         dataset_config = config['dataset_config']
         preprocessing_config = config['preprocessing_config']
         
-        # Ensure adjacency matrix is returned
+        # Ensure adjacency matrix is returned (we always need it)
+        # If use_ancestor_matrix is True, we'll compute ancestor matrix from adjacency
         if 'return_adjacency_matrix' not in dataset_config:
             dataset_config['return_adjacency_matrix'] = {'value': True}
         else:
             dataset_config['return_adjacency_matrix']['value'] = True
+        
+        # Ensure ancestor matrix is not directly requested from dataset
+        # (we'll compute it ourselves if needed)
+        if 'return_ancestor_matrix' in dataset_config:
+            dataset_config['return_ancestor_matrix']['value'] = False
         
         # Generate filename if not provided
         if filename is None:
@@ -205,6 +230,7 @@ class LinGausBenchmark:
             print(f"\nSampling data for {node_count} nodes...")
             print(f"  Num samples: {num_samples}")
             print(f"  Seed: {dataset_seed}")
+            print(f"  Use ancestor matrix: {self.use_ancestor_matrix}")
         
         # Create dataset
         dataset = InterventionalDataset(
@@ -228,6 +254,14 @@ class LinGausBenchmark:
                 # Get data tuple: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adj, scm, processor, intervention_node)
                 data_item = dataset[idx]
                 
+                # Get adjacency matrix
+                adjacency_matrix = data_item[6]
+                
+                # NOTE: We always store the adjacency matrix in the data cache.
+                # If use_ancestor_matrix is True, the ancestor matrix will be computed
+                # on-the-fly during evaluation (in evaluate_sample and _evaluate_dataset_batched).
+                # This avoids storing duplicate data and ensures flexibility.
+                
                 # Store everything except potentially large SCM object (optional)
                 # You can adjust what to save based on your needs
                 sampled_data.append({
@@ -237,7 +271,7 @@ class LinGausBenchmark:
                     'X_intv': data_item[3],
                     'T_intv': data_item[4],
                     'Y_intv': data_item[5],
-                    'adjacency_matrix': data_item[6],
+                    'adjacency_matrix': adjacency_matrix,  # Always store adjacency matrix
                     'intervention_node': data_item[9] if len(data_item) > 9 else None,
                     'metadata': {
                         'intervened_feature': data_item[8].intervened_feature if len(data_item) > 8 else None,
@@ -255,6 +289,7 @@ class LinGausBenchmark:
             'node_count': node_count,
             'num_samples': len(sampled_data),
             'dataset_seed': dataset_seed,
+            'use_ancestor_matrix': self.use_ancestor_matrix,
             'config': config,
             'scm_config': scm_config,
             'dataset_config': dataset_config,
@@ -288,6 +323,10 @@ class LinGausBenchmark:
     ) -> Dict[int, str]:
         """
         Sample data for all (or specified) node configurations.
+        
+        The graph matrices in the sampled data will be either adjacency matrices
+        or ancestor matrices depending on the use_ancestor_matrix flag set during
+        initialization.
         
         Args:
             num_samples_per_config: Number of samples to generate per config
@@ -473,6 +512,10 @@ class LinGausBenchmark:
         
         Assumes the data is already preprocessed and stored in the expected format.
         
+        NOTE: The stored data always contains adjacency matrices. If use_ancestor_matrix
+        flag is True, this method will compute the ancestor matrix on-the-fly from the
+        adjacency matrix before passing it to the model.
+        
         Args:
             data_item: Dictionary containing:
                 - 'X_obs': Observational covariates (tensor)
@@ -482,6 +525,7 @@ class LinGausBenchmark:
                 - 'T_intv': Interventional treatment (tensor)
                 - 'Y_intv': Interventional outcome (tensor)
                 - 'adjacency_matrix': Graph adjacency matrix (tensor)
+                  NOTE: Always stores adjacency matrix; ancestor matrix computed on-the-fly if needed
             model: Model to evaluate (default: use self.model)
             
         Returns:
@@ -502,7 +546,23 @@ class LinGausBenchmark:
         Y_intv = data_item['Y_intv']
         adj = data_item['adjacency_matrix']
         
-        # Convert to numpy if needed
+        # Convert to numpy if needed (but keep tensor for ancestor matrix computation if needed)
+        adj_tensor = adj if torch.is_tensor(adj) else torch.tensor(adj)
+        
+        # Compute ancestor matrix if flag is set
+        # IMPORTANT: The stored data contains adjacency matrices, so we compute ancestor matrix on-the-fly
+        if self.use_ancestor_matrix:
+            graph_matrix = adjacency_to_ancestor_matrix(
+                adj_tensor,
+                remove_diagonal=True,
+                assume_dag=True,
+            )
+            # Convert back to numpy
+            adj = graph_matrix.numpy() if torch.is_tensor(graph_matrix) else graph_matrix
+        elif torch.is_tensor(adj):
+            adj = adj.numpy()
+        
+        # Convert other tensors to numpy
         if torch.is_tensor(X_obs):
             X_obs = X_obs.numpy()
             T_obs = T_obs.numpy()
@@ -510,7 +570,6 @@ class LinGausBenchmark:
             X_intv = X_intv.numpy()
             T_intv = T_intv.numpy()
             Y_intv = Y_intv.numpy()
-            adj = adj.numpy()
         
         # Get expected number of features from model config
         # The model expects num_features columns (X, T, Y format)
@@ -702,7 +761,22 @@ class LinGausBenchmark:
                     Y_intv = data_item['Y_intv']
                     adj = data_item['adjacency_matrix']
                     
-                    # Convert to numpy if needed
+                    # Keep tensor version for ancestor matrix computation if needed
+                    adj_tensor = adj if torch.is_tensor(adj) else torch.tensor(adj)
+                    
+                    # Compute ancestor matrix if flag is set
+                    # IMPORTANT: Stored data contains adjacency matrices, compute ancestor on-the-fly
+                    if self.use_ancestor_matrix:
+                        adj_computed = adjacency_to_ancestor_matrix(
+                            adj_tensor,
+                            remove_diagonal=True,
+                            assume_dag=True,
+                        )
+                        adj = adj_computed.numpy() if torch.is_tensor(adj_computed) else adj_computed
+                    elif torch.is_tensor(adj):
+                        adj = adj.numpy()
+                    
+                    # Convert other tensors to numpy
                     if torch.is_tensor(X_obs):
                         X_obs = X_obs.numpy()
                         T_obs = T_obs.numpy()
@@ -710,7 +784,6 @@ class LinGausBenchmark:
                         X_intv = X_intv.numpy()
                         T_intv = T_intv.numpy()
                         Y_intv = Y_intv.numpy()
-                        adj = adj.numpy()
                     
                     # Trim features to match expected dimensions
                     if X_obs.shape[1] > expected_features:
@@ -951,6 +1024,7 @@ class LinGausBenchmark:
             'data_filename': data_filename,
             'model_name': model_name,
             'n_bootstrap': n_bootstrap,
+            'use_ancestor_matrix': metadata.get('use_ancestor_matrix', False),
         }
         
         # Setup output directory structure
@@ -1395,7 +1469,12 @@ if __name__ == "__main__":
     print("="*80)
     
     MAX_SAMPLES = 20  # Limit to 3 samples per dataset for quick testing
-    benchmark = LinGausBenchmark(verbose=True, max_samples=MAX_SAMPLES)
+    USE_ANCESTOR_MATRIX = False  # Set to True to use ancestor matrix instead of adjacency
+    benchmark = LinGausBenchmark(
+        verbose=True, 
+        max_samples=MAX_SAMPLES,
+        use_ancestor_matrix=USE_ANCESTOR_MATRIX,
+    )
     
     # Test loading a config
     print("\nTesting config loading...")
@@ -1455,10 +1534,17 @@ if __name__ == "__main__":
     
     print("\n" + "="*80)
     print("Convenience function usage:")
+    print("  # Using adjacency matrix (default)")
+    print("  benchmark = LinGausBenchmark(max_samples=100, use_ancestor_matrix=False)")
     print("  results = benchmark.quick_benchmark(")
     print("      config_path='/path/to/config.yaml',")
     print("      checkpoint_path='/path/to/checkpoint.pt',")
-    print("      max_samples=100,  # Optional: limit samples per dataset")
+    print("  )")
+    print("\n  # Using ancestor matrix instead")
+    print("  benchmark_anc = LinGausBenchmark(max_samples=100, use_ancestor_matrix=True)")
+    print("  results_anc = benchmark_anc.quick_benchmark(")
+    print("      config_path='/path/to/config.yaml',")
+    print("      checkpoint_path='/path/to/checkpoint.pt',")
     print("  )")
     print("\nTo run benchmark on multiple models:")
     print("  python run_benchmark.py")

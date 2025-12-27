@@ -1131,16 +1131,27 @@ def main():
                 else:
                     print(f"   WARNING: Relative path {lingaus_benchmark_dir} does not exist at {resolved_path}")
             
+            # Check if ancestor matrix should be used (from dataset config)
+            use_ancestor_matrix = False
+            if 'return_ancestor_matrix' in dataset_config:
+                anc_cfg = dataset_config['return_ancestor_matrix']
+                if isinstance(anc_cfg, dict) and 'value' in anc_cfg:
+                    use_ancestor_matrix = anc_cfg['value']
+                elif isinstance(anc_cfg, bool):
+                    use_ancestor_matrix = anc_cfg
+            
             try:
                 lingaus_benchmark = LinGausBenchmark(
                     benchmark_dir=lingaus_benchmark_dir,
                     cache_dir=None,  # Will use default: benchmark_dir/data_cache
                     verbose=True,
                     max_samples=None,  # Will be controlled by fidelity level
+                    use_ancestor_matrix=use_ancestor_matrix,  # Pass ancestor matrix flag from config
                 )
                 print(f"   LinGausBenchmark instance created!")
                 print(f"   Benchmark dir: {lingaus_benchmark_dir}")
                 print(f"   Data cache: {lingaus_benchmark.cache_dir}")
+                print(f"   Use ancestor matrix: {use_ancestor_matrix}")
             except Exception as e:
                 print(f"   WARNING: Failed to create LinGausBenchmark: {e}")
                 print(f"   Exception details:")
