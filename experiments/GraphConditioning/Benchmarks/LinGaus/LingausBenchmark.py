@@ -115,6 +115,9 @@ class LinGausBenchmark:
         self.verbose = verbose
         self.max_samples = max_samples
         self.use_ancestor_matrix = use_ancestor_matrix
+
+        if self.use_ancestor_matrix:
+            print("Using ancestor matrices for graph representation.")
         
         # Create cache directory if it doesn't exist
         self.cache_dir.mkdir(parents=True, exist_ok=True)

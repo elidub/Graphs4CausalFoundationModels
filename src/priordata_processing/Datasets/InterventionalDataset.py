@@ -722,7 +722,7 @@ class InterventionalDataset(Dataset):
                     
                     # Convert to ancestor matrix if requested
                     if self.return_ancestor_matrix:
-                        print("Converting to ancestor matrix...")
+                        #print("Converting to ancestor matrix...")
                         graph_matrix_unpadded = adjacency_to_ancestor_matrix(adj_matrix_unpadded)
                     else:
                         graph_matrix_unpadded = adj_matrix_unpadded
