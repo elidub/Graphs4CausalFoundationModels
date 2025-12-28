@@ -300,10 +300,6 @@ preprocessing_config:
     value: 0.99
   yeo_johnson:
     value: false
-#
-  
-  interventional_distribution_type:
-    value: "uniform"     # can be resampling, uniform, rescaled
 
   increase_treatment_scale: 
     value: false

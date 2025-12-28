@@ -9,15 +9,17 @@
 # 
 # ===============================================================================
 
-experiment_name: "lingausdatagen"
+experiment_name: "baseline"
 description: ""
 
 mode: "interventional" # determine whether to train in predictive or interventional mode via "predictive" or "interventional"
 
 scm_config:
   num_nodes:
-    value: 2
-
+    distribution: "discrete_uniform"
+    distribution_parameters:
+      low: 2
+      high: 5
   graph_edge_prob:
     distribution: "beta"
     distribution_parameters:
@@ -219,32 +221,38 @@ dataset_config:
     value: 100000000
 
   max_number_samples_per_dataset: #actual value of samples (train plus test) per dataset
-    value: 1000
+    value: 500
 
   max_number_train_samples_per_dataset:  #how many train samples to actually sample per dataset
     value: 1000
   max_number_test_samples_per_dataset:  # how many test samples to actually sample per dataset
     value: 1000
   n_test_samples_per_dataset: # how many of the max_number_train_samples_per_dataset to use to pass to the model. the rest will be test samples
-    value: 500
+    distribution: "discrete_uniform"
+    distribution_parameters:
+      low: 1
+      high: 500
 
-  # Adjacency matrix output (only used when graph conditioning is enabled)
   return_adjacency_matrix:  # whether to include adjacency matrix in dataset output
-    value: false  # Will be auto-enabled when use_graph_conditioning=true
+    value: true  # Will be auto-enabled when use_graph_conditioning=true
 
   # Rejection sampling: ensure target variance is sufficiently large
   # If either train or test target variance falls below this threshold, resample the dataset.
   # Set to null to disable rejection.
   min_target_variance:
-    value: 1e-3
+    value: 1e-2
+
+  # New unique values threshold (20% by default)
+  min_unique_target_fraction:
+    value: 0.0  # At least 20% of samples must have unique target values
 
   # Safety cap on number of re-sampling attempts to avoid infinite loops
   max_resample_attempts:
-    value: 10
+    value: 100
 
 
   max_number_features:
-    value: 50
+    value: 2
   seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -300,10 +308,6 @@ preprocessing_config:
     value: 0.99
   yeo_johnson:
     value: false
-#
-  
-  interventional_distribution_type:
-    value: "uniform"     # can be resampling, uniform, rescaled
 
   increase_treatment_scale: 
     value: false
@@ -416,15 +420,15 @@ training_config:
   checkpoint_dir:
     value: "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints"
   save_every: # save a checkpoint every n steps
-    value: 1000
+    value: 5000
 
   # Hardware Configuration
   device:
     value: "cuda"
   use_amp:  # Enable automatic mixed precision (float16) for faster training on GPU
-    value: false
+    value: true
   precision: # precision for training. 
-    value: "32"
+    value: "bf16"
 
   # Experiment Organization
   experiment_name: # name of the experiment, used for logging 
@@ -436,13 +440,13 @@ training_config:
 
   # Model Checkpointing
   checkpoint_every_n_steps: # how often to save a model checkpoint
-    value: 1000
+    value: 5000
 
   # Evaluation Configuration
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 1000
+    value: 5000
   eval_batches: # number of batches to use for evaluation
     value: 200
   eval_dataset_size: # size of the evaluation dataset
