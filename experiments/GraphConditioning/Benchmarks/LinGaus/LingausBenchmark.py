@@ -83,14 +83,52 @@ class LinGausBenchmark:
     """
     
     # Config file names mapping
+    # For each node count, we have 4 variants:
+    # - base (no suffix): standard config
+    # - path_TY: ensure treatment->outcome path exists
+    # - path_YT: ensure outcome->treatment path exists
+    # - path_independent_TY: ensure no connection between treatment and outcome
     CONFIG_FILES = {
-        2: "2node.yaml",
-        5: "5node.yaml",
-        10: "10node.yaml",
-        20: "20node.yaml",
-        35: "35node.yaml",
-        50: "50node.yaml",
+        2: {
+            "base": "2node.yaml",
+            "path_TY": "2node_path_TY.yaml",
+            "path_YT": "2node_path_YT.yaml",
+            "path_independent_TY": "2node_path_independent_TY.yaml",
+        },
+        5: {
+            "base": "5node.yaml",
+            "path_TY": "5node_path_TY.yaml",
+            "path_YT": "5node_path_YT.yaml",
+            "path_independent_TY": "5node_path_independent_TY.yaml",
+        },
+        10: {
+            "base": "10node.yaml",
+            "path_TY": "10node_path_TY.yaml",
+            "path_YT": "10node_path_YT.yaml",
+            "path_independent_TY": "10node_path_independent_TY.yaml",
+        },
+        20: {
+            "base": "20node.yaml",
+            "path_TY": "20node_path_TY.yaml",
+            "path_YT": "20node_path_YT.yaml",
+            "path_independent_TY": "20node_path_independent_TY.yaml",
+        },
+        35: {
+            "base": "35node.yaml",
+            "path_TY": "35node_path_TY.yaml",
+            "path_YT": "35node_path_YT.yaml",
+            "path_independent_TY": "35node_path_independent_TY.yaml",
+        },
+        50: {
+            "base": "50node.yaml",
+            "path_TY": "50node_path_TY.yaml",
+            "path_YT": "50node_path_YT.yaml",
+            "path_independent_TY": "50node_path_independent_TY.yaml",
+        },
     }
+    
+    # All available variants
+    VARIANTS = ["base", "path_TY", "path_YT", "path_independent_TY"]
     
     def __init__(
         self,
@@ -134,12 +172,13 @@ class LinGausBenchmark:
                 print(f"  Max samples per dataset: {max_samples}")
             print(f"  Use ancestor matrix: {use_ancestor_matrix}")
     
-    def load_config(self, node_count: int) -> Dict[str, Any]:
+    def load_config(self, node_count: int, variant: str = "base") -> Dict[str, Any]:
         """
-        Load a configuration file for a specific node count.
+        Load a configuration file for a specific node count and variant.
         
         Args:
-            node_count: Number of nodes (2, 5, 10, 20, 35, 50, or "variable")
+            node_count: Number of nodes (2, 5, 10, 20, 35, 50)
+            variant: Config variant ("base", "path_TY", "path_YT", "path_independent_TY")
             
         Returns:
             Dictionary containing scm_config, dataset_config, and preprocessing_config
@@ -149,13 +188,18 @@ class LinGausBenchmark:
                 f"No config for {node_count} nodes. Available: {list(self.CONFIG_FILES.keys())}"
             )
         
+        if variant not in self.VARIANTS:
+            raise ValueError(
+                f"Invalid variant '{variant}'. Available: {self.VARIANTS}"
+            )
+        
         # Check if already loaded
-        config_key = str(node_count)
+        config_key = f"{node_count}_{variant}"
         if config_key in self.configs:
             return self.configs[config_key]
         
         # Load from file
-        config_path = self.benchmark_dir / self.CONFIG_FILES[node_count]
+        config_path = self.benchmark_dir / self.CONFIG_FILES[node_count][variant]
         
         if not config_path.exists():
             raise FileNotFoundError(f"Config file not found: {config_path}")
@@ -175,6 +219,7 @@ class LinGausBenchmark:
         self,
         node_count: int,
         num_samples: int,
+        variant: str = "base",
         dataset_seed: Optional[int] = None,
         filename: Optional[str] = None,
         overwrite: bool = False,
@@ -183,8 +228,9 @@ class LinGausBenchmark:
         Sample data from InterventionalDataset and save to disk.
         
         Args:
-            node_count: Number of nodes (2, 5, 10, 20, 35, 50, or "variable")
+            node_count: Number of nodes (2, 5, 10, 20, 35, 50)
             num_samples: Number of dataset samples to generate
+            variant: Config variant ("base", "path_TY", "path_YT", "path_independent_TY")
             dataset_seed: Random seed for dataset (default: None)
             filename: Custom filename for saved data (default: auto-generated)
             overwrite: Whether to overwrite existing file
@@ -193,7 +239,7 @@ class LinGausBenchmark:
             Path to saved file
         """
         # Load configuration
-        config = self.load_config(node_count)
+        config = self.load_config(node_count, variant=variant)
         
         # Extract the three main configs
         scm_config = config['scm_config']
@@ -215,7 +261,8 @@ class LinGausBenchmark:
         # Generate filename if not provided
         if filename is None:
             seed_str = f"_seed{dataset_seed}" if dataset_seed is not None else ""
-            filename = f"lingaus_{node_count}nodes_{num_samples}samples{seed_str}.pkl"
+            variant_str = f"_{variant}" if variant != "base" else ""
+            filename = f"lingaus_{node_count}nodes{variant_str}_{num_samples}samples{seed_str}.pkl"
         
         save_path = self.cache_dir / filename
         
@@ -227,7 +274,7 @@ class LinGausBenchmark:
             return str(save_path)
         
         if self.verbose:
-            print(f"\nSampling data for {node_count} nodes...")
+            print(f"\nSampling data for {node_count} nodes (variant: {variant})...")
             print(f"  Num samples: {num_samples}")
             print(f"  Seed: {dataset_seed}")
             print(f"  Use ancestor matrix: {self.use_ancestor_matrix}")
@@ -287,6 +334,7 @@ class LinGausBenchmark:
         # Create metadata
         metadata = {
             'node_count': node_count,
+            'variant': variant,
             'num_samples': len(sampled_data),
             'dataset_seed': dataset_seed,
             'use_ancestor_matrix': self.use_ancestor_matrix,
@@ -319,10 +367,11 @@ class LinGausBenchmark:
         num_samples_per_config: int = 100,
         dataset_seed: Optional[int] = 42,
         node_counts: Optional[List[int]] = None,
+        variants: Optional[List[str]] = None,
         overwrite: bool = False,
-    ) -> Dict[int, str]:
+    ) -> Dict[Tuple[int, str], str]:
         """
-        Sample data for all (or specified) node configurations.
+        Sample data for all (or specified) node configurations and variants.
         
         The graph matrices in the sampled data will be either adjacency matrices
         or ancestor matrices depending on the use_ancestor_matrix flag set during
@@ -332,41 +381,51 @@ class LinGausBenchmark:
             num_samples_per_config: Number of samples to generate per config
             dataset_seed: Base seed for datasets (each config gets seed + offset)
             node_counts: List of node counts to sample (default: all available)
+            variants: List of variants to sample (default: all available)
             overwrite: Whether to overwrite existing files
             
         Returns:
-            Dictionary mapping node_count -> saved file path
+            Dictionary mapping (node_count, variant) -> saved file path
         """
         if node_counts is None:
-            node_counts = [2, 5, 10, 20, 35, 50]  # Exclude "variable" by default
+            node_counts = [2, 5, 10, 20, 35, 50]
+        
+        if variants is None:
+            variants = self.VARIANTS
         
         saved_paths = {}
         
-        for i, node_count in enumerate(node_counts):
-            # Use different seed for each config if base seed provided
-            seed = dataset_seed + i * 1000 if dataset_seed is not None else None
-            
-            if self.verbose:
-                print(f"\n{'='*80}")
-                print(f"Processing config {i+1}/{len(node_counts)}: {node_count} nodes")
-                print(f"{'='*80}")
-            
-            try:
-                path = self.sample_and_save_data(
-                    node_count=node_count,
-                    num_samples=num_samples_per_config,
-                    dataset_seed=seed,
-                    overwrite=overwrite,
-                )
-                saved_paths[node_count] = path
-            except Exception as e:
+        config_idx = 0
+        total_configs = len(node_counts) * len(variants)
+        
+        for node_count in node_counts:
+            for variant in variants:
+                config_idx += 1
+                # Use different seed for each config if base seed provided
+                seed = dataset_seed + config_idx * 1000 if dataset_seed is not None else None
+                
                 if self.verbose:
-                    print(f"ERROR: Failed to sample {node_count}-node config: {e}")
-                continue
+                    print(f"\n{'='*80}")
+                    print(f"Processing config {config_idx}/{total_configs}: {node_count} nodes, variant: {variant}")
+                    print(f"{'='*80}")
+                
+                try:
+                    path = self.sample_and_save_data(
+                        node_count=node_count,
+                        num_samples=num_samples_per_config,
+                        variant=variant,
+                        dataset_seed=seed,
+                        overwrite=overwrite,
+                    )
+                    saved_paths[(node_count, variant)] = path
+                except Exception as e:
+                    if self.verbose:
+                        print(f"ERROR: Failed to sample {node_count}-node {variant} config: {e}")
+                    continue
         
         if self.verbose:
             print(f"\n{'='*80}")
-            print(f"Completed sampling for {len(saved_paths)}/{len(node_counts)} configs")
+            print(f"Completed sampling for {len(saved_paths)}/{total_configs} configs")
             print(f"{'='*80}")
         
         return saved_paths
@@ -374,6 +433,9 @@ class LinGausBenchmark:
     def load_data(self, filename: str) -> Tuple[List[Dict], Dict[str, Any]]:
         """
         Load sampled data from disk.
+        
+        Handles both dictionary format (from sample_and_save_data) and tuple format
+        (from generate_all_variants_data.py).
         
         Args:
             filename: Name of the saved file
@@ -393,7 +455,40 @@ class LinGausBenchmark:
             save_data = pickle.load(f)
         
         data = save_data['data']
-        metadata = save_data['metadata']
+        metadata = save_data.get('metadata', {})
+        
+        # Handle both tuple and dict formats
+        # Tuple format: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
+        # Dict format: {'X_obs': ..., 'T_obs': ..., etc.}
+        if len(data) > 0 and isinstance(data[0], tuple):
+            if self.verbose:
+                print(f"  Converting tuple format to dict format...")
+            # Convert tuples to dicts
+            converted_data = []
+            for item in data:
+                if len(item) == 6:
+                    # Standard format without adjacency matrix
+                    converted_data.append({
+                        'X_obs': item[0],
+                        'T_obs': item[1],
+                        'Y_obs': item[2],
+                        'X_intv': item[3],
+                        'T_intv': item[4],
+                        'Y_intv': item[5],
+                        'adjacency_matrix': None,  # Will be loaded from metadata if available
+                    })
+                elif len(item) >= 7:
+                    # Format with adjacency matrix
+                    converted_data.append({
+                        'X_obs': item[0],
+                        'T_obs': item[1],
+                        'Y_obs': item[2],
+                        'X_intv': item[3],
+                        'T_intv': item[4],
+                        'Y_intv': item[5],
+                        'adjacency_matrix': item[6],
+                    })
+            data = converted_data
         
         if self.verbose:
             print(f"  Loaded {len(data)} samples")
@@ -999,9 +1094,10 @@ class LinGausBenchmark:
         data, metadata = self.load_data(data_filename)
         
         node_count = metadata['node_count']
+        variant = metadata.get('variant', 'base')
         
         if self.verbose:
-            print(f"\nRunning benchmark on {node_count}-node dataset...")
+            print(f"\nRunning benchmark on {node_count}-node dataset (variant: {variant})...")
             print(f"  Number of samples: {len(data)}")
         
         # Evaluate
@@ -1016,6 +1112,7 @@ class LinGausBenchmark:
         # Add metadata
         aggregated['metadata'] = {
             'node_count': node_count,
+            'variant': variant,
             'n_samples': len(results),
             'data_filename': data_filename,
             'model_name': model_name,
@@ -1038,8 +1135,9 @@ class LinGausBenchmark:
         
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Generate filenames (simpler now that we have dedicated folders)
-        aggregated_filename = f"aggregated_{node_count}nodes.json"
+        # Generate filenames including variant information
+        variant_str = f"_{variant}" if variant != "base" else ""
+        aggregated_filename = f"aggregated_{node_count}nodes{variant_str}.json"
         
         aggregated_path = output_dir / aggregated_filename
         with open(aggregated_path, 'w') as f:
@@ -1050,7 +1148,7 @@ class LinGausBenchmark:
         
         # Save individual results if requested
         if save_individual_results:
-            individual_filename = f"individual_{node_count}nodes.json"
+            individual_filename = f"individual_{node_count}nodes{variant_str}.json"
             individual_path = output_dir / individual_filename
             
             with open(individual_path, 'w') as f:
@@ -1064,6 +1162,7 @@ class LinGausBenchmark:
     def run_full_benchmark(
         self,
         node_counts: Optional[List[int]] = None,
+        variants: Optional[List[str]] = None,
         model: Optional[Any] = None,
         output_dir: Optional[str] = None,
         model_name: Optional[str] = None,
@@ -1071,12 +1170,13 @@ class LinGausBenchmark:
         n_bootstrap: int = 1000,
         num_samples: int = 1000,
         base_seed: int = 42,
-    ) -> Dict[int, Dict[str, Any]]:
+    ) -> Dict[Tuple[int, str], Dict[str, Any]]:
         """
-        Run benchmark on all node count configurations.
+        Run benchmark on all node count configurations and variants.
         
         Args:
             node_counts: List of node counts to evaluate (default: all available)
+            variants: List of variants to evaluate (default: all available)
             model: Model to evaluate (default: use self.model)
             output_dir: Directory to save results (default: benchmark_dir/benchmark_res/model_name)
             model_name: Name for the model (for folder organization)
@@ -1086,10 +1186,13 @@ class LinGausBenchmark:
             base_seed: Base seed used for dataset generation
             
         Returns:
-            Dictionary mapping node_count -> aggregated results
+            Dictionary mapping (node_count, variant) -> aggregated results
         """
         if node_counts is None:
             node_counts = [2, 5, 10, 20, 35, 50]
+        
+        if variants is None:
+            variants = self.VARIANTS
         
         # Setup output directory structure
         if output_dir is None:
@@ -1125,41 +1228,40 @@ class LinGausBenchmark:
                 if self.verbose:
                     print(f"\nCopied model config to: {config_dest}")
         
-        # Map node counts to their seeds based on generate_benchmark_data.py
-        seed_map = {
-            2: base_seed,
-            5: base_seed + 1000,
-            10: base_seed + 2000,
-            20: base_seed + 3000,
-            35: base_seed + 4000,
-            50: base_seed + 5000,
-        }
-        
+        # Map node counts and variants to their seeds 
+        # NOTE: All variants use the SAME seed (base_seed) per the generate_all_variants_data.py script
         all_results = {}
         
+        config_idx = 0
+        total_configs = len(node_counts) * len(variants)
+        
         for node_count in node_counts:
-            # Generate expected filename with correct seed
-            dataset_seed = seed_map.get(node_count, base_seed)
-            data_filename = f"lingaus_{node_count}nodes_{num_samples}samples_seed{dataset_seed}.pkl"
-            
-            if self.verbose:
-                print(f"\n{'='*80}")
-                print(f"Benchmarking {node_count}-node configuration")
-                print(f"{'='*80}")
-            
-            try:
-                results = self.run_benchmark(
-                    data_filename=data_filename,
-                    model=model,
-                    output_dir=output_dir,
-                    model_name=model_name,
-                    n_bootstrap=n_bootstrap,
-                )
-                all_results[node_count] = results
-            except Exception as e:
+            for variant in variants:
+                config_idx += 1
+                # Generate expected filename with correct seed
+                # All files use base_seed (typically 42) regardless of variant
+                dataset_seed = base_seed
+                variant_str = f"_{variant}" if variant != "base" else ""
+                data_filename = f"lingaus_{node_count}nodes{variant_str}_{num_samples}samples_seed{dataset_seed}.pkl"
+                
                 if self.verbose:
-                    print(f"ERROR: Failed to benchmark {node_count}-node config: {e}")
-                continue
+                    print(f"\n{'='*80}")
+                    print(f"Benchmarking config {config_idx}/{total_configs}: {node_count}-node, variant: {variant}")
+                    print(f"{'='*80}")
+                
+                try:
+                    results = self.run_benchmark(
+                        data_filename=data_filename,
+                        model=model,
+                        output_dir=output_dir,
+                        model_name=model_name,
+                        n_bootstrap=n_bootstrap,
+                    )
+                    all_results[(node_count, variant)] = results
+                except Exception as e:
+                    if self.verbose:
+                        print(f"ERROR: Failed to benchmark {node_count}-node {variant} config: {e}")
+                    continue
         
         # Save summary in the model's folder
         summary_filename = "summary_all_nodes.json"
@@ -1171,7 +1273,7 @@ class LinGausBenchmark:
         if self.verbose:
             print(f"\n{'='*80}")
             print(f"Benchmark complete!")
-            print(f"  Evaluated {len(all_results)}/{len(node_counts)} configurations")
+            print(f"  Evaluated {len(all_results)}/{total_configs} configurations")
             print(f"  Results folder: {output_dir}")
             print(f"  Summary saved to: {summary_path}")
             print(f"{'='*80}")
@@ -1184,16 +1286,16 @@ class LinGausBenchmark:
         checkpoint_path: str,
         config_path: Optional[str] = None,
         output_dir: Optional[str] = None,
-    ) -> Dict[int, Dict[str, Any]]:
+    ) -> Dict[Tuple[int, str], Dict[str, Any]]:
         """
-        Run LinGaus benchmark with specified fidelity level.
+        Run LinGaus benchmark with specified fidelity level on all variants.
         
         This method provides a unified interface compatible with the Trainer's benchmark
         integration pattern. It maps fidelity levels to evaluation configurations:
         
-        - "minimal": 3 samples from all node counts (2, 5, 10, 20, 35, 50)
-        - "low": 100 samples from all node counts (2, 5, 10, 20, 35, 50)
-        - "high": 1000 samples from all node counts (2, 5, 10, 20, 35, 50)
+        - "minimal": 3 samples from all node counts (2, 5, 10, 20, 35, 50) and all variants
+        - "low": 100 samples from all node counts (2, 5, 10, 20, 35, 50) and all variants
+        - "high": 1000 samples from all node counts (2, 5, 10, 20, 35, 50) and all variants
         
         Args:
             fidelity: Fidelity level ("minimal", "low", or "high")
@@ -1202,7 +1304,7 @@ class LinGausBenchmark:
             output_dir: Directory to save results (default: benchmark_dir/benchmark_res/model_name)
             
         Returns:
-            Dictionary mapping node_count -> aggregated_results
+            Dictionary mapping (node_count, variant) -> aggregated_results
             
         Raises:
             ValueError: If fidelity is not "minimal", "low", or "high"
@@ -1231,6 +1333,7 @@ class LinGausBenchmark:
             print(f"LinGaus Benchmark - Fidelity: {fidelity.upper()}")
             print(f"  Max samples per dataset: {max_samples}")
             print(f"  Node counts: [2, 5, 10, 20, 35, 50]")
+            print(f"  Variants: {self.VARIANTS}")
             print(f"  Checkpoint: {checkpoint_path}")
             print(f"{'='*80}\n")
         
@@ -1280,12 +1383,13 @@ class LinGausBenchmark:
         checkpoint_path: str,
         max_samples: Optional[int] = None,
         model_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Dict[int, Dict[str, Any]]:
+    ) -> Dict[Tuple[int, str], Dict[str, Any]]:
         """
-        Convenience function to quickly run a full benchmark on a model.
+        Convenience function to quickly run a full benchmark on a model across all variants.
         
         This is a simplified interface that runs the benchmark with sensible defaults:
         - All node counts: [2, 5, 10, 20, 35, 50]
+        - All variants: ["base", "path_TY", "path_YT", "path_independent_TY"]
         - Bootstrap samples: 1000
         - Automatic folder naming from config path
         - Automatic model config copying
@@ -1297,7 +1401,7 @@ class LinGausBenchmark:
             model_kwargs: Optional additional kwargs for model constructor (e.g., {'n_estimators': 1})
             
         Returns:
-            Dictionary mapping node_count -> aggregated_results
+            Dictionary mapping (node_count, variant) -> aggregated_results
             
         Example:
             >>> benchmark = LinGausBenchmark(max_samples=100)

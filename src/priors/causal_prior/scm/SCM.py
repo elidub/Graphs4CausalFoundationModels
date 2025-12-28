@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, Mapping, Optional, Tuple, List
 import torch
 from torch import Tensor
+import networkx as nx
 
 # Add src to path for imports when run directly
 src_path = Path(__file__).parent.parent.parent.parent
@@ -477,6 +478,129 @@ class SCM:
                 adj_matrix[parent_idx, child_idx] = 1.0
         
         return adj_matrix
+
+    def exists_treatment_outcome_path(self, treatment: str, outcome: str) -> bool:
+        """
+        Check if there exists a directed path from treatment to outcome.
+        
+        This method determines whether the treatment variable can causally influence
+        the outcome variable through any sequence of directed edges in the DAG.
+        
+        Parameters
+        ----------
+        treatment : str
+            Name of the treatment/intervention node.
+        outcome : str
+            Name of the outcome/target node.
+            
+        Returns
+        -------
+        bool
+            True if there exists at least one directed path from treatment to outcome,
+            False otherwise.
+            
+        Examples
+        --------
+        >>> # Check if treatment can causally affect outcome
+        >>> has_causal_effect = scm.exists_treatment_outcome_path('T', 'Y')
+        >>> if has_causal_effect:
+        ...     print("Treatment T can causally influence outcome Y")
+        
+        Notes
+        -----
+        This uses NetworkX's has_path function which performs a graph traversal
+        to check for path existence. The method is efficient and does not
+        enumerate all paths.
+        """
+        return nx.has_path(self.dag.g, treatment, outcome)
+
+    def exists_outcome_treatment_path(self, treatment: str, outcome: str) -> bool:
+        """
+        Check if there exists a directed path from outcome to treatment.
+        
+        This method determines whether the outcome variable can causally influence
+        the treatment variable. In a properly specified causal model, this typically
+        should be False (treatment causes outcome, not vice versa), but this method
+        allows checking for reverse causation or cyclic dependencies.
+        
+        Parameters
+        ----------
+        treatment : str
+            Name of the treatment/intervention node.
+        outcome : str
+            Name of the outcome/target node.
+            
+        Returns
+        -------
+        bool
+            True if there exists at least one directed path from outcome to treatment,
+            False otherwise.
+            
+        Examples
+        --------
+        >>> # Check for reverse causation
+        >>> has_reverse = scm.exists_outcome_treatment_path('T', 'Y')
+        >>> if has_reverse:
+        ...     print("Warning: Outcome Y can influence treatment T")
+        
+        Notes
+        -----
+        This is equivalent to exists_treatment_outcome_path(outcome, treatment).
+        In a valid causal DAG, this should typically return False to avoid
+        confounding or cyclic relationships.
+        """
+        return nx.has_path(self.dag.g, outcome, treatment)
+
+    def exists_no_connection_treatment_outcome(self, treatment: str, outcome: str) -> bool:
+        """
+        Check if there is no directed path between treatment and outcome in either direction.
+        
+        This method verifies that the treatment and outcome variables are causally
+        disconnected - neither can influence the other through any sequence of
+        directed edges in the DAG. This can be useful for identifying independent
+        variables or checking for instrument validity.
+        
+        Parameters
+        ----------
+        treatment : str
+            Name of the treatment/intervention node.
+        outcome : str
+            Name of the outcome/target node.
+            
+        Returns
+        -------
+        bool
+            True if there is no path from treatment to outcome AND no path from
+            outcome to treatment (complete causal disconnection), False otherwise.
+            
+        Examples
+        --------
+        >>> # Check if treatment and outcome are causally independent
+        >>> are_independent = scm.exists_no_connection_treatment_outcome('T', 'Y')
+        >>> if are_independent:
+        ...     print("Treatment T and outcome Y are causally disconnected")
+        >>> else:
+        ...     print("Treatment T and outcome Y are causally connected")
+        
+        >>> # This can be used to verify instrument validity
+        >>> is_valid_instrument = scm.exists_no_connection_treatment_outcome('Z', 'Y')
+        >>> has_effect_on_treatment = scm.exists_treatment_outcome_path('Z', 'T')
+        >>> if is_valid_instrument and has_effect_on_treatment:
+        ...     print("Z is a valid instrument (affects T but not Y directly)")
+        
+        Notes
+        -----
+        This method returns True only when BOTH conditions hold:
+        - No path exists from treatment to outcome
+        - No path exists from outcome to treatment
+        
+        This is equivalent to: 
+        not exists_treatment_outcome_path(treatment, outcome) and 
+        not exists_outcome_treatment_path(treatment, outcome)
+        """
+        treatment_to_outcome = nx.has_path(self.dag.g, treatment, outcome)
+        outcome_to_treatment = nx.has_path(self.dag.g, outcome, treatment)
+        return not (treatment_to_outcome or outcome_to_treatment)
 
     # ----------------------------------------------------------------------
     # Noise sampling

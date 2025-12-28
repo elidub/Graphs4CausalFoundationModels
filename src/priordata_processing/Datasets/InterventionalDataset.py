@@ -293,6 +293,23 @@ class InterventionalDataset(Dataset):
                 "Please set only one of 'return_adjacency_matrix' or 'return_ancestor_matrix' to True."
             )
         
+        # Path constraint settings (optional)
+        self.ensure_treatment_outcome_path = _get_cfg_value(self.preprocessing_config, "ensure_treatment_outcome_path", False)
+        self.ensure_outcome_treatment_path = _get_cfg_value(self.preprocessing_config, "ensure_outcome_treatment_path", False)
+        self.ensure_no_connection_treatment_outcome = _get_cfg_value(self.preprocessing_config, "ensure_no_connection_treatment_outcome", False)
+        
+        # Validate that contradictory path constraints are not both enabled
+        if self.ensure_treatment_outcome_path and self.ensure_no_connection_treatment_outcome:
+            raise ValueError(
+                "Cannot simultaneously require treatment->outcome path AND no connection. "
+                "Please set only one of 'ensure_treatment_outcome_path' or 'ensure_no_connection_treatment_outcome' to True."
+            )
+        if self.ensure_outcome_treatment_path and self.ensure_no_connection_treatment_outcome:
+            raise ValueError(
+                "Cannot simultaneously require outcome->treatment path AND no connection. "
+                "Please set only one of 'ensure_outcome_treatment_path' or 'ensure_no_connection_treatment_outcome' to True."
+            )
+        
         # Build samplers for preprocessing and dataset parameters
         self.preprocessing_samplers = self._build_samplers(
             self.preprocessing_config, 
@@ -540,7 +557,7 @@ class InterventionalDataset(Dataset):
         else:
             number_test_samples = int(test_dist.sample(item_generator) if hasattr(test_dist, 'sample') else test_dist)
         
-        # Rejection strategy: resample if target variances are too small
+        # Rejection strategy: resample if target variances are too small or path constraints not met
         # We re-run SCM sampling up to max_resample_attempts
         retry_attempt = 0
         last_result = None
@@ -562,6 +579,60 @@ class InterventionalDataset(Dataset):
             # now, do interventional sampling
             # for interventional sampling, first determine intervention node
             intervention_node = torch.randint(0, len(scm.dag.nodes()), (1,)).item() # select random node for intervention
+            
+            # CRITICAL: Check path constraints on the ORIGINAL SCM before intervention
+            # We need to determine the target node first to check constraints
+            # Use the same logic as BasicProcessing to select target
+            all_nodes = list(scm.dag.nodes())
+            if preprocessing_params["target_feature"] is not None:
+                target_node = preprocessing_params["target_feature"]
+            else:
+                # BasicProcessing selects a random target different from intervention_node
+                available_targets = [n for n in all_nodes if n != intervention_node]
+                if len(available_targets) > 0:
+                    target_idx = torch.randint(0, len(available_targets), (1,)).item()
+                    target_node = available_targets[target_idx]
+                else:
+                    # Edge case: only one node in SCM
+                    target_node = intervention_node
+            
+            # Check path constraints on ORIGINAL (non-intervened) SCM
+            path_constraint_ok = True
+            if any([self.ensure_treatment_outcome_path, 
+                   self.ensure_outcome_treatment_path, 
+                   self.ensure_no_connection_treatment_outcome]):
+                
+                treatment_node = intervention_node
+                
+                # Check 3a: Ensure treatment->outcome path exists
+                if self.ensure_treatment_outcome_path:
+                    path_exists = scm.exists_treatment_outcome_path(treatment_node, target_node)
+                    if not path_exists:
+                        path_constraint_ok = False
+                        
+                
+                # Check 3b: Ensure outcome->treatment path exists
+                if self.ensure_outcome_treatment_path:
+                    path_exists = scm.exists_outcome_treatment_path(treatment_node, target_node)
+                    if not path_exists:
+                        path_constraint_ok = False
+        
+                
+                # Check 3c: Ensure no connection between treatment and outcome
+                if self.ensure_no_connection_treatment_outcome:
+                    no_connection = scm.exists_no_connection_treatment_outcome(treatment_node, target_node)
+                    if not no_connection:
+                        path_constraint_ok = False
+            
+            # If path constraints fail, skip the rest and resample
+            if not path_constraint_ok:
+                retry_attempt += 1
+                if retry_attempt >= self.max_resample_attempts:
+                    print(f"[InterventionalDataset] Warning: Max resample attempts ({self.max_resample_attempts}) reached for path constraints. Using last sample.")
+                    # Continue with current SCM despite constraint violation
+                    pass
+                else:
+                    continue  # Resample a new SCM
 
             scm.sample_exogenous(num_samples=number_test_samples) #sample observational data again. 
             scm.sample_endogenous(num_samples=number_test_samples) #sample observational data again. 
@@ -788,8 +859,15 @@ class InterventionalDataset(Dataset):
             # Save latest result so we can return even if rejection keeps failing
             last_result = result
             
-            # If no thresholds provided, accept immediately
-            if self.min_target_variance is None and self.min_unique_target_fraction is None:
+            # If no thresholds or path constraints provided, accept immediately
+            no_constraints = (
+                self.min_target_variance is None and 
+                self.min_unique_target_fraction is None and
+                not self.ensure_treatment_outcome_path and
+                not self.ensure_outcome_treatment_path and
+                not self.ensure_no_connection_treatment_outcome
+            )
+            if no_constraints:
                 break
             
             # --- Check 1: Variance threshold ---
@@ -841,13 +919,26 @@ class InterventionalDataset(Dataset):
                     
                     unique_threshold_ok = obs_unique_ok and intv_unique_ok
             
-            # Accept if both checks pass
-            if var_threshold_ok and unique_threshold_ok:
+            # Note: Path constraints are checked BEFORE intervention (earlier in the loop)
+            # This is intentional - we want to check the original causal structure
+            
+            # Accept if all checks pass (path_constraint_ok was checked earlier)
+            if var_threshold_ok and unique_threshold_ok and path_constraint_ok:
                 break  # Accept
             
             retry_attempt += 1
             if retry_attempt >= self.max_resample_attempts:
                 # Give up and return the last sampled data to avoid infinite loop
+                failed_checks = []
+                if not var_threshold_ok:
+                    failed_checks.append("variance threshold")
+                if not unique_threshold_ok:
+                    failed_checks.append("unique values threshold")
+                if not path_constraint_ok:
+                    failed_checks.append("path constraints")
+                
+                print(f"[InterventionalDataset] Warning: Max resample attempts ({self.max_resample_attempts}) "
+                      f"reached. Failed checks: {', '.join(failed_checks)}. Using last sample.")
                 break
         
         #breakpoint()
