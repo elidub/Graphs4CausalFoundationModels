@@ -230,7 +230,7 @@ dataset_config:
 
   # Adjacency matrix output (only used when graph conditioning is enabled)
   return_adjacency_matrix:  # whether to include adjacency matrix in dataset output
-    value: false  # Will be auto-enabled when use_graph_conditioning=true
+    value: true  # Enable adjacency matrix for graph-conditioned models
 
   # Rejection sampling: ensure target variance is sufficiently large
   # If either train or test target variance falls below this threshold, resample the dataset.
@@ -240,7 +240,7 @@ dataset_config:
 
   # Safety cap on number of re-sampling attempts to avoid infinite loops
   max_resample_attempts:
-    value: 10
+    value: 10000
 
 
   max_number_features:
@@ -304,6 +304,12 @@ preprocessing_config:
   
   interventional_distribution_type:
     value: "uniform"     # can be resampling, uniform, rescaled
+  ensure_treatment_outcome_path:
+    value: false 
+  ensure_outcome_treatment_path:
+    value: false
+  ensure_no_connection_treatment_outcome:
+    value: false
 
   increase_treatment_scale: 
     value: false

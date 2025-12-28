@@ -16,7 +16,7 @@ mode: "interventional" # determine whether to train in predictive or interventio
 
 scm_config:
   num_nodes:
-    value: 50
+    value: 2
 
   graph_edge_prob:
     distribution: "beta"
@@ -300,9 +300,17 @@ preprocessing_config:
     value: 0.99
   yeo_johnson:
     value: false
-
+#
+  
   interventional_distribution_type:
     value: "uniform"     # can be resampling, uniform, rescaled
+    
+  ensure_treatment_outcome_path:
+    value: false 
+  ensure_outcome_treatment_path:
+    value: false
+  ensure_no_connection_treatment_outcome:
+    value: true
 
   increase_treatment_scale: 
     value: false

@@ -308,6 +308,13 @@ preprocessing_config:
     value: false
   distribution_rescale_factor: 
     value: 0.0
+    
+  ensure_treatment_outcome_path:
+    value: false 
+  ensure_outcome_treatment_path:
+    value: true
+  ensure_no_connection_treatment_outcome:
+    value: false
   
   # Test feature masking: randomly mask a fraction of features in test set only
   # Creates distribution shift where test has fewer features than train
