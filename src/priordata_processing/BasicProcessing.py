@@ -709,11 +709,15 @@ class BasicProcessing:
             # Check if specified target has zero variance
             target_col = feature_indices.index(self.target_feature)
             if not valid_mask[target_col]:
-                raise ValueError(
+                import warnings
+                warnings.warn(
                     f"Provided target_feature {self.target_feature} has zero variance "
-                    f"(trivial prediction task) - cannot be used as target"
+                    f"(trivial prediction task) - selecting a different target randomly instead"
                 )
-            return self.target_feature
+                # Don't use this target, fall through to random selection
+                self.target_feature = None
+            else:
+                return self.target_feature
         
         # Random selection with variance-based preference
         # Remove intervened feature from candidate set for random selection
