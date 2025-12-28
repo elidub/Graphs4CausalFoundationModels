@@ -249,7 +249,7 @@ dataset_config:
 
   # Safety cap on number of re-sampling attempts to avoid infinite loops
   max_resample_attempts:
-    value: 100
+    value: 1000
 
 
   max_number_features:
