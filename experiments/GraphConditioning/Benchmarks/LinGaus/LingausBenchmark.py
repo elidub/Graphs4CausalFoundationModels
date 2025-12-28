@@ -1094,7 +1094,20 @@ class LinGausBenchmark:
         data, metadata = self.load_data(data_filename)
         
         node_count = metadata['node_count']
-        variant = metadata.get('variant', 'base')
+        
+        # Try to get variant from metadata, otherwise parse from filename or config_file
+        variant = metadata.get('variant', None)
+        if variant is None:
+            # Try to parse from config_file in metadata
+            config_file = metadata.get('config_file', '')
+            if 'path_TY' in config_file or 'path_TY' in data_filename:
+                variant = 'path_TY'
+            elif 'path_YT' in config_file or 'path_YT' in data_filename:
+                variant = 'path_YT'
+            elif 'path_independent_TY' in config_file or 'path_independent_TY' in data_filename:
+                variant = 'path_independent_TY'
+            else:
+                variant = 'base'
         
         if self.verbose:
             print(f"\nRunning benchmark on {node_count}-node dataset (variant: {variant})...")
