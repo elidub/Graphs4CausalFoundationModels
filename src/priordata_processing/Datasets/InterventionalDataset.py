@@ -646,7 +646,7 @@ class InterventionalDataset(Dataset):
             )
             
             # Process observational (train) and interventional (test) splits separately
-            processed = processor.process_from_splits_separate(
+            processed = processor.process_from_splits(
                 train_dataset=obs0,
                 test_dataset=interv1,
                 mode = "fast"
@@ -659,6 +659,11 @@ class InterventionalDataset(Dataset):
                 has_treatment = False
             else:
                 X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = processed
+
+                if _feature_standardize:
+                    T_obs = (T_obs - torch.mean(T_obs)) / (torch.std(T_obs) + preprocessing_params.get("eps", 1e-8))  # standardize treatment
+                    T_intv = (T_intv - torch.mean(T_intv)) / (torch.std(T_intv) + preprocessing_params.get("eps", 1e-8))  # standardize treatment
+                
                 #T_obs = T_obs/ torch.std(T_obs)  # rescale treatment to have unit stddev
                 #T_intv = T_intv/ torch.std(T_intv)  # rescale treatment to have unit stddev
                 result = (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
