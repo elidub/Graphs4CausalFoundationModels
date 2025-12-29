@@ -303,7 +303,7 @@ preprocessing_config:
 #
   
   interventional_distribution_type:
-    value: "uniform"     # can be resampling, uniform, rescaled
+    value: "scaled_uniform"  # U(mean - 3*std, mean + 3*std) from obs treatment
   ensure_treatment_outcome_path:
     value: false 
   ensure_outcome_treatment_path:

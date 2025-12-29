@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from priors.causal_prior.noise_distributions.ResamplingDist import ResamplingDist
 from priors.causal_prior.noise_distributions.RescaledResamplingDist import RescaledResamplingDist
 from priors.causal_prior.noise_distributions.UniformResamplingDist import UniformResamplingDist
+from priors.causal_prior.noise_distributions.ScaledUniformResamplingDist import ScaledUniformResamplingDist
 
 from priors.causal_prior.scm.SCMSampler import SCMSampler
 from priordata_processing.BasicProcessing import BasicProcessing
@@ -646,11 +647,19 @@ class InterventionalDataset(Dataset):
             dist_type = preprocessing_params.get("interventional_distribution_type", "resampling")
             increase_scale = preprocessing_params.get("increase_treatment_scale", False)
             rescale_factor = preprocessing_params.get("distribution_rescale_factor", 0.0)
+            scale_factor = preprocessing_params.get("interventional_scale_factor", 3.0)  # Default to 3.0 for scaled_uniform
             
             # Create intervention distribution based on type
             if dist_type == "uniform":
                 # Use uniform distribution over [min, max] of observational samples
                 interventional_dist = UniformResamplingDist(intervention_samples)
+            elif dist_type == "scaled_uniform":
+                # Use scaled uniform distribution: U(mean - a, mean + a) where a = scale_factor * std
+                # P(T_int) = U(-a, a) + b where a = scale_factor * std(P(T_obs)) and b = mean(P(T_obs))
+                interventional_dist = ScaledUniformResamplingDist(
+                    intervention_samples,
+                    scale_factor=scale_factor
+                )
             elif dist_type == "rescaled" or (increase_scale and rescale_factor != 0.0):
                 # Use rescaled distribution to increase treatment variable scale
                 interventional_dist = RescaledResamplingDist(
