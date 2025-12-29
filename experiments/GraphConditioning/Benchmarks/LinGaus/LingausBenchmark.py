@@ -1280,8 +1280,15 @@ class LinGausBenchmark:
         summary_filename = "summary_all_nodes.json"
         summary_path = output_dir / summary_filename
         
+        # Convert tuple keys to strings for JSON serialization
+        # JSON doesn't support tuple keys, so convert (node_count, variant) -> "node_count_variant"
+        all_results_json = {
+            f"{node_count}_{variant}": results
+            for (node_count, variant), results in all_results.items()
+        }
+        
         with open(summary_path, 'w') as f:
-            json.dump(all_results, f, indent=2)
+            json.dump(all_results_json, f, indent=2)
         
         if self.verbose:
             print(f"\n{'='*80}")
