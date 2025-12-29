@@ -1270,7 +1270,9 @@ class LinGausBenchmark:
                         model_name=model_name,
                         n_bootstrap=n_bootstrap,
                     )
-                    all_results[(node_count, variant)] = results
+                    # Use string key for JSON serialization
+                    key = f"{node_count}nodes_{variant}"
+                    all_results[key] = results
                 except Exception as e:
                     if self.verbose:
                         print(f"ERROR: Failed to benchmark {node_count}-node {variant} config: {e}")
