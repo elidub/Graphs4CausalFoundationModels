@@ -316,6 +316,8 @@ preprocessing_config:
     value: false
   distribution_rescale_factor: 
     value: 0.0
+  interventional_distribution_type:
+    value: "uniform"     # can be resampling, uniform, rescaled
   
   # Test feature masking: randomly mask a fraction of features in test set only
   # Creates distribution shift where test has fewer features than train
