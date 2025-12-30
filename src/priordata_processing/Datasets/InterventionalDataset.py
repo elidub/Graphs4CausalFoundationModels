@@ -647,7 +647,7 @@ class InterventionalDataset(Dataset):
             dist_type = preprocessing_params.get("interventional_distribution_type", "resampling")
             increase_scale = preprocessing_params.get("increase_treatment_scale", False)
             rescale_factor = preprocessing_params.get("distribution_rescale_factor", 0.0)
-            scale_factor = preprocessing_params.get("interventional_scale_factor", 3.0)  # Default to 3.0 for scaled_uniform
+            scale_factor = preprocessing_params.get("interventional_scale_factor", 4.0)  # Default to 3.0 for scaled_uniform
             
             # Create intervention distribution based on type
             if dist_type == "uniform":
