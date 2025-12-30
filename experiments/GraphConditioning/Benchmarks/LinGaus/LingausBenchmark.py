@@ -132,7 +132,7 @@ class LinGausBenchmark:
     
     def __init__(
         self,
-        benchmark_dir: str = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/LinGaus",
+        benchmark_dir: str = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/LinGaus",
         cache_dir: Optional[str] = None,
         verbose: bool = True,
         max_samples: Optional[int] = None,
