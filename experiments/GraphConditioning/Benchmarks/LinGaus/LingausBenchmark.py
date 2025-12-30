@@ -1284,10 +1284,14 @@ class LinGausBenchmark:
         
         # Convert tuple keys to strings for JSON serialization
         # JSON doesn't support tuple keys, so convert (node_count, variant) -> "node_count_variant"
-        all_results_json = {
-            f"{node_count}_{variant}": results
-            for (node_count, variant), results in all_results.items()
-        }
+        all_results_json = {}
+        for key, results in all_results.items():
+            if isinstance(key, tuple) and len(key) == 2:
+                node_count, variant = key
+                all_results_json[f"{node_count}_{variant}"] = results
+            else:
+                # Handle unexpected key format gracefully
+                all_results_json[str(key)] = results
         
         with open(summary_path, 'w') as f:
             json.dump(all_results_json, f, indent=2)
