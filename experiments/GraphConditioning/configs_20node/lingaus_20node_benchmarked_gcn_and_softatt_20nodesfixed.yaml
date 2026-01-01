@@ -16,7 +16,6 @@ mode: "interventional" # determine whether to train in predictive or interventio
 
 scm_config:
   num_nodes:
-    distribution: "discrete_uniform"
     value: 20
   graph_edge_prob:
     distribution: "beta"
