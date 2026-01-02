@@ -342,7 +342,7 @@ model_config:
   dropout:  # dropout probability
     value: 0.0
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
-    value: 1
+    value: 2
   num_features:
     value: 48  
   normalize_features:  # whether to apply quantile transform + standard normalization internally
@@ -403,9 +403,9 @@ training_config:
   # Data Loading Parameters
   # Data Loading Parameters
   batch_size: # batch size
-    value: 8
-  accumulate_grad_batches:
     value: 4
+  accumulate_grad_batches:
+    value: 8
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
     value: 100
 
