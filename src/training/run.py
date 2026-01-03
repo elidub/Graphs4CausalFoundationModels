@@ -33,6 +33,7 @@ from models.InterventionalPFN import InterventionalPFN
 from models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
 from models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
 from models.UltimateGraphConditionedInterventionalPFN import UltimateGraphConditionedInterventionalPFN
+from models.PartialGraphConditionedInterventionalPFN import PartialGraphConditionedInterventionalPFN
 
 # Import our training modules
 from trainer import Trainer
@@ -220,6 +221,14 @@ def main():
                     model_type_str = 'UltimateGraphConditionedInterventionalPFN (GCN+AdaLN only)'
                 elif graph_conditioning_mode == 'ultimate_gcn_and_hard_attention':
                     model_type_str = 'UltimateGraphConditionedInterventionalPFN (GCN+AdaLN+hard attention)'
+                elif graph_conditioning_mode == 'ultimate_soft_attention':
+                    model_type_str = 'UltimateGraphConditionedInterventionalPFN (soft attention only)'
+                elif graph_conditioning_mode == 'ultimate_gcn_and_soft_attention':
+                    model_type_str = 'UltimateGraphConditionedInterventionalPFN (GCN+AdaLN+soft attention)'
+                elif graph_conditioning_mode == 'partial_soft_attention':
+                    model_type_str = 'PartialGraphConditionedInterventionalPFN (soft attention for partial graphs)'
+                elif graph_conditioning_mode == 'partial_gcn_and_soft_attention':
+                    model_type_str = 'PartialGraphConditionedInterventionalPFN (GCN+AdaLN+soft attention for partial graphs)'
                 else:
                     model_type_str = 'GraphConditionedInterventionalPFN (hard masking)'
             print(f"   Using: InterventionalDataset + {model_type_str}")
@@ -843,6 +852,52 @@ def main():
                     use_adaln=True,  # Enable AdaLN
                     use_soft_attention_bias=True,  # Enable soft attention bias
                     soft_bias_init=5.0,  # Use default initialization
+                )
+            elif graph_conditioning_mode == 'partial_soft_attention':
+                print(f"   Creating PartialGraphConditionedInterventionalPFN model (partial graphs with soft attention)...")
+                print(f"   Graph conditioning mode: {graph_conditioning_mode} (soft attention bias for partial graphs)")
+                print(f"   Supports adjacency matrices with three edge states: -1 (no edge), 0 (unknown), 1 (edge)")
+                print(f"   Using soft attention bias: bias_edge ~ TruncatedNormal(0.5, 0.5), bias_no_edge ~ Normal(5, 1)")
+                model = PartialGraphConditionedInterventionalPFN(
+                    num_features=num_features,
+                    d_model=model_config.get("d_model", 8),
+                    depth=model_config.get("depth", 1), 
+                    heads_feat=model_config.get("heads_feat", 2),
+                    heads_samp=model_config.get("heads_samp", 2),
+                    dropout=model_config.get("dropout", 0.1),
+                    hidden_mult=model_config.get("hidden_mult", 4),
+                    output_dim=output_dim,  # Use calculated output dimension
+                    normalize_features=model_config.get("normalize_features", True),  # Apply normalization (default: True)
+                    n_sample_attention_sink_rows=model_config.get("n_sample_attention_sink_rows", 0),  # Attention sink rows
+                    n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
+                    use_attention_masking=True,  # Enable attention masking for soft biases
+                    use_gcn=False,  # Disable GCN (only soft attention)
+                    use_adaln=False,  # Disable AdaLN
+                    use_soft_attention_bias=True,  # Enable soft attention bias (required for partial graphs)
+                    soft_bias_init=5.0,  # Not used (kept for API compatibility)
+                )
+            elif graph_conditioning_mode == 'partial_gcn_and_soft_attention':
+                print(f"   Creating PartialGraphConditionedInterventionalPFN model (partial graphs with full conditioning)...")
+                print(f"   Graph conditioning mode: {graph_conditioning_mode} (GCN+AdaLN+soft attention bias for partial graphs)")
+                print(f"   Supports adjacency matrices with three edge states: -1 (no edge), 0 (unknown), 1 (edge)")
+                print(f"   Using soft attention bias: bias_edge ~ TruncatedNormal(0.5, 0.5), bias_no_edge ~ Normal(5, 1)")
+                model = PartialGraphConditionedInterventionalPFN(
+                    num_features=num_features,
+                    d_model=model_config.get("d_model", 8),
+                    depth=model_config.get("depth", 1), 
+                    heads_feat=model_config.get("heads_feat", 2),
+                    heads_samp=model_config.get("heads_samp", 2),
+                    dropout=model_config.get("dropout", 0.1),
+                    hidden_mult=model_config.get("hidden_mult", 4),
+                    output_dim=output_dim,  # Use calculated output dimension
+                    normalize_features=model_config.get("normalize_features", True),  # Apply normalization (default: True)
+                    n_sample_attention_sink_rows=model_config.get("n_sample_attention_sink_rows", 0),  # Attention sink rows
+                    n_feature_attention_sink_cols=model_config.get("n_feature_attention_sink_cols", 0),  # Attention sink columns
+                    use_attention_masking=True,  # Enable attention masking for soft biases
+                    use_gcn=True,  # Enable GCN
+                    use_adaln=True,  # Enable AdaLN
+                    use_soft_attention_bias=True,  # Enable soft attention bias (required for partial graphs)
+                    soft_bias_init=5.0,  # Not used (kept for API compatibility)
                 )
             else:
                 print(f"   Creating GraphConditionedInterventionalPFN model (interventional mode with hard graph conditioning)...")
