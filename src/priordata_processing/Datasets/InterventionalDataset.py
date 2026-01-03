@@ -60,7 +60,10 @@ class InterventionalDataset(Dataset):
         Special keys:
         - return_adjacency_matrix (bool): If True, include adjacency matrix in output
         - return_ancestor_matrix (bool): If True, include ancestor matrix in output
+        - use_partial_graph_format (bool): If True, convert matrices to three-state format {-1, 0, 1}
+        - hide_fraction_matrix (float or distribution): Fraction of matrix entries to hide (set to unknown)
         Note: Only one of return_adjacency_matrix or return_ancestor_matrix can be True
+        Note: hide_fraction_matrix requires use_partial_graph_format=True
     seed : Optional[int], default None
         Random seed for reproducibility
     
@@ -99,6 +102,21 @@ class InterventionalDataset(Dataset):
         Features are NOT necessarily in sorted order - they are in whatever order the
         BasicProcessing class outputs them (after dropout, but before padding).
         
+        MATRIX FORMAT - Three-state partial graph support:
+        When use_partial_graph_format=True, the returned adjacency/ancestor matrices 
+        use a three-state format compatible with PartialGraphConditionedInterventionalPFN:
+        - Matrix entry = -1.0: Definitely NO edge from i to j (i does not cause j)
+        - Matrix entry = 0.0: UNKNOWN edge status (uncertain causal relationship)
+        - Matrix entry = 1.0: Edge EXISTS from i to j (i causes j)
+        
+        The matrices are automatically converted from the SCM's binary {0,1} format
+        to this three-state {-1, 0, 1} format when the flag is enabled.
+        If hide_fraction_matrix is specified (requires use_partial_graph_format=True),
+        a random fraction of entries are set to 0.0 (unknown) to simulate partial
+        graph knowledge.
+        
+        When use_partial_graph_format=False (default), matrices remain in binary {0,1} format.
+        
         IMPORTANT: X may contain zero-padded columns to reach max_n_features.
         The adjacency matrix ONLY covers real nodes from the SCM, not padded columns!
         If adjacency matrix is (N x N) and X has M columns:
@@ -121,25 +139,31 @@ class InterventionalDataset(Dataset):
         the treatment and outcome nodes. Feature dropout may reduce the number of 
         features, but the ordering of kept features is preserved.
         
-        Matrix entry adj_matrix[i,j] = 1.0 indicates a directed edge from the 
-        variable at position i to the variable at position j.
+        Matrix entry adj_matrix[i,j] indicates the edge state from position i to j:
+        - -1.0: No edge (i does NOT cause j)
+        - 0.0: Unknown (uncertain whether i causes j)
+        - 1.0: Edge exists (i DOES cause j)
         
         Examples:
         - adj_matrix[0, 1] = 1.0 means treatment T causes outcome Y (direct edge)
+        - adj_matrix[0, 1] = -1.0 means treatment T does NOT cause outcome Y
+        - adj_matrix[0, 1] = 0.0 means uncertain whether treatment T causes outcome Y
         - adj_matrix[2, 1] = 1.0 means feature X[:,0] causes outcome Y (direct edge)
         - adj_matrix[0, 2] = 1.0 means treatment T causes feature X[:,0] (direct edge)
         - adj_matrix[2, 3] = 1.0 means feature X[:,0] causes feature X[:,1] (direct edge)
         
-        The ancestor matrix follows the same node ordering as the adjacency matrix,
+        The ancestor matrix follows the same node ordering and three-state format,
         but represents the transitive closure of the adjacency matrix.
-        Matrix entry anc_matrix[i,j] = 1.0 indicates that variable i is an ancestor
-        of variable j (there exists a directed path from i to j, not necessarily direct).
+        Matrix entry anc_matrix[i,j] indicates ancestral relationship:
+        - 1.0: Variable i is an ancestor of j (directed path exists from i to j)
+        - -1.0: Variable i is NOT an ancestor of j (no directed path)
+        - 0.0: Unknown ancestral relationship
         
         Examples:
         - anc_matrix[0, 1] = 1.0 means treatment T is an ancestor of outcome Y
         - anc_matrix[2, 1] = 1.0 means feature X[:,0] is an ancestor of outcome Y
         - If there's a path T -> X[:,0] -> Y, then anc_matrix[0, 1] = 1.0 even if
-          there's no direct edge from T to Y (i.e., adj_matrix[0, 1] = 0.0)
+          there's no direct edge from T to Y (i.e., adj_matrix[0, 1] = -1.0)
         
     Examples
     --------
@@ -159,19 +183,28 @@ class InterventionalDataset(Dataset):
     >>> print(adj.shape)  # torch.Size([num_nodes, num_nodes])
     >>> # adj[i, j] = 1 means direct edge from i to j
     >>> 
-    >>> # Example 2: Return ancestor matrix
+    >>> # Example 2: Return ancestor matrix with partial knowledge (hide fraction)
     >>> dataset_config = {
     ...     "dataset_size": {"value": 100},
     ...     "return_ancestor_matrix": {"value": True},  # Enable ancestor matrix output
+    ...     "use_partial_graph_format": {"value": True},  # Enable three-state format
+    ...     "hide_fraction_matrix": {  # Hide a fraction of edges to simulate partial knowledge
+    ...         "distribution": "uniform",
+    ...         "distribution_parameters": {"low": 0.3, "high": 0.7}
+    ...     },
     ...     # ... other parameters
     ... }
     >>> dataset = InterventionalDataset(scm_config, preprocessing_config, dataset_config)
     >>> X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, anc = dataset[0]
     >>> print(anc.shape)  # torch.Size([num_nodes, num_nodes])
-    >>> # If L features kept, adj is (L+2) x (L+2)
-    >>> # adj[0, 1] tells if treatment causes outcome
-    >>> # adj[2, 1] tells if first feature (X[:,0]) causes outcome  
-    >>> # adj[0, 2] tells if treatment causes first feature (X[:,0])
+    >>> # With use_partial_graph_format=True, matrix values are in {-1, 0, 1}:
+    >>> #   -1.0 = definitely no ancestral relationship
+    >>> #    0.0 = unknown (hidden by hide_fraction_matrix)
+    >>> #    1.0 = ancestral relationship exists
+    >>> # If L features kept, anc is (L+2) x (L+2)
+    >>> # anc[0, 1] tells if treatment is ancestor of outcome
+    >>> # anc[2, 1] tells if first feature (X[:,0]) is ancestor of outcome  
+    >>> # anc[0, 2] tells if treatment is ancestor of first feature (X[:,0])
     """
     
     # Expected preprocessing hyperparameters
@@ -206,6 +239,12 @@ class InterventionalDataset(Dataset):
         "number_test_samples_per_dataset": (torch.distributions.Distribution, int),
         # Optional new key to drive collator; we accept it but don't use directly here
         "n_test_samples_per_dataset": (torch.distributions.Distribution, int),
+        # Enable three-state matrix format {-1, 0, 1} for partial graph support
+        "use_partial_graph_format": bool,
+        # Fraction of entries in returned adjacency/ancestor matrix to hide (set to unknown=0).
+        # Value between 0 and 1. Can be specified as a distribution in the YAML (e.g. uniform 0..1).
+        # Requires use_partial_graph_format=True if > 0.
+        "hide_fraction_matrix": float,
     }
     
     # Distribution factories for building samplers
@@ -292,6 +331,23 @@ class InterventionalDataset(Dataset):
             raise ValueError(
                 "Cannot return both adjacency matrix and ancestor matrix. "
                 "Please set only one of 'return_adjacency_matrix' or 'return_ancestor_matrix' to True."
+            )
+        
+        # Partial graph format settings (optional)
+        self.use_partial_graph_format = _get_cfg_value(self.dataset_config, "use_partial_graph_format", False)
+        
+        # Validate hide_fraction_matrix usage
+        # Check if hide_fraction_matrix is specified in the config (could be a value or distribution)
+        hide_frac_config = self.dataset_config.get("hide_fraction_matrix", None)
+        has_hide_fraction = hide_frac_config is not None
+        
+        if has_hide_fraction and not self.use_partial_graph_format:
+            raise ValueError(
+                "hide_fraction_matrix is specified but use_partial_graph_format is not enabled. "
+                "To use partial graph hiding (converting known edges to unknown), you must set "
+                "'use_partial_graph_format: {value: true}' in dataset_config. "
+                "This ensures the three-state format {-1, 0, 1} is used for compatibility with "
+                "PartialGraphConditionedInterventionalPFN."
             )
         
         # Path constraint settings (optional)
@@ -858,8 +914,53 @@ class InterventionalDataset(Dataset):
                         padded_matrix[:graph_matrix.shape[0], :graph_matrix.shape[1]] = graph_matrix
                         graph_matrix = padded_matrix
                 
+                # Convert binary adjacency/ancestor matrix {0, 1} to three-state format {-1, 0, 1}
+                # for compatibility with PartialGraphConditionedInterventionalPFN
+                # This conversion only happens if use_partial_graph_format=True
+                if self.use_partial_graph_format:
+                    # - Original 0 (no edge) → -1 (definitely no edge)
+                    # - Original 1 (edge exists) → 1 (edge exists)
+                    # - Hidden entries will be set to 0 (unknown) below
+                    graph_matrix = graph_matrix.float()  # Ensure float for three-state values
+                    graph_matrix = 2.0 * graph_matrix - 1.0  # Map {0,1} to {-1,1}
+                
+                # Optionally hide a random fraction of matrix entries to produce an "I-don't-know" version
+                # hide_fraction_matrix is sampled per-item from the dataset samplers (value in [0,1])
+                # NOTE: This requires use_partial_graph_format=True (validated in __init__)
+                hide_frac = dataset_params.get("hide_fraction_matrix", 0.0)
+                try:
+                    # If it's a tensor, extract python float
+                    if isinstance(hide_frac, torch.Tensor):
+                        hide_frac = float(hide_frac.item())
+                except Exception:
+                    # Fallback
+                    hide_frac = float(hide_frac) if hide_frac is not None else 0.0
+
+                # Clamp to [0,1]
+                if hide_frac is None:
+                    hide_frac = 0.0
+                hide_frac = max(0.0, min(1.0, float(hide_frac)))
+
+                if hide_frac > 0.0:
+                    # Determine number of real (non-padded) nodes in the matrix
+                    if has_treatment:
+                        # kept_features reflects number of real features; matrix includes T and Y
+                        real_n = 2 + len(kept_features)
+                    else:
+                        real_n = graph_matrix.shape[0]
+
+                    if real_n > 0:
+                        # Sample uniform mask over the real submatrix only
+                        rand_mat = torch.rand((real_n, real_n), generator=item_generator, device=graph_matrix.device)
+                        hide_mask = rand_mat < hide_frac
+                        # Set selected entries to 0.0 (unknown) in the three-state format {-1, 0, 1}
+                        # This converts known edges/non-edges to unknown status
+                        sub = graph_matrix[:real_n, :real_n]
+                        sub[hide_mask] = 0.0
+                        graph_matrix[:real_n, :real_n] = sub
+
                 result = result + (graph_matrix,)
-            
+            breakpoint()
             # Optionally add SCM for debugging
             if self.return_scm:
                 # Also return processor and intervention_node for detailed debugging

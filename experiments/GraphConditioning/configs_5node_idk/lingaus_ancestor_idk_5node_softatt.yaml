@@ -261,6 +261,17 @@ dataset_config:
     distribution_parameters:
       low: 0
       high: 100000
+  # Enable three-state matrix format {-1, 0, 1} for partial graph support
+  use_partial_graph_format:
+    value: true
+  # Fraction of adjacency/ancestor matrix entries to hide (set to 'unknown').
+  # Sampled per-dataset from Uniform(0,1) by default.
+  # Requires use_partial_graph_format=true
+  hide_fraction_matrix:
+    distribution: "uniform"
+    distribution_parameters:
+      low: 0.0
+      high: 1.0
 
 preprocessing_config:
   dropout_prob:
