@@ -72,12 +72,14 @@ try:
     from models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
     from models.UltimateGraphConditionedInterventionalPFN import UltimateGraphConditionedInterventionalPFN
     from models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
+    from models.PartialGraphConditionedInterventionalPFN import PartialGraphConditionedInterventionalPFN
     from Losses.BarDistribution import BarDistribution
 except Exception:
     try:
         from src.models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
         from src.models.UltimateGraphConditionedInterventionalPFN import UltimateGraphConditionedInterventionalPFN
         from src.models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
+        from src.models.PartialGraphConditionedInterventionalPFN import PartialGraphConditionedInterventionalPFN
         from src.Losses.BarDistribution import BarDistribution
     except Exception:
         repo_root = Path(__file__).resolve().parents[2]
@@ -86,6 +88,7 @@ except Exception:
         from src.models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
         from src.models.UltimateGraphConditionedInterventionalPFN import UltimateGraphConditionedInterventionalPFN
         from src.models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
+        from src.models.PartialGraphConditionedInterventionalPFN import PartialGraphConditionedInterventionalPFN
         from src.Losses.BarDistribution import BarDistribution
 
 
@@ -106,6 +109,10 @@ class GraphConditionedInterventionalPFNSklearn:
       → Note: soft attention bias and hard attention masking are typically mutually exclusive
     - FlatGraphConditionedInterventionalPFN (flat adjacency append)
       → graph_conditioning_mode: "flat_append"
+    - PartialGraphConditionedInterventionalPFN (partial graph support with {-1, 0, 1} edges)
+      → graph_conditioning_mode: "partial_soft_attention" or "partial_gcn_and_soft_attention"
+      → Requires use_partial_graph_format=true in dataset config
+      → Supports adjacency matrices with three states: -1 (no edge), 0 (unknown), 1 (edge)
     
     For advanced features like ensemble, clustering, entropy, and variance,
     use the full InterventionalPFN_sklearn wrapper.
@@ -287,11 +294,44 @@ class GraphConditionedInterventionalPFNSklearn:
         # Remove parameters not supported by specific model types
         model_kwargs_filtered = self.model_kwargs.copy()
         
-        # Map graph_conditioning_mode to UltimateGraphConditionedInterventionalPFN flags
+        # Check if partial graph format is enabled
+        use_partial_graph = self.model_kwargs.get("use_partial_graph_format", False)
+        
+        # Map graph_conditioning_mode to appropriate model class
         if self.graph_conditioning_mode == 'flat_append':
             if self.verbose:
                 print(f"  Creating FlatGraphConditionedInterventionalPFN (flat adjacency append)")
+            # Remove use_partial_graph_format since it's not a model parameter
+            model_kwargs_filtered.pop('use_partial_graph_format', None)
             self.model = FlatGraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
+        elif self.graph_conditioning_mode in ['partial_soft_attention', 'partial_gcn_and_soft_attention']:
+            # PartialGraphConditionedInterventionalPFN (for partial graphs with {-1, 0, 1} edges)
+            if self.verbose:
+                print(f"  Creating PartialGraphConditionedInterventionalPFN")
+                print(f"    Mode: {self.graph_conditioning_mode}")
+            
+            # Map mode to specific configuration
+            if self.graph_conditioning_mode == 'partial_soft_attention':
+                model_kwargs_filtered['use_attention_masking'] = False
+                model_kwargs_filtered['use_gcn'] = False
+                model_kwargs_filtered['use_adaln'] = False
+                model_kwargs_filtered['use_soft_attention_bias'] = True
+            elif self.graph_conditioning_mode == 'partial_gcn_and_soft_attention':
+                model_kwargs_filtered['use_attention_masking'] = False
+                model_kwargs_filtered['use_gcn'] = True
+                model_kwargs_filtered['use_adaln'] = True
+                model_kwargs_filtered['use_soft_attention_bias'] = True
+            
+            if self.verbose:
+                print(f"    use_attention_masking: {model_kwargs_filtered.get('use_attention_masking', False)}")
+                print(f"    use_gcn: {model_kwargs_filtered.get('use_gcn', False)}")
+                print(f"    use_adaln: {model_kwargs_filtered.get('use_adaln', False)}")
+                print(f"    use_soft_attention_bias: {model_kwargs_filtered.get('use_soft_attention_bias', False)}")
+            
+            # Remove use_partial_graph_format since it's not a model parameter
+            model_kwargs_filtered.pop('use_partial_graph_format', None)
+            
+            self.model = PartialGraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
         elif self.graph_conditioning_mode in ['ultimate_hard_attention_only', 'ultimate_gcn_only', 'ultimate_gcn_and_hard_attention',
                                                'ultimate_soft_attention', 'ultimate_gcn_and_soft_attention', 
                                                'soft_learned_bias', 'hybrid_half_and_half', 'hard_attention_only']:
@@ -302,13 +342,35 @@ class GraphConditionedInterventionalPFNSklearn:
                 print(f"    use_gcn: {model_kwargs_filtered.get('use_gcn', False)}")
                 print(f"    use_adaln: {model_kwargs_filtered.get('use_adaln', False)}")
                 print(f"    use_soft_attention_bias: {model_kwargs_filtered.get('use_soft_attention_bias', False)}")
+            # Remove use_partial_graph_format since it's not a model parameter
+            model_kwargs_filtered.pop('use_partial_graph_format', None)
             self.model = UltimateGraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
+        elif use_partial_graph:
+            # If use_partial_graph_format is enabled but no specific mode, use PartialGraphConditionedInterventionalPFN
+            # with default configuration (full graph conditioning)
+            if self.verbose:
+                print(f"  Creating PartialGraphConditionedInterventionalPFN (use_partial_graph_format=True)")
+                print(f"    Using default full graph conditioning mode")
+            
+            model_kwargs_filtered['use_attention_masking'] = True
+            model_kwargs_filtered['use_gcn'] = True
+            model_kwargs_filtered['use_adaln'] = True
+            model_kwargs_filtered['use_soft_attention_bias'] = False
+            
+            if self.verbose:
+                print(f"    use_attention_masking: {model_kwargs_filtered['use_attention_masking']}")
+                print(f"    use_gcn: {model_kwargs_filtered['use_gcn']}")
+                print(f"    use_adaln: {model_kwargs_filtered['use_adaln']}")
+                print(f"    use_soft_attention_bias: {model_kwargs_filtered['use_soft_attention_bias']}")
+            
+            model_kwargs_filtered.pop('use_partial_graph_format', None)
+            self.model = PartialGraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
         else:  
             # Default: use basic GraphConditionedInterventionalPFN (hard attention masking only)
             if self.verbose:
                 print(f"  Creating GraphConditionedInterventionalPFN (hard attention masking)")
-            # Remove UltimateGraphConditionedInterventionalPFN-specific parameters
-            for key in ['use_attention_masking', 'use_gcn', 'use_adaln', 'use_soft_attention_bias', 'soft_bias_init']:
+            # Remove UltimateGraphConditionedInterventionalPFN-specific and partial graph parameters
+            for key in ['use_attention_masking', 'use_gcn', 'use_adaln', 'use_soft_attention_bias', 'soft_bias_init', 'use_partial_graph_format']:
                 model_kwargs_filtered.pop(key, None)
             self.model = GraphConditionedInterventionalPFN(**model_kwargs_filtered).to(self.device)
         
