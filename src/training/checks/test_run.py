@@ -120,7 +120,7 @@ def run_simple_run_test(config_path):
 
 def main():
 
-    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "GraphConditioning" / "configs_5node_idk" / "lingaus_ancestor_idk_5node_softatt.yaml"
+    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "GraphConditioning" / "configs_5node_idk" / "lingaus_ancestor_5node_idk_gcn_and_softatt.yaml"
     
     """Main test function."""
     print("=" * 60)

@@ -960,7 +960,7 @@ class InterventionalDataset(Dataset):
                         graph_matrix[:real_n, :real_n] = sub
 
                 result = result + (graph_matrix,)
-            breakpoint()
+            #breakpoint()
             # Optionally add SCM for debugging
             if self.return_scm:
                 # Also return processor and intervention_node for detailed debugging

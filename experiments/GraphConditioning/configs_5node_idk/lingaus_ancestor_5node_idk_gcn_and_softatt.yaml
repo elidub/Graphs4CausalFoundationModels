@@ -9,8 +9,8 @@
 # 
 # ===============================================================================
 
-experiment_name: "lingaus_5node_benchmarked_gcn_and_softatt"
-description: ""
+experiment_name: "lingaus_5node_idk_gcn_and_softatt"
+description: "Partial graph conditioning with GCN+AdaLN+soft attention, using ancestor matrix with unknown edges"
 
 mode: "interventional" # determine whether to train in predictive or interventional mode via "predictive" or "interventional"
 
@@ -239,6 +239,18 @@ dataset_config:
   return_ancestor_matrix:
     value: true
 
+  # Enable three-state matrix format {-1, 0, 1} for partial graph support
+  use_partial_graph_format:
+    value: true
+  # Fraction of adjacency/ancestor matrix entries to hide (set to 'unknown').
+  # Sampled per-dataset from Uniform(0,1) by default.
+  # Requires use_partial_graph_format=true
+  hide_fraction_matrix:
+    distribution: "uniform"
+    distribution_parameters:
+      low: 0.0
+      high: 1.0
+
   # Rejection sampling: ensure target variance is sufficiently large
   # If either train or test target variance falls below this threshold, resample the dataset.
   # Set to null to disable rejection.
@@ -352,7 +364,7 @@ model_config:
   use_graph_conditioning:  # whether to condition on causal graph structure
     value: true
   graph_conditioning_mode:  # how to apply graph conditioning
-    value: "ultimate_gcn_and_soft_attention"
+    value: "partial_gcn_and_soft_attention"
     # Options:
     # - "hard_attention_only": GraphConditionedInterventionalPFN with hard attention masking
     # - "flat_append": FlatGraphConditionedInterventionalPFN (flatten adjacency and append)
@@ -361,6 +373,14 @@ model_config:
     # - "ultimate_gcn_and_hard_attention": UltimateGraphConditionedInterventionalPFN with full conditioning (GCN+AdaLN+hard attention masking)
     # - "ultimate_soft_attention": UltimateGraphConditionedInterventionalPFN with soft attention bias only (no GCN/AdaLN)
     # - "ultimate_gcn_and_soft_attention": UltimateGraphConditionedInterventionalPFN with full soft conditioning (GCN+AdaLN+soft attention bias)
+    # - "partial_soft_attention": PartialGraphConditionedInterventionalPFN with soft attention for partial graphs (supports -1/0/1 edges)
+    # - "partial_gcn_and_soft_attention": PartialGraphConditionedInterventionalPFN with GCN+AdaLN+soft attention for partial graphs
+  
+  # GCN Configuration (only applies when using GCN-based graph conditioning modes)
+  gcn_use_transpose:  # whether to transpose adjacency matrix in GCN (for "j aggregates from i" convention)
+    value: false
+  gcn_alpha_init:  # initial alpha value for unknown edges in partial graphs (weight for unknown edges)
+    value: 0.1  # Range: (0, 1). Lower = less weight to unknown edges, Higher = more weight
   
   # Attention Sink Configuration
   n_sample_attention_sink_rows:  # number of fixed random rows to prepend as attention sinks (0 = disabled)

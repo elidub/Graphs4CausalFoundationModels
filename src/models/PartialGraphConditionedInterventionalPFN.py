@@ -13,7 +13,11 @@ provides only partial constraints.
 
 Graph processing with partial information:
 1. Attention masking - hard or soft structural constraints respecting known edges/non-edges
-2. GCN-style graph encoder - learns node representations treating unknown edges appropriately
+2. GCN-style graph encoder - learns node representations treating unknown edges appropriately:
+   - Known edges (1) get full weight 1.0
+   - Unknown edges (0) get learnable weight alpha ∈ (0,1) via sigmoid
+   - Known non-edges (-1) get weight 0.0
+   - Enables the model to propagate information through uncertain edges adaptively
 3. AdaLN - adaptive layer normalization conditioned on graph embeddings
 
 Input format:
@@ -34,7 +38,10 @@ Edge semantics:
 
 Key features:
 1. Handles partial graph information (unknown edges encoded as 0)
-2. GCN-style graph encoder processes partial adjacency matrices
+2. GCN-style graph encoder with learnable uncertainty handling:
+   - Builds message adjacency M = 1[A==1] + alpha * 1[A==0], with M[A==-1]=0
+   - Alpha is a learnable parameter in (0,1) controlling unknown edge weight
+   - Symmetric normalization: D^{-1/2} M D^{-1/2}
 3. Supports both hard masking (-inf) and soft attention biases (learnable)
 4. AdaLN modulates layer normalization using graph embeddings
 5. Flexible configuration: can enable/disable masking, GCN, AdaLN independently
@@ -180,66 +187,125 @@ class AdaLN(nn.Module):
 
 class GraphEncoder(nn.Module):
     """
-    Lightweight GCN-style graph encoder that processes the adjacency matrix.
-    
-    Takes an adjacency matrix and produces node embeddings via one layer of 
-    graph convolution: H = σ(D^(-1/2) A D^(-1/2) X W)
+    Lightweight GCN-style graph encoder that processes a *partial* adjacency matrix.
+
+    Partial adjacency semantics (per entry A[i,j]):
+      - -1: known NO edge i -> j
+      -  0: unknown whether edge i -> j exists
+      -  1: known YES edge i -> j
+
+    Practical default:
+      1) Build a nonnegative message adjacency
+           M = 1[A==1] + alpha * 1[A==0], with M[A==-1]=0
+         where alpha is a learned scalar in (0,1).
+      2) Add self-loops (always on).
+      3) Symmetric normalization D^{-1/2} M D^{-1/2} (computed from the weighted M).
+      4) Message passing: H = relu( A_norm @ X @ W )
+
+    Notes:
+      - This encoder does NOT treat -1 as a negative edge weight; it's a hard constraint.
+      - Directionality: this uses the matrix *as given* (i -> j). If you want "j aggregates from i"
+        but your stored matrix is A[i,j]=1 for i->j, then you likely want use_transpose=True.
     
     Args:
         num_nodes: Number of nodes (L+2: Treatment, Outcome, Features)
         d_model: Output embedding dimension
         dropout: Dropout rate
+        use_transpose: If True, transpose adjacency matrix (for "j aggregates from i" convention)
+        alpha_init: Initial value for alpha (weight for unknown edges), in (0,1)
     """
-    def __init__(self, num_nodes: int, d_model: int, dropout: float = 0.0):
+    def __init__(
+        self,
+        num_nodes: int,
+        d_model: int,
+        dropout: float = 0.0,
+        *,
+        use_transpose: bool = False,
+        alpha_init: float = 0.1,
+    ):
         super().__init__()
         self.num_nodes = num_nodes
         self.d_model = d_model
-        
-        # Linear transformation for GCN
+        self.use_transpose = use_transpose
+
         self.weight = nn.Linear(d_model, d_model, bias=False)
         self.dropout = nn.Dropout(dropout)
-        
+
+        # Learn alpha in (0,1) via sigmoid. Initialize close to alpha_init.
+        alpha_init = float(alpha_init)
+        eps = 1e-6
+        alpha_init = min(max(alpha_init, eps), 1.0 - eps)
+        self._alpha_logit = nn.Parameter(torch.log(torch.tensor(alpha_init / (1.0 - alpha_init))))
+
+    @property
+    def alpha(self) -> torch.Tensor:
+        # Scalar in (0,1)
+        return torch.sigmoid(self._alpha_logit)
+
     def forward(
         self, 
         adjacency_matrix: torch.Tensor,
         node_features: torch.Tensor
     ) -> torch.Tensor:
         """
-        Apply GCN-style message passing.
+        Apply GCN-style message passing with partial adjacency matrix support.
         
         Args:
-            adjacency_matrix: (B, L+2, L+2) - adjacency matrix
-            node_features: (L+2, D) - initial node features (role embeddings)
+            adjacency_matrix: (B, N, N) with values in {-1, 0, 1} (or close to that)
+                             where N = L+2 (num_nodes)
+            node_features: (N, D) initial node features (e.g., role embeddings)
             
         Returns:
-            Graph node embeddings: (B, L+2, D)
+            Graph node embeddings: (B, N, D)
         """
-        B = adjacency_matrix.shape[0]
-        
-        # Add self-loops to adjacency matrix
-        A = adjacency_matrix.float()
-        eye = torch.eye(self.num_nodes, device=A.device, dtype=A.dtype)
-        A_self = A + eye.unsqueeze(0)  # (B, L+2, L+2)
-        
-        # Compute degree matrix D
-        D = A_self.sum(dim=-1)  # (B, L+2) - row sums (out-degree)
-        D_inv_sqrt = torch.pow(D, -0.5)  # (B, L+2)
-        D_inv_sqrt[torch.isinf(D_inv_sqrt)] = 0.0  # Handle isolated nodes
-        
-        # Normalize adjacency: D^(-1/2) A D^(-1/2)
-        # A_norm[b, i, j] = A[b, i, j] / sqrt(D[b, i] * D[b, j])
-        A_norm = D_inv_sqrt.unsqueeze(-1) * A_self * D_inv_sqrt.unsqueeze(-2)  # (B, L+2, L+2)
-        
+        A = adjacency_matrix
+        if A.dim() != 3:
+            raise ValueError(f"adjacency_matrix must be (B,N,N), got shape {tuple(A.shape)}")
+        B, N1, N2 = A.shape
+        if N1 != self.num_nodes or N2 != self.num_nodes:
+            raise ValueError(
+                f"adjacency_matrix must be (B,{self.num_nodes},{self.num_nodes}), got (B,{N1},{N2})"
+            )
+        if node_features.dim() != 2 or node_features.shape[0] != self.num_nodes:
+            raise ValueError(
+                f"node_features must be ({self.num_nodes},D), got shape {tuple(node_features.shape)}"
+            )
+
+        # Optionally transpose to match "j aggregates from i" convention.
+        # If A[i,j]=1 means i->j, then to aggregate incoming causes i into j you want A^T.
+        if self.use_transpose:
+            A = A.transpose(-1, -2)
+
+        A = A.to(dtype=torch.float32)
+
+        # Masks for the three edge states
+        known_edge = (A > 0.5)        # == 1
+        unknown_edge = (A.abs() <= 0.5)  # == 0 (robust if stored as float)
+        # no_edge is everything else, incl -1
+
+        # Build nonnegative message adjacency M
+        alpha = self.alpha.to(device=A.device, dtype=A.dtype)
+        M = known_edge.to(A.dtype) + alpha * unknown_edge.to(A.dtype)  # (B,N,N)
+        # No-edge entries implicitly 0.
+
+        # Add self-loops
+        eye = torch.eye(self.num_nodes, device=A.device, dtype=A.dtype).unsqueeze(0)  # (1,N,N)
+        M_self = M + eye  # (B,N,N)
+
+        # Degree and symmetric normalization
+        D = M_self.sum(dim=-1)  # (B,N)
+        D_inv_sqrt = torch.pow(D.clamp_min(1e-12), -0.5)  # (B,N)
+        A_norm = D_inv_sqrt.unsqueeze(-1) * M_self * D_inv_sqrt.unsqueeze(-2)  # (B,N,N)
+
         # Expand node features for batch
-        X = node_features.unsqueeze(0).expand(B, -1, -1)  # (B, L+2, D)
-        
-        # Graph convolution: A_norm @ X @ W
-        H = torch.matmul(A_norm, X)  # (B, L+2, D)
-        H = self.weight(H)  # (B, L+2, D)
+        X = node_features.unsqueeze(0).expand(B, -1, -1)  # (B,N,D)
+
+        # Message passing
+        H = torch.matmul(A_norm, X)   # (B,N,D)
+        H = self.weight(H)            # (B,N,D)
         H = F.relu(H)
         H = self.dropout(H)
-        
-        return H  # (B, L+2, D)
+        return H
 
 
 class GraphConditionedTwoWayBlock(nn.Module):
@@ -559,6 +625,8 @@ class PartialGraphConditionedInterventionalPFN(nn.Module):
         use_adaln: Whether to use Adaptive Layer Normalization with graph embeddings (requires use_gcn=True)
         use_soft_attention_bias: Whether to use learnable soft attention biases (alternative to hard masking)
         soft_bias_init: Mean for soft attention bias initialization (std=1.0, randomly initialized per head)
+        gcn_use_transpose: If True, transpose adjacency matrix in GCN for "j aggregates from i" convention
+        gcn_alpha_init: Initial value for alpha in GCN (weight for unknown edges), in (0,1)
     """
     def __init__(
         self,
@@ -579,6 +647,8 @@ class PartialGraphConditionedInterventionalPFN(nn.Module):
         use_adaln: bool = True,
         use_soft_attention_bias: bool = False,
         soft_bias_init: float = 5.0,
+        gcn_use_transpose: bool = False,
+        gcn_alpha_init: float = 0.1,
     ):
         super().__init__()
         self.num_features = num_features  # L (excluding intervened column)
@@ -665,7 +735,9 @@ class PartialGraphConditionedInterventionalPFN(nn.Module):
             self.graph_encoder = GraphEncoder(
                 num_nodes=num_features + 2,
                 d_model=d_model,
-                dropout=dropout
+                dropout=dropout,
+                use_transpose=gcn_use_transpose,
+                alpha_init=gcn_alpha_init,
             )
         else:
             self.graph_encoder = None
@@ -1447,8 +1519,8 @@ if __name__ == "__main__":
     print(f"✓ Full soft (Soft+GCN+AdaLN): {params_full_soft:,} parameters")
     print(f"✓ Soft bias overhead: {params_soft - params_hard:,} parameters")
     
-    # Soft bias adds: depth * heads_feat parameters (one bias per head per layer)
-    expected_overhead = 2 * 4  # 2 layers * 4 heads
+    # Soft bias adds: depth * heads_feat * 2 parameters (bias_no_edge and bias_edge per head per layer)
+    expected_overhead = 2 * 4 * 2  # 2 layers * 4 heads * 2 bias types
     actual_overhead = params_soft - params_hard
     print(f"✓ Expected soft bias overhead: {expected_overhead} parameters")
     print(f"✓ Actual overhead: {actual_overhead} parameters")
@@ -1487,7 +1559,87 @@ if __name__ == "__main__":
     print(f"✓ Separate train/test attention layers")
     print(f"✓ Optional attention sinks supported")
     
+    # Test 13: GraphEncoder with partial graphs and alpha learning
+    print("\n[Test 13] GraphEncoder with Partial Adjacency Matrices")
+    print("-" * 80)
+    
+    # Create partial adjacency matrix with all three states {-1, 0, 1}
+    adj_partial = torch.randint(-1, 2, (B, L + 2, L + 2)).float()
+    known_edges = (adj_partial == 1.0).sum().item()
+    unknown_edges = (adj_partial == 0.0).sum().item()
+    no_edges = (adj_partial == -1.0).sum().item()
+    total_entries = adj_partial.numel()
+    
+    print(f"✓ Created partial adjacency matrix: {adj_partial.shape}")
+    print(f"✓ Known edges (1):   {100*known_edges/total_entries:.1f}%")
+    print(f"✓ Unknown edges (0): {100*unknown_edges/total_entries:.1f}%")
+    print(f"✓ No edges (-1):     {100*no_edges/total_entries:.1f}%")
+    
+    # Test with different alpha_init values
+    model_alpha_01 = PartialGraphConditionedInterventionalPFN(
+        num_features=L, d_model=128, depth=2, heads_feat=4, heads_samp=4,
+        dropout=0.1, use_gcn=True, gcn_alpha_init=0.1,
+    )
+    model_alpha_09 = PartialGraphConditionedInterventionalPFN(
+        num_features=L, d_model=128, depth=2, heads_feat=4, heads_samp=4,
+        dropout=0.1, use_gcn=True, gcn_alpha_init=0.9,
+    )
+    
+    alpha_01 = model_alpha_01.graph_encoder.alpha.item()
+    alpha_09 = model_alpha_09.graph_encoder.alpha.item()
+    
+    print(f"✓ Model with alpha_init=0.1: alpha={alpha_01:.6f}")
+    print(f"✓ Model with alpha_init=0.9: alpha={alpha_09:.6f}")
+    assert abs(alpha_01 - 0.1) < 0.01, f"Alpha should be ~0.1, got {alpha_01}"
+    assert abs(alpha_09 - 0.9) < 0.01, f"Alpha should be ~0.9, got {alpha_09}"
+    
+    # Forward pass and verify alpha is differentiable
+    out_alpha = model_alpha_01(X_obs, T_obs, Y_obs, X_intv, T_intv, adj_partial)
+    loss_alpha = out_alpha['predictions'].sum()
+    loss_alpha.backward()
+    alpha_grad = model_alpha_01.graph_encoder._alpha_logit.grad
+    
+    print(f"✓ Alpha gradient exists: {alpha_grad is not None}")
+    print(f"✓ Alpha gradient magnitude: {alpha_grad.abs().item():.6e}")
+    assert alpha_grad is not None and alpha_grad.abs().item() > 0, "Alpha should have gradient"
+    print("✓ Test 13 passed!")
+    
+    # Test 14: GraphEncoder transpose flag
+    print("\n[Test 14] GraphEncoder Transpose Flag")
+    print("-" * 80)
+    
+    model_no_transpose = PartialGraphConditionedInterventionalPFN(
+        num_features=L, d_model=128, depth=2, heads_feat=4, heads_samp=4,
+        dropout=0.0, use_gcn=True, gcn_use_transpose=False,
+    )
+    model_transpose = PartialGraphConditionedInterventionalPFN(
+        num_features=L, d_model=128, depth=2, heads_feat=4, heads_samp=4,
+        dropout=0.0, use_gcn=True, gcn_use_transpose=True,
+    )
+    
+    # Copy weights to make them identical except for transpose flag
+    model_transpose.load_state_dict(model_no_transpose.state_dict())
+    
+    out_no_transpose = model_no_transpose(X_obs, T_obs, Y_obs, X_intv, T_intv, adj_partial)
+    out_transpose = model_transpose(X_obs, T_obs, Y_obs, X_intv, T_intv, adj_partial)
+    
+    # Also test with manually transposed adjacency
+    adj_transposed = adj_partial.transpose(-1, -2)
+    out_manual_transpose = model_no_transpose(X_obs, T_obs, Y_obs, X_intv, T_intv, adj_transposed)
+    
+    diff_auto_vs_manual = torch.abs(out_transpose['graph_embeddings'] - out_manual_transpose['graph_embeddings']).max().item()
+    diff_orig_vs_transpose = torch.abs(out_no_transpose['graph_embeddings'] - out_transpose['graph_embeddings']).max().item()
+    
+    print(f"✓ use_transpose=True vs manual transpose diff: {diff_auto_vs_manual:.6e}")
+    print(f"✓ Original vs transpose diff: {diff_orig_vs_transpose:.6e}")
+    print(f"✓ Transpose matches manual: {diff_auto_vs_manual < 1e-5}")
+    print(f"✓ Original differs from transpose: {diff_orig_vs_transpose > 1e-3}")
+    assert diff_auto_vs_manual < 1e-5, "Transpose should match manual"
+    assert diff_orig_vs_transpose > 1e-3, "Original should differ from transpose"
+    print("✓ Test 14 passed!")
+    
     print("\n" + "=" * 80)
     print("All tests passed! ✓")
     print("=" * 80)
+
 

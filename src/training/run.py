@@ -858,6 +858,9 @@ def main():
                 print(f"   Graph conditioning mode: {graph_conditioning_mode} (soft attention bias for partial graphs)")
                 print(f"   Supports adjacency matrices with three edge states: -1 (no edge), 0 (unknown), 1 (edge)")
                 print(f"   Using soft attention bias: bias_edge ~ TruncatedNormal(0.5, 0.5), bias_no_edge ~ Normal(5, 1)")
+                # Extract GCN configuration parameters (for consistency, though GCN is disabled in this mode)
+                gcn_use_transpose = model_config.get("gcn_use_transpose", False)
+                gcn_alpha_init = model_config.get("gcn_alpha_init", 0.1)
                 model = PartialGraphConditionedInterventionalPFN(
                     num_features=num_features,
                     d_model=model_config.get("d_model", 8),
@@ -875,12 +878,18 @@ def main():
                     use_adaln=False,  # Disable AdaLN
                     use_soft_attention_bias=True,  # Enable soft attention bias (required for partial graphs)
                     soft_bias_init=5.0,  # Not used (kept for API compatibility)
+                    gcn_use_transpose=gcn_use_transpose,  # GCN transpose flag (not used when GCN disabled)
+                    gcn_alpha_init=gcn_alpha_init,  # Initial alpha value (not used when GCN disabled)
                 )
             elif graph_conditioning_mode == 'partial_gcn_and_soft_attention':
                 print(f"   Creating PartialGraphConditionedInterventionalPFN model (partial graphs with full conditioning)...")
                 print(f"   Graph conditioning mode: {graph_conditioning_mode} (GCN+AdaLN+soft attention bias for partial graphs)")
                 print(f"   Supports adjacency matrices with three edge states: -1 (no edge), 0 (unknown), 1 (edge)")
                 print(f"   Using soft attention bias: bias_edge ~ TruncatedNormal(0.5, 0.5), bias_no_edge ~ Normal(5, 1)")
+                # Extract GCN configuration parameters
+                gcn_use_transpose = model_config.get("gcn_use_transpose", False)
+                gcn_alpha_init = model_config.get("gcn_alpha_init", 0.1)
+                print(f"   GCN configuration: use_transpose={gcn_use_transpose}, alpha_init={gcn_alpha_init}")
                 model = PartialGraphConditionedInterventionalPFN(
                     num_features=num_features,
                     d_model=model_config.get("d_model", 8),
@@ -898,6 +907,8 @@ def main():
                     use_adaln=True,  # Enable AdaLN
                     use_soft_attention_bias=True,  # Enable soft attention bias (required for partial graphs)
                     soft_bias_init=5.0,  # Not used (kept for API compatibility)
+                    gcn_use_transpose=gcn_use_transpose,  # GCN transpose flag for "j aggregates from i" convention
+                    gcn_alpha_init=gcn_alpha_init,  # Initial alpha value for unknown edges in partial graphs
                 )
             else:
                 print(f"   Creating GraphConditionedInterventionalPFN model (interventional mode with hard graph conditioning)...")
