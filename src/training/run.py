@@ -64,15 +64,16 @@ except ImportError:
             sys.path.insert(0, str(repo_root))
         from src.benchmarking.Benchmark import Benchmark
 
-# Import LinGausBenchmark for graph-conditioned model evaluation
+# Import LinGausBenchmark and LinGausBenchmarkIDK for graph-conditioned model evaluation
 LinGausBenchmark = None
+LinGausBenchmarkIDK = None
 
 # Log to file for debugging
 import sys
 debug_log_path = "/tmp/lingaus_import_debug.log"
 try:
     with open(debug_log_path, 'w') as f:
-        f.write("[DEBUG] Attempting to import LinGausBenchmark...\n")
+        f.write("[DEBUG] Attempting to import LinGausBenchmark and LinGausBenchmarkIDK...\n")
         f.write(f"[DEBUG] Current working directory: {Path.cwd()}\n")
         f.write(f"[DEBUG] sys.path entries:\n")
         for i, p in enumerate(sys.path[:10]):
@@ -94,16 +95,26 @@ try:
             f.write(f"  Contents:\n")
             for item in bench_path.iterdir():
                 f.write(f"    - {item.name}\n")
+        
+        # Check if Benchmarks/LinGausIDK exists
+        bench_path_idk = Path.cwd() / "Benchmarks" / "LinGausIDK"
+        f.write(f"[DEBUG] Checking {bench_path_idk}:\n")
+        f.write(f"  Exists: {bench_path_idk.exists()}\n")
+        if bench_path_idk.exists():
+            f.write(f"  Contents:\n")
+            for item in bench_path_idk.iterdir():
+                f.write(f"    - {item.name}\n")
 except Exception as e:
     pass  # Don't fail if we can't write debug log
 
 print(f"[DEBUG] Import debug log written to: {debug_log_path}")
-print("[DEBUG] Attempting to import LinGausBenchmark...")
+print("[DEBUG] Attempting to import LinGausBenchmark and LinGausBenchmarkIDK...")
 print(f"[DEBUG] Current working directory: {Path.cwd()}")
 print(f"[DEBUG] sys.path (first 5 entries): {sys.path[:5]}")
 print(f"[DEBUG] LINGAUS_BENCHMARK_DIR env var: {os.environ.get('LINGAUS_BENCHMARK_DIR')}")
 print(f"[DEBUG] PYTHONPATH: {os.environ.get('PYTHONPATH')}")
 
+# Try importing LinGausBenchmark
 try:
     # First, try direct import (relies on PYTHONPATH being set correctly)
     try:
@@ -122,7 +133,7 @@ try:
             Path(os.environ.get("LINGAUS_BENCHMARK_DIR", "")) if os.environ.get("LINGAUS_BENCHMARK_DIR") else None,
         ]
         
-        print(f"[DEBUG] Checking fallback paths:")
+        print(f"[DEBUG] Checking fallback paths for LinGausBenchmark:")
         for i, path in enumerate(possible_paths):
             if path:
                 exists = path.exists()
@@ -153,6 +164,56 @@ except ImportError as e:
     print(f"[DEBUG] FINAL: LinGausBenchmark import failed: {e}")
     print(f"[DEBUG] This will cause an error if benchmark is requested in config")
     LinGausBenchmark = None
+
+# Try importing LinGausBenchmarkIDK
+try:
+    try:
+        from LingausBenchmarkIDK import LinGausBenchmarkIDK
+        print(f"[DEBUG] LinGausBenchmarkIDK imported successfully via PYTHONPATH")
+    except ImportError as e1:
+        print(f"[DEBUG] Direct LinGausBenchmarkIDK import failed: {e1}")
+        
+        # Fallback: Try multiple paths to find LinGausBenchmarkIDK module
+        possible_paths_idk = [
+            # Local development: relative path from src/training/
+            Path(__file__).parent.parent.parent / "experiments" / "GraphConditioning" / "Benchmarks" / "LinGausIDK",
+            # Cluster job: check if Benchmarks/LinGausIDK exists in cwd
+            Path.cwd() / "Benchmarks" / "LinGausIDK",
+            # Cluster job: check if it's already in PYTHONPATH via environment (with IDK suffix)
+            Path(os.environ.get("LINGAUS_BENCHMARK_DIR", "").replace("LinGaus", "LinGausIDK")) if os.environ.get("LINGAUS_BENCHMARK_DIR") else None,
+        ]
+        
+        print(f"[DEBUG] Checking fallback paths for LinGausBenchmarkIDK:")
+        for i, path in enumerate(possible_paths_idk):
+            if path:
+                exists = path.exists()
+                print(f"  [{i}] {path} - exists: {exists}")
+                if exists:
+                    print(f"      Contents: {list(path.glob('*.py'))[:5]}")
+        
+        import_successful = False
+        for bench_path in possible_paths_idk:
+            if bench_path and bench_path.exists():
+                bench_path_str = str(bench_path)
+                if bench_path_str not in sys.path:
+                    print(f"[DEBUG] Adding {bench_path_str} to sys.path")
+                    sys.path.insert(0, bench_path_str)
+                try:
+                    from LingausBenchmarkIDK import LinGausBenchmarkIDK
+                    import_successful = True
+                    print(f"[DEBUG] LinGausBenchmarkIDK imported successfully from: {bench_path}")
+                    break
+                except ImportError as ie:
+                    print(f"[DEBUG] Import failed from {bench_path}: {ie}")
+                    continue
+        
+        if not import_successful:
+            raise ImportError(f"Could not find LinGausBenchmarkIDK module. Original error: {e1}")
+        
+except ImportError as e:
+    print(f"[DEBUG] FINAL: LinGausBenchmarkIDK import failed: {e}")
+    print(f"[DEBUG] This will cause an error if partial graph benchmark is requested in config")
+    LinGausBenchmarkIDK = None
 
 
 def _normalize_interp_name(s: str) -> str:
@@ -1156,39 +1217,76 @@ def main():
             print(f"   Norm methods: {norm_methods}")
             print(f"   Outlier strategies: {outlier_strategies}")
 
-        # Optional: build a LinGausBenchmark instance for periodic and final evaluation
+        # Optional: build a LinGausBenchmark or LinGausBenchmarkIDK instance for periodic and final evaluation
         lingaus_benchmark = None
         lingaus_benchmark_eval_fidelity = training_config.get("lingaus_benchmark_eval_fidelity")
         lingaus_benchmark_final_fidelity = training_config.get("lingaus_benchmark_final_fidelity")
         
-        # Check if LinGausBenchmark import failed but benchmark is requested
-        if LinGausBenchmark is None and (lingaus_benchmark_eval_fidelity or lingaus_benchmark_final_fidelity):
+        # Determine if we should use LinGausBenchmarkIDK (partial graph format) or LinGausBenchmark (complete graphs)
+        use_partial_graph_format = False
+        if 'use_partial_graph_format' in dataset_config:
+            cfg = dataset_config['use_partial_graph_format']
+            if isinstance(cfg, dict) and 'value' in cfg:
+                use_partial_graph_format = cfg['value']
+            elif isinstance(cfg, bool):
+                use_partial_graph_format = cfg
+        
+        # Select appropriate benchmark class based on partial graph usage
+        BenchmarkClass = LinGausBenchmarkIDK if use_partial_graph_format else LinGausBenchmark
+        benchmark_name = "LinGausBenchmarkIDK" if use_partial_graph_format else "LinGausBenchmark"
+        
+        # Check if benchmark import failed but benchmark is requested
+        if BenchmarkClass is None and (lingaus_benchmark_eval_fidelity or lingaus_benchmark_final_fidelity):
             print(f"\nLINGAUS BENCHMARK IMPORT FAILED!")
+            print(f"   Benchmark type needed: {benchmark_name}")
+            print(f"   use_partial_graph_format: {use_partial_graph_format}")
             print(f"   Eval fidelity requested: {lingaus_benchmark_eval_fidelity or 'disabled'}")
             print(f"   Final fidelity requested: {lingaus_benchmark_final_fidelity or 'disabled'}")
-            print(f"   LinGausBenchmark class: {LinGausBenchmark}")
-            print(f"   ERROR: LinGausBenchmark import failed but benchmark is configured in YAML!")
+            print(f"   {benchmark_name} class: {BenchmarkClass}")
+            print(f"   ERROR: {benchmark_name} import failed but benchmark is configured in YAML!")
             print(f"   Check the import debug output above for details.")
-            raise RuntimeError("LinGausBenchmark import failed but benchmark is requested in config. Check import paths and file transfers.")
+            raise RuntimeError(f"{benchmark_name} import failed but benchmark is requested in config. Check import paths and file transfers.")
         
-        if (lingaus_benchmark_eval_fidelity or lingaus_benchmark_final_fidelity) and LinGausBenchmark is not None:
+        if (lingaus_benchmark_eval_fidelity or lingaus_benchmark_final_fidelity) and BenchmarkClass is not None:
             print(f"\nLINGAUS BENCHMARK SETUP:")
+            print(f"   Benchmark type: {benchmark_name}")
+            print(f"   use_partial_graph_format: {use_partial_graph_format}")
             print(f"   Eval fidelity: {lingaus_benchmark_eval_fidelity or 'disabled'}")
             print(f"   Final fidelity: {lingaus_benchmark_final_fidelity or 'disabled'}")
             
             # Get benchmark directory from config or environment variable
-            lingaus_benchmark_dir = training_config.get(
-                "lingaus_benchmark_dir",
-                "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/LinGaus"
-            )
+            # For IDK benchmark, use LinGausIDK directory if available
+            if use_partial_graph_format:
+                lingaus_benchmark_dir = training_config.get(
+                    "lingaus_benchmark_dir",
+                    "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/LinGausIDK"
+                )
+            else:
+                lingaus_benchmark_dir = training_config.get(
+                    "lingaus_benchmark_dir",
+                    "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/LinGaus"
+                )
             
             # Check if LINGAUS_BENCHMARK_DIR is set in environment (for cluster jobs)
             env_benchmark_dir = os.environ.get("LINGAUS_BENCHMARK_DIR")
             if env_benchmark_dir:
+                # If using partial graphs, append IDK suffix if not already present
+                if use_partial_graph_format and not env_benchmark_dir.endswith("IDK"):
+                    env_benchmark_dir = env_benchmark_dir.rstrip("/") + "IDK"
                 print(f"   Using LINGAUS_BENCHMARK_DIR from environment: {env_benchmark_dir}")
                 lingaus_benchmark_dir = env_benchmark_dir
-            # Otherwise, try to resolve relative path from job root
-            elif not os.path.isabs(lingaus_benchmark_dir):
+            
+            # IMPORTANT: If using partial graph format, ensure we're using LinGausIDK directory
+            # Auto-convert LinGaus -> LinGausIDK if needed
+            if use_partial_graph_format and "LinGaus" in lingaus_benchmark_dir and not lingaus_benchmark_dir.endswith("IDK"):
+                original_dir = lingaus_benchmark_dir
+                lingaus_benchmark_dir = lingaus_benchmark_dir.rstrip("/").replace("/LinGaus", "/LinGausIDK")
+                print(f"   Auto-converted benchmark dir for partial graphs:")
+                print(f"     From: {original_dir}")
+                print(f"     To:   {lingaus_benchmark_dir}")
+            
+            # Try to resolve relative path from job root
+            if not os.path.isabs(lingaus_benchmark_dir):
                 job_root = os.environ.get("JOB_ROOT_DIR", os.getcwd())
                 resolved_path = os.path.join(job_root, lingaus_benchmark_dir)
                 if os.path.exists(resolved_path):
@@ -1207,26 +1305,27 @@ def main():
                     use_ancestor_matrix = anc_cfg
             
             try:
-                lingaus_benchmark = LinGausBenchmark(
+                lingaus_benchmark = BenchmarkClass(
                     benchmark_dir=lingaus_benchmark_dir,
                     cache_dir=None,  # Will use default: benchmark_dir/data_cache
                     verbose=True,
                     max_samples=None,  # Will be controlled by fidelity level
                     use_ancestor_matrix=use_ancestor_matrix,  # Pass ancestor matrix flag from config
                 )
-                print(f"   LinGausBenchmark instance created!")
+                print(f"   {benchmark_name} instance created!")
                 print(f"   Benchmark dir: {lingaus_benchmark_dir}")
                 print(f"   Data cache: {lingaus_benchmark.cache_dir}")
                 print(f"   Use ancestor matrix: {use_ancestor_matrix}")
             except Exception as e:
-                print(f"   WARNING: Failed to create LinGausBenchmark: {e}")
+                print(f"   WARNING: Failed to create {benchmark_name}: {e}")
                 print(f"   Exception details:")
                 import traceback
                 traceback.print_exc()
                 lingaus_benchmark = None
         elif lingaus_benchmark_eval_fidelity or lingaus_benchmark_final_fidelity:
             print(f"\nLINGAUS BENCHMARK SETUP:")
-            print(f"   WARNING: LinGaus benchmark requested but LinGausBenchmark class not available")
+            print(f"   WARNING: LinGaus benchmark requested but benchmark class not available")
+            print(f"   use_partial_graph_format: {use_partial_graph_format}")
             print(f"   Eval fidelity: {lingaus_benchmark_eval_fidelity or 'disabled'}")
             print(f"   Final fidelity: {lingaus_benchmark_final_fidelity or 'disabled'}")
 

@@ -53,20 +53,6 @@ except ImportError:
     # Fallback to old version if new one not available
     from models.InterventionalPFN_sklearn import InterventionalPFNSklearn
 
-# Import ancestor matrix computation function
-try:
-    from utils.graph_utils import adjacency_to_ancestor_matrix
-except ImportError:
-    try:
-        from src.utils.graph_utils import adjacency_to_ancestor_matrix
-    except ImportError:
-        # Final fallback
-        import sys
-        from pathlib import Path
-        utils_path = Path(__file__).resolve().parents[3] / "src" / "utils"
-        if str(utils_path) not in sys.path:
-            sys.path.insert(0, str(utils_path))
-        from graph_utils import adjacency_to_ancestor_matrix
 
 
 class LinGausBenchmarkIDK:
@@ -667,14 +653,8 @@ class LinGausBenchmarkIDK:
         adj_tensor = adj if torch.is_tensor(adj) else torch.tensor(adj)
         
         # Compute ancestor matrix if flag is set
-        # IMPORTANT: The stored data contains adjacency matrices, so we compute ancestor matrix on-the-fly
-        if self.use_ancestor_matrix:
-            graph_matrix = adjacency_to_ancestor_matrix(
-                adj_tensor
-            )
-            # Convert back to numpy
-            adj = graph_matrix.numpy() if torch.is_tensor(graph_matrix) else graph_matrix
-        elif torch.is_tensor(adj):
+        
+        if torch.is_tensor(adj):
             adj = adj.numpy()
         
         # Convert other tensors to numpy
@@ -881,12 +861,8 @@ class LinGausBenchmarkIDK:
                     
                     # Compute ancestor matrix if flag is set
                     # IMPORTANT: Stored data contains adjacency matrices, compute ancestor on-the-fly
-                    if self.use_ancestor_matrix:
-                        adj_computed = adjacency_to_ancestor_matrix(
-                            adj_tensor
-                        )
-                        adj = adj_computed.numpy() if torch.is_tensor(adj_computed) else adj_computed
-                    elif torch.is_tensor(adj):
+       
+                    if torch.is_tensor(adj):
                         adj = adj.numpy()
                     
                     # Convert other tensors to numpy
@@ -1276,7 +1252,8 @@ class LinGausBenchmarkIDK:
                 # Generate expected filename with correct seed
                 # All files use base_seed (typically 42) regardless of variant
                 dataset_seed = base_seed
-                variant_str = f"_{variant}" if variant != "base" else ""
+                # For base variant, include "_base" in filename (matching data generation)
+                variant_str = f"_{variant}"
                 data_filename = f"lingaus_{node_count}nodes{variant_str}_{num_samples}samples_seed{dataset_seed}.pkl"
                 
                 if self.verbose:
