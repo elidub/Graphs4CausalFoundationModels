@@ -234,8 +234,8 @@ def propagate_ancestor_knowledge(
     # helper for batched boolean reachability multiplication
     def boolean_matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
         # (B,N,N) bool -> (B,N,N) bool, where out[i,k] = OR_j a[i,j] & b[j,k]
-        # implement via integer bmm then >0
-        return (torch.bmm(a.to(torch.int32), b.to(torch.int32)) > 0)
+        # implement via float32 bmm then >0 (CUDA doesn't support int32 for bmm)
+        return (torch.bmm(a.to(torch.float32), b.to(torch.float32)) > 0)
 
     for _ in range(max_iterations):
         R_next = R | boolean_matmul(R, R)

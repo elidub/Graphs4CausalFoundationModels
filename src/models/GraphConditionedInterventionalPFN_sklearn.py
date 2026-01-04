@@ -460,7 +460,9 @@ class GraphConditionedInterventionalPFNSklearn:
             # No preprocessing needed
             return adjacency_matrix_t
         
-    
+        # Ensure float dtype (propagate_ancestor_knowledge needs float for bmm on CUDA)
+        if adjacency_matrix_t.dtype not in [torch.float32, torch.float64]:
+            adjacency_matrix_t = adjacency_matrix_t.float()
         
         # propagate_ancestor_knowledge already handles both (N,N) and (B,N,N) shapes
         return propagate_ancestor_knowledge(adjacency_matrix_t)
