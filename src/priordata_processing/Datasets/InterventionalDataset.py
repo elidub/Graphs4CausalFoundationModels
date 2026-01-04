@@ -19,13 +19,13 @@ from priors.causal_prior.scm.SCMSampler import SCMSampler
 from priordata_processing.BasicProcessing import BasicProcessing
 from utils import FixedSampler, TorchDistributionSampler, CategoricalSampler, DiscreteUniformSampler
 
-# Import ancestor matrix computation function
+# Import ancestor matrix computation and propagation functions
 try:
-    from utils.graph_utils import adjacency_to_ancestor_matrix
+    from utils.graph_utils import adjacency_to_ancestor_matrix, propagate_ancestor_knowledge
 except ImportError:
     # Try alternative import path
     try:
-        from src.utils.graph_utils import adjacency_to_ancestor_matrix
+        from src.utils.graph_utils import adjacency_to_ancestor_matrix, propagate_ancestor_knowledge
     except ImportError:
         # Final fallback
         import sys
@@ -33,7 +33,7 @@ except ImportError:
         utils_path = Path(__file__).resolve().parents[2] / "utils"
         if str(utils_path) not in sys.path:
             sys.path.insert(0, str(utils_path))
-        from graph_utils import adjacency_to_ancestor_matrix
+        from graph_utils import adjacency_to_ancestor_matrix, propagate_ancestor_knowledge
 
 
 class InterventionalDataset(Dataset):
@@ -958,6 +958,21 @@ class InterventionalDataset(Dataset):
                         sub = graph_matrix[:real_n, :real_n]
                         sub[hide_mask] = 0.0
                         graph_matrix[:real_n, :real_n] = sub
+                
+                # Propagate known ancestor information to fill in as many unknowns as possible
+                # This only makes sense for ancestor matrices in partial graph format
+                if self.use_partial_graph_format:
+                    # Only propagate over the real (non-padded) submatrix
+                    if has_treatment:
+                        real_n = 2 + len(kept_features)
+                    else:
+                        real_n = graph_matrix.shape[0]
+                    
+                    if real_n > 0:
+                        # Extract real submatrix, propagate, and update
+                        real_submatrix = graph_matrix[:real_n, :real_n]
+                        propagated_submatrix = propagate_ancestor_knowledge(real_submatrix)
+                        graph_matrix[:real_n, :real_n] = propagated_submatrix
 
                 result = result + (graph_matrix,)
             #breakpoint()

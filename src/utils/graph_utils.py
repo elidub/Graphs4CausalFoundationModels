@@ -125,6 +125,171 @@ def adjacency_to_ancestor_matrix(
     return reachable.to(dtype=dtype, device=device)
 
 
+import torch
+from typing import Tuple, Union, Optional
+
+
+def propagate_ancestor_knowledge(
+    ancestor_matrix: torch.Tensor,
+    *,
+    max_iterations: int = 64,
+    enforce_diagonal: bool = True,
+    raise_on_inconsistent: bool = True,
+    return_is_consistent: bool = False,
+    eps: float = 1e-6,
+) -> Union[torch.Tensor, Tuple[torch.Tensor, bool]]:
+    """
+    Propagate known ancestor relationships in a partial ancestor matrix (PAM).
+
+    Input semantics (strict ancestor / reachability):
+      -  1 : i is an ancestor of j (directed path exists i -> ... -> j)
+      -  0 : unknown
+      - -1 : i is NOT an ancestor of j
+
+    Sound closure rules for DAG ancestor relations:
+      (A) Diagonal:        T[i,i] = -1  (strict ancestor; no self-ancestry)
+      (B) Antisymmetry:    if T[i,j] = 1 then T[j,i] = -1
+      (C) Transitivity:    if T[i,j] = 1 and T[j,k] = 1 then T[i,k] = 1
+
+    The function:
+      - supports shapes (N,N) or (B,N,N)
+      - uses boolean reachability + batched matmul for transitive closure
+      - detects inconsistencies (optionally raises)
+
+    Inconsistencies detected:
+      - any T[i,i] == 1
+      - any pair with both T[i,j] == 1 and T[j,i] == 1 (cycle implied)
+      - any forced ancestor (by transitivity) conflicts with a known -1
+
+    Returns:
+      - completed PAM with values in {-1,0,1}, same dtype as input by default
+      - optionally also returns a bool flag is_consistent
+    """
+    if ancestor_matrix.ndim not in (2, 3):
+        raise ValueError(f"ancestor_matrix must have shape (N,N) or (B,N,N), got {tuple(ancestor_matrix.shape)}")
+    if ancestor_matrix.shape[-1] != ancestor_matrix.shape[-2]:
+        raise ValueError(f"ancestor_matrix must be square in the last two dims, got {tuple(ancestor_matrix.shape)}")
+
+    orig_dtype = ancestor_matrix.dtype
+    device = ancestor_matrix.device
+
+    # ---- normalize input to int8 in {-1,0,1} robustly ----
+    x = ancestor_matrix
+    if not x.is_floating_point():
+        x_int = x.to(torch.int8)
+    else:
+        # allow tiny numeric noise
+        def close_to(v: float) -> torch.Tensor:
+            return (x - v).abs() <= eps
+
+        ok = close_to(-1.0) | close_to(0.0) | close_to(1.0)
+        if not bool(ok.all()):
+            bad = x[~ok]
+            raise ValueError(
+                "ancestor_matrix contains values outside {-1,0,1} (within eps). "
+                f"Example bad values: {bad.flatten()[:10].tolist()}"
+            )
+        x_int = torch.zeros_like(x, dtype=torch.int8)
+        x_int[close_to(-1.0)] = -1
+        x_int[close_to(0.0)] = 0
+        x_int[close_to(1.0)] = 1
+
+    # Work on a clone
+    T = x_int.clone()
+
+    # Ensure batched shape (B,N,N)
+    if T.ndim == 2:
+        T = T.unsqueeze(0)  # (1,N,N)
+        squeeze_batch = True
+    else:
+        squeeze_batch = False
+
+    B, N, _ = T.shape
+
+    # ---- (A) diagonal enforcement + check ----
+    is_consistent = True
+    diag = torch.diagonal(T, dim1=-2, dim2=-1)  # (B,N)
+    if bool((diag == 1).any()):
+        is_consistent = False
+        if raise_on_inconsistent:
+            raise ValueError("Inconsistent PAM: found T[i,i] == 1 (a node cannot be its own strict ancestor).")
+
+    if enforce_diagonal:
+        # set diagonal to -1 regardless of unknown/-1; keep consistency flag if it was 1
+        idx = torch.arange(N, device=device)
+        T[:, idx, idx] = -1
+
+    # ---- reachability matrix R (known ancestors) ----
+    R = (T == 1)  # (B,N,N), bool
+
+    # ---- (B) antisymmetry immediate contradiction check ----
+    if bool((R & R.transpose(-1, -2)).any()):
+        is_consistent = False
+        if raise_on_inconsistent:
+            raise ValueError("Inconsistent PAM: found a 2-cycle implied by T[i,j]==1 and T[j,i]==1.")
+
+    # ---- (C) transitive closure via boolean matmul; detect conflicts with known -1 ----
+    known_not_ancestor = (T == -1)
+
+    # helper for batched boolean reachability multiplication
+    def boolean_matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        # (B,N,N) bool -> (B,N,N) bool, where out[i,k] = OR_j a[i,j] & b[j,k]
+        # implement via integer bmm then >0
+        return (torch.bmm(a.to(torch.int32), b.to(torch.int32)) > 0)
+
+    for _ in range(max_iterations):
+        R_next = R | boolean_matmul(R, R)
+
+        # transitivity cannot create self-ancestry in a DAG; but if constraints imply it, it's inconsistent
+        if bool(torch.diagonal(R_next, dim1=-2, dim2=-1).any()):
+            is_consistent = False
+            if raise_on_inconsistent:
+                raise ValueError("Inconsistent PAM: transitive closure implies self-ancestry (cycle).")
+
+        # conflict: something is forced ancestor but known as NOT ancestor
+        if bool((R_next & known_not_ancestor).any()):
+            is_consistent = False
+            if raise_on_inconsistent:
+                raise ValueError("Inconsistent PAM: transitive closure forces an ancestor relation that conflicts with -1.")
+            # if not raising, we keep going but flag inconsistency
+        if torch.equal(R_next, R):
+            break
+        R = R_next
+
+    # ---- write back inferred info to T ----
+    # Set all inferred ancestors to 1
+    T[R] = 1
+
+    # Enforce antisymmetry: if i ancestor of j then j not ancestor of i
+    RT = R.transpose(-1, -2)
+
+    # If RT already has 1 where R has 1, that's a cycle (already checked above), but keep safety:
+    if bool((R & RT).any()):
+        is_consistent = False
+        if raise_on_inconsistent:
+            raise ValueError("Inconsistent PAM: cycle detected after closure (should not happen).")
+
+    # Fill unknowns on the reverse with -1 (do not overwrite existing 1)
+    reverse_should_be_not_ancestor = RT
+    overwrite_mask = reverse_should_be_not_ancestor & (T == 0)
+    T[overwrite_mask] = -1
+
+    # Keep diagonal as -1 if requested
+    if enforce_diagonal:
+        idx = torch.arange(N, device=device)
+        T[:, idx, idx] = -1
+
+    # restore original batch shape and dtype
+    if squeeze_batch:
+        T = T.squeeze(0)
+
+    T_out = T.to(orig_dtype) if orig_dtype.is_floating_point else T.to(orig_dtype)
+
+    if return_is_consistent:
+        return T_out, is_consistent
+    return T_out
+
+
 if __name__ == "__main__":
     """
     Test suite for ancestor matrix computation.
@@ -283,6 +448,58 @@ if __name__ == "__main__":
                                     [1., 1.]])
         assert torch.allclose(anc_diag, expected_diag)
     
+    def test_propagate_simple_chain():
+        """Test propagation on simple chain: 0 -> 1 -> 2 where middle edge is unknown."""
+        print("\nTest 7: Propagate - Simple chain with unknown edge")
+        pam = torch.tensor([
+            [-1.,  1.,  0.],  # 0 is ancestor of 1, unknown for 2
+            [-1., -1.,  1.],  # 1 is ancestor of 2
+            [-1., -1., -1.]   # 2 is sink
+        ])
+        print("Initial partial ancestor matrix:")
+        print(pam)
+        
+        completed = propagate_ancestor_knowledge(pam)
+        print("\nAfter propagation:")
+        print(completed)
+        
+        expected = torch.tensor([
+            [-1.,  1.,  1.],  # Now know 0 is ancestor of 2
+            [-1., -1.,  1.],
+            [-1., -1., -1.]
+        ])
+        assert torch.allclose(completed, expected), "Failed to infer via transitivity"
+        print("✓ Propagation test passed")
+    
+    def test_propagate_recovery():
+        """Test that hidden edges can be recovered via propagation."""
+        print("\nTest 8: Propagate - Recovery from hiding")
+        # Complete ancestor matrix
+        complete = torch.tensor([
+            [-1.,  1.,  1.,  1.],
+            [-1., -1.,  1.,  1.],
+            [-1., -1., -1.,  1.],
+            [-1., -1., -1., -1.]
+        ])
+        print("Complete ancestor matrix:")
+        print(complete)
+        
+        # Hide some edges
+        partial = complete.clone()
+        partial[0, 2] = 0.0
+        partial[0, 3] = 0.0
+        partial[1, 3] = 0.0
+        print("\nAfter hiding (set to 0):")
+        print(partial)
+        
+        # Propagate to recover
+        recovered = propagate_ancestor_knowledge(partial)
+        print("\nAfter propagation:")
+        print(recovered)
+        
+        assert torch.allclose(recovered, complete), "Failed to recover all edges"
+        print("✓ Successfully recovered all hidden edges via propagation")
+    
     # Run all tests
     test_simple_chain()
     test_fork()
@@ -290,6 +507,8 @@ if __name__ == "__main__":
     test_complex_dag()
     test_no_edges()
     test_cuda_support()
+    test_propagate_simple_chain()
+    test_propagate_recovery()
     
     print("\n" + "="*80)
     print("✓ ALL TESTS PASSED")

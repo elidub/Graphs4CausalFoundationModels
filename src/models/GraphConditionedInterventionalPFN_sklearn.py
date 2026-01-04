@@ -74,6 +74,7 @@ try:
     from models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
     from models.PartialGraphConditionedInterventionalPFN import PartialGraphConditionedInterventionalPFN
     from Losses.BarDistribution import BarDistribution
+    from utils.graph_utils import propagate_ancestor_knowledge
 except Exception:
     try:
         from src.models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
@@ -81,15 +82,20 @@ except Exception:
         from src.models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
         from src.models.PartialGraphConditionedInterventionalPFN import PartialGraphConditionedInterventionalPFN
         from src.Losses.BarDistribution import BarDistribution
+        from src.utils.graph_utils import propagate_ancestor_knowledge
     except Exception:
         repo_root = Path(__file__).resolve().parents[2]
+        utils_path = Path(__file__).resolve().parents[1] / "utils"
         if str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
+        if str(utils_path) not in sys.path:
+            sys.path.insert(0, str(utils_path))
         from src.models.GraphConditionedInterventionalPFN import GraphConditionedInterventionalPFN
         from src.models.UltimateGraphConditionedInterventionalPFN import UltimateGraphConditionedInterventionalPFN
         from src.models.FlatGraphConditionedInterventionalPFN import FlatGraphConditionedInterventionalPFN
         from src.models.PartialGraphConditionedInterventionalPFN import PartialGraphConditionedInterventionalPFN
         from src.Losses.BarDistribution import BarDistribution
+        from graph_utils import propagate_ancestor_knowledge
 
 
 class GraphConditionedInterventionalPFNSklearn:
@@ -148,6 +154,8 @@ class GraphConditionedInterventionalPFNSklearn:
         self.bar_distribution = None
         self.use_bar_distribution = False
         self.graph_conditioning_mode = None  # Track which model type to use
+        self.use_partial_graph_format = False  # Track if partial graph format is enabled
+        self.propagate_partial_knowledge = True  # Auto-propagate knowledge in partial graphs
         
     def load(self, override_kwargs: Optional[dict[str, Any]] = None) -> "GraphConditionedInterventionalPFNSklearn":
         """
@@ -217,6 +225,9 @@ class GraphConditionedInterventionalPFNSklearn:
                         'ultimate_gcn_and_hard_attention': (True, True, True, False),
                         'ultimate_soft_attention': (True, False, False, True),  # Soft bias requires attention masking
                         'ultimate_gcn_and_soft_attention': (True, True, True, True),  # GCN+AdaLN+soft bias requires attention masking
+                        # Partial graph modes (for three-state adjacency: -1/0/1)
+                        'partial_soft_attention': (True, False, False, True),  # Soft bias for partial graphs
+                        'partial_gcn_and_soft_attention': (True, True, True, True),  # Full conditioning for partial graphs
                         # Legacy modes
                         'hard_attention_only': (True, False, False, False),
                         'soft_learned_bias': (True, False, False, True),  # Soft bias requires attention masking
@@ -297,6 +308,16 @@ class GraphConditionedInterventionalPFNSklearn:
         # Check if partial graph format is enabled
         use_partial_graph = self.model_kwargs.get("use_partial_graph_format", False)
         
+        # Track if we're using partial graph format (three-state matrices {-1, 0, 1})
+        # This is used to enable automatic propagation of ancestor knowledge
+        self.use_partial_graph_format = (
+            use_partial_graph or 
+            self.graph_conditioning_mode in ['partial_soft_attention', 'partial_gcn_and_soft_attention']
+        )
+        
+        if self.verbose and self.use_partial_graph_format:
+            print(f"  Partial graph format enabled - will propagate ancestor knowledge automatically")
+        
         # Map graph_conditioning_mode to appropriate model class
         if self.graph_conditioning_mode == 'flat_append':
             if self.verbose:
@@ -312,21 +333,15 @@ class GraphConditionedInterventionalPFNSklearn:
             
             # Map mode to specific configuration
             if self.graph_conditioning_mode == 'partial_soft_attention':
-                model_kwargs_filtered['use_attention_masking'] = False
+                model_kwargs_filtered['use_attention_masking'] = True  # Soft bias requires attention masking
                 model_kwargs_filtered['use_gcn'] = False
                 model_kwargs_filtered['use_adaln'] = False
                 model_kwargs_filtered['use_soft_attention_bias'] = True
             elif self.graph_conditioning_mode == 'partial_gcn_and_soft_attention':
-                model_kwargs_filtered['use_attention_masking'] = False
+                model_kwargs_filtered['use_attention_masking'] = True  # Soft bias requires attention masking
                 model_kwargs_filtered['use_gcn'] = True
                 model_kwargs_filtered['use_adaln'] = True
                 model_kwargs_filtered['use_soft_attention_bias'] = True
-            
-            if self.verbose:
-                print(f"    use_attention_masking: {model_kwargs_filtered.get('use_attention_masking', False)}")
-                print(f"    use_gcn: {model_kwargs_filtered.get('use_gcn', False)}")
-                print(f"    use_adaln: {model_kwargs_filtered.get('use_adaln', False)}")
-                print(f"    use_soft_attention_bias: {model_kwargs_filtered.get('use_soft_attention_bias', False)}")
             
             # Remove use_partial_graph_format since it's not a model parameter
             model_kwargs_filtered.pop('use_partial_graph_format', None)
@@ -422,6 +437,33 @@ class GraphConditionedInterventionalPFNSklearn:
             print(f"  Model loaded with {total_params:,} parameters")
         
         return self
+    
+    def _preprocess_adjacency_matrix(self, adjacency_matrix_t: torch.Tensor) -> torch.Tensor:
+        """
+        Preprocess adjacency/ancestor matrix before passing to model.
+        
+        For partial graph formats (three-state matrices with {-1, 0, 1}), this automatically
+        propagates known ancestor relationships to fill in as many unknown (0) entries as
+        possible using transitivity and antisymmetry rules.
+        
+        Args:
+            adjacency_matrix_t: Tensor of shape (B, N, N) or (N, N)
+                For partial graphs: values in {-1, 0, 1}
+                  -1: no edge/ancestor relationship
+                   0: unknown
+                   1: edge/ancestor relationship exists
+        
+        Returns:
+            Preprocessed matrix with same shape, potentially with fewer unknowns
+        """
+        if not self.use_partial_graph_format or not self.propagate_partial_knowledge:
+            # No preprocessing needed
+            return adjacency_matrix_t
+        
+    
+        
+        # propagate_ancestor_knowledge already handles both (N,N) and (B,N,N) shapes
+        return propagate_ancestor_knowledge(adjacency_matrix_t)
     
     def predict(
         self,
@@ -547,6 +589,9 @@ class GraphConditionedInterventionalPFNSklearn:
             X_intv_t = torch.from_numpy(X_intv).unsqueeze(0).to(self.device)  # (1, M, L)
             T_intv_t = torch.from_numpy(T_intv).unsqueeze(0).to(self.device)  # (1, M, 1)
             adjacency_matrix_t = torch.from_numpy(adjacency_matrix).unsqueeze(0).to(self.device)  # (1, L+2, L+2)
+        
+        # Preprocess adjacency matrix (propagate ancestor knowledge for partial graphs)
+        adjacency_matrix_t = self._preprocess_adjacency_matrix(adjacency_matrix_t)
         
         # Forward pass
         self.model.eval()
@@ -715,6 +760,9 @@ class GraphConditionedInterventionalPFNSklearn:
             T_intv_t = torch.from_numpy(T_intv).unsqueeze(0).to(self.device)  # (1, M, 1)
             Y_intv_t = torch.from_numpy(Y_intv).unsqueeze(0).to(self.device)  # (1, M)
             adjacency_matrix_t = torch.from_numpy(adjacency_matrix).unsqueeze(0).to(self.device)  # (1, L+2, L+2)
+        
+        # Preprocess adjacency matrix (propagate ancestor knowledge for partial graphs)
+        adjacency_matrix_t = self._preprocess_adjacency_matrix(adjacency_matrix_t)
         
         # BarDistribution must be loaded from checkpoint
         if self.bar_distribution.centers is None:
