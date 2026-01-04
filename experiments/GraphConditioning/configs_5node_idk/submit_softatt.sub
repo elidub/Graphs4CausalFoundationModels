@@ -5,7 +5,7 @@ output     = logs/softatt_$(ClusterId).$(ProcId).out
 error      = logs/softatt_$(ClusterId).$(ProcId).err
 log        = logs/softatt_$(ClusterId).$(ProcId).log
 
-transfer_input_files = ../../../src, ../../../pyproject.toml, ../../../requirements.txt, ../../../setup.py, ../../../../venv.zip, run_softatt.sh, ../configs_5node_ancestor, ../../../data_cache.zip, ../Benchmarks, ../lingaus_benchmark_data.zip
+transfer_input_files = ../../../src, ../../../pyproject.toml, ../../../requirements.txt, ../../../setup.py, ../../../../venv.zip, run_softatt.sh, ../configs_5node_idk, ../../../data_cache.zip, ../Benchmarks, ../lingaus_benchmark_data.zip
 should_transfer_files = Yes
 when_to_transfer_output = ON_EXIT
 
@@ -14,7 +14,7 @@ environment = "HOME=/tmp/wandb_home WANDB_API_KEY=e5ba90a037256650557e4644545bd2
 
 request_gpus   = 1
 request_memory = 128GB
-request_cpus   = 52
+request_cpus   = 64
 request_disk   = 128GB
 
 # Pin to H100 nodes
