@@ -33,3 +33,7 @@ catboost_info/time_left.tsv
 catboost_info/learn/events.out.tfevents
 experiments/GraphConditioning/Benchmarks/LinGaus/.DS_Store
 experiments/GraphConditioning/Benchmarks/LinGaus/.DS_Store
+attention_maps_comparison.png
+bias_effects.png
+
+/experiments/GraphConditioning/Benchmarks/LinGausIDK/data_cache
