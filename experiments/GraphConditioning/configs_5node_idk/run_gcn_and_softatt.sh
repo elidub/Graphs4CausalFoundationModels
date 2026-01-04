@@ -68,7 +68,7 @@ fi
 
 # Run SimplePFN training with config
 cd src/training
-python3 run.py --config "../../configs_5node_ancestor/lingaus_ancestor_5node_gcn_and_softatt.yaml"
+python3 run.py --config "../../configs_5node_idk/lingaus_ancestor_5node_idk_gcn_and_softatt.yaml"
 
 # Display debug log if it exists
 echo "=== LinGaus Import Debug Log ==="

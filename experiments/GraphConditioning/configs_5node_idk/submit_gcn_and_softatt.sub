@@ -5,7 +5,7 @@ output     = logs/gcn_and_softatt_$(ClusterId).$(ProcId).out
 error      = logs/gcn_and_softatt_$(ClusterId).$(ProcId).err
 log        = logs/gcn_and_softatt_$(ClusterId).$(ProcId).log
 
-transfer_input_files = ../../../src, ../../../pyproject.toml, ../../../requirements.txt, ../../../setup.py, ../../../../venv.zip, run_gcn_and_softatt.sh, ../configs_5node_ancestor, ../../../data_cache.zip, ../Benchmarks, ../lingaus_benchmark_data.zip
+transfer_input_files = ../../../src, ../../../pyproject.toml, ../../../requirements.txt, ../../../setup.py, ../../../../venv.zip, run_gcn_and_softatt.sh, ../configs_5node_idk, ../../../data_cache.zip, ../Benchmarks, ../lingaus_benchmark_data.zip
 should_transfer_files = Yes
 when_to_transfer_output = ON_EXIT
 
