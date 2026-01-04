@@ -1243,39 +1243,62 @@ class LinGausBenchmarkIDK:
         # NOTE: All variants use the SAME seed (base_seed) per the generate_all_variants_data.py script
         all_results = {}
         
+        # Calculate total configs: base variants + (path variants * hide fractions)
         config_idx = 0
-        total_configs = len(node_counts) * len(variants)
+        base_count = len([v for v in variants if v == "base"])
+        path_count = len([v for v in variants if v != "base"])
+        total_configs = len(node_counts) * (base_count + path_count * len(self.HIDE_FRACTIONS))
         
         for node_count in node_counts:
             for variant in variants:
-                config_idx += 1
-                # Generate expected filename with correct seed
-                # All files use base_seed (typically 42) regardless of variant
-                dataset_seed = base_seed
-                # For base variant, include "_base" in filename (matching data generation)
-                variant_str = f"_{variant}"
-                data_filename = f"lingaus_{node_count}nodes{variant_str}_{num_samples}samples_seed{dataset_seed}.pkl"
+                # For path variants, loop through all hide fractions
+                if variant in self.PATH_VARIANTS:
+                    hide_fractions_to_test = self.HIDE_FRACTIONS
+                else:
+                    # For base variant, no hide fraction suffix needed
+                    hide_fractions_to_test = [None]
                 
-                if self.verbose:
-                    print(f"\n{'='*80}")
-                    print(f"Benchmarking config {config_idx}/{total_configs}: {node_count}-node, variant: {variant}")
-                    print(f"{'='*80}")
-                
-                try:
-                    results = self.run_benchmark(
-                        data_filename=data_filename,
-                        model=model,
-                        output_dir=output_dir,
-                        model_name=model_name,
-                        n_bootstrap=n_bootstrap,
-                    )
-                    # Use string key for JSON serialization
-                    key = f"{node_count}nodes_{variant}"
-                    all_results[key] = results
-                except Exception as e:
+                for hide_frac in hide_fractions_to_test:
+                    config_idx += 1
+                    # Generate expected filename with correct seed
+                    # All files use base_seed (typically 42) regardless of variant
+                    dataset_seed = base_seed
+                    
+                    # Build variant string
+                    if hide_frac is not None:
+                        # Path variant with hide fraction
+                        variant_str = f"_{variant}_hide{hide_frac}"
+                        variant_display = f"{variant} (hide={hide_frac})"
+                    else:
+                        # Base variant
+                        variant_str = f"_{variant}"
+                        variant_display = variant
+                    
+                    data_filename = f"lingaus_{node_count}nodes{variant_str}_{num_samples}samples_seed{dataset_seed}.pkl"
+                    
                     if self.verbose:
-                        print(f"ERROR: Failed to benchmark {node_count}-node {variant} config: {e}")
-                    continue
+                        print(f"\n{'='*80}")
+                        print(f"Benchmarking config {config_idx}/{total_configs}: {node_count}-node, variant: {variant_display}")
+                        print(f"{'='*80}")
+                    
+                    try:
+                        results = self.run_benchmark(
+                            data_filename=data_filename,
+                            model=model,
+                            output_dir=output_dir,
+                            model_name=model_name,
+                            n_bootstrap=n_bootstrap,
+                        )
+                        # Use string key for JSON serialization
+                        if hide_frac is not None:
+                            key = f"{node_count}nodes_{variant}_hide{hide_frac}"
+                        else:
+                            key = f"{node_count}nodes_{variant}"
+                        all_results[key] = results
+                    except Exception as e:
+                        if self.verbose:
+                            print(f"ERROR: Failed to benchmark {node_count}-node {variant_display} config: {e}")
+                        continue
         
         # Save summary in the model's folder
         summary_filename = "summary_all_nodes.json"
