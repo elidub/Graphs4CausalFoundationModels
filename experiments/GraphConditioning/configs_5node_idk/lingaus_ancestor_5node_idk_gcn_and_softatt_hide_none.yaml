@@ -246,7 +246,7 @@ dataset_config:
   # Sampled per-dataset from Uniform(0,1) by default.
   # Requires use_partial_graph_format=true
   hide_fraction_matrix:
-    value: 1.0
+    value: 0.0
 
   # Rejection sampling: ensure target variance is sufficiently large
   # If either train or test target variance falls below this threshold, resample the dataset.
