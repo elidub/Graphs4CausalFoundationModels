@@ -37,3 +37,7 @@ attention_maps_comparison.png
 bias_effects.png
 
 /experiments/GraphConditioning/Benchmarks/LinGausIDK/data_cache
+
+/experiments/GraphConditioning/aggregate_results/lingaus_idk/plots
+
+/experiments/GraphConditioning/aggregate_results/lingaus/plots
