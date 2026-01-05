@@ -49,6 +49,19 @@ else
 	echo "No lingaus_benchmark_data.zip found; LinGaus benchmark will be disabled"
 fi
 
+# Unzip LinGausIDK benchmark data
+echo "Unzipping LinGausIDK benchmark data..."
+if [ -f "Benchmarks/LinGausIDK/data_cache/Archive.zip" ]; then
+	mkdir -p Benchmarks/LinGausIDK/data_cache
+	unzip -o -q Benchmarks/LinGausIDK/data_cache/Archive.zip -d Benchmarks/LinGausIDK/data_cache
+	echo "LinGausIDK benchmark data unzipped. Contents:"
+	ls -la Benchmarks/LinGausIDK/data_cache | head -20 || true
+	export LINGAUSIDK_BENCHMARK_DIR="${PWD}/Benchmarks/LinGausIDK"
+	echo "Exported LINGAUSIDK_BENCHMARK_DIR=${LINGAUSIDK_BENCHMARK_DIR}"
+else
+	echo "No Benchmarks/LinGausIDK/data_cache/Archive.zip found; LinGausIDK benchmark will be disabled"
+fi
+
 # Copy benchmark module files to working directory
 echo "Setting up LinGaus benchmark module..."
 if [ -d "Benchmarks/LinGaus" ]; then
@@ -68,7 +81,7 @@ fi
 
 # Run SimplePFN training with config
 cd src/training
-python3 run.py --config "../../configs_5node_ancestor/lingaus_ancestor_5node_gcn.yaml"
+python3 run.py --config "../../configs_50node_idk/lingaus_ancestor_50node_idk_gcn_and_softatt.yaml"
 
 # Display debug log if it exists
 echo "=== LinGaus Import Debug Log ==="
