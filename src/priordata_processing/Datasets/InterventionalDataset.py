@@ -973,6 +973,7 @@ class InterventionalDataset(Dataset):
                         real_submatrix = graph_matrix[:real_n, :real_n]
                         propagated_submatrix = propagate_ancestor_knowledge(real_submatrix)
                         graph_matrix[:real_n, :real_n] = propagated_submatrix
+
                 breakpoint()
                 result = result + (graph_matrix,)
             #breakpoint()

@@ -32,10 +32,14 @@ plt.rcParams['figure.figsize'] = (30, 8)
 # Define model order and colors for IDK models
 MODEL_ORDER = [
     'idk_gcn_and_softatt',  # The IDK model with partial graph knowledge
+    'idk_gcn_and_softatt_hide_none',  # Model trained with full graph knowledge
+    'idk_gcn_and_softatt_hide_all',  # Model trained with no graph knowledge
 ]
 
 MODEL_COLORS = {
     'idk_gcn_and_softatt': '#21918c',  # Teal color
+    'idk_gcn_and_softatt_hide_none': '#440154',  # Dark purple (full knowledge)
+    'idk_gcn_and_softatt_hide_all': '#cc4778',  # Pink/red (no knowledge)
 }
 
 
@@ -263,6 +267,10 @@ def plot_box_comparison_separate_variants(df, node_counts_to_compare, title_suff
         if variant == 'base':
             hide_fractions = [None]  # Base has no specific hide fraction
         
+        # Get unique models
+        models = sorted(variant_data['model'].unique())
+        n_models = len(models)
+        
         fig, axes = plt.subplots(len(metrics_to_plot), len(node_counts_to_compare), 
                                 figsize=(20, 12))
         
@@ -292,43 +300,57 @@ def plot_box_comparison_separate_variants(df, node_counts_to_compare, title_suff
                 labels = []
                 mean_values = []
                 
-                # Create a box for each hide fraction
+                # Create boxes grouped by hide fraction, with models side by side
+                position_offset = 0
+                group_width = n_models * 0.7  # Width for one hide fraction group
+                
                 for hide_idx, hide_frac in enumerate(hide_fractions):
                     if hide_frac is None:
-                        hide_data = node_data[node_data['hide_fraction'].isna()]
-                        label = 'Uniform'
+                        hide_label = 'Uniform'
                     else:
-                        hide_data = node_data[node_data['hide_fraction'] == hide_frac]
-                        label = f'{hide_frac:.2f}'
+                        hide_label = f'{hide_frac:.2f}'
                     
-                    if len(hide_data) == 0:
-                        continue
-                    
-                    positions.append(hide_idx)
-                    mean_val = hide_data[metric_col].values[0]
-                    mean_values.append(mean_val)
-                    labels.append(label)
-                    
-                    ci_lower_col = f'{metric}_mean_ci_lower'
-                    ci_upper_col = f'{metric}_mean_ci_upper'
-                    
-                    if ci_lower_col in hide_data.columns and ci_upper_col in hide_data.columns:
-                        ci_lower = hide_data[ci_lower_col].values[0]
-                        ci_upper = hide_data[ci_upper_col].values[0]
+                    # Add each model for this hide fraction
+                    for model_idx, model in enumerate(models):
+                        if hide_frac is None:
+                            hide_data = node_data[(node_data['hide_fraction'].isna()) & (node_data['model'] == model)]
+                        else:
+                            hide_data = node_data[(node_data['hide_fraction'] == hide_frac) & (node_data['model'] == model)]
                         
-                        # Create synthetic data for box plot using confidence intervals
-                        synthetic_data = [
-                            ci_lower,
-                            ci_lower + (mean_val - ci_lower) * 0.5,
-                            mean_val,
-                            mean_val + (ci_upper - mean_val) * 0.5,
-                            ci_upper
-                        ]
-                    else:
-                        synthetic_data = [mean_val] * 5
+                        if len(hide_data) == 0:
+                            continue
+                        
+                        pos = position_offset + model_idx * 0.7
+                        positions.append(pos)
+                        mean_val = hide_data[metric_col].values[0]
+                        mean_values.append(mean_val)
+                        
+                        # Only add label for first hide fraction (for legend)
+                        if hide_idx == 0:
+                            labels.append(f'{model}')
+                        
+                        ci_lower_col = f'{metric}_mean_ci_lower'
+                        ci_upper_col = f'{metric}_mean_ci_upper'
+                        
+                        if ci_lower_col in hide_data.columns and ci_upper_col in hide_data.columns:
+                            ci_lower = hide_data[ci_lower_col].values[0]
+                            ci_upper = hide_data[ci_upper_col].values[0]
+                            
+                            # Create synthetic data for box plot using confidence intervals
+                            synthetic_data = [
+                                ci_lower,
+                                ci_lower + (mean_val - ci_lower) * 0.5,
+                                mean_val,
+                                mean_val + (ci_upper - mean_val) * 0.5,
+                                ci_upper
+                            ]
+                        else:
+                            synthetic_data = [mean_val] * 5
+                        
+                        box_data.append(synthetic_data)
+                        colors.append(MODEL_COLORS.get(model, '#808080'))
                     
-                    box_data.append(synthetic_data)
-                    colors.append(hide_colors.get(hide_frac, '#808080'))
+                    position_offset += group_width + 0.5  # Space between hide fraction groups
                 
                 if box_data and positions:
                     bp = ax.boxplot(box_data, positions=positions, widths=0.6,
@@ -345,13 +367,22 @@ def plot_box_comparison_separate_variants(df, node_counts_to_compare, title_suff
                     # Add mean values as text
                     for pos, mean_val in zip(positions, mean_values):
                         ax.text(pos, mean_val, f'{mean_val:.3f}', 
-                               ha='center', va='bottom', fontsize=8, rotation=0,
-                               bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                               ha='center', va='bottom', fontsize=6, rotation=90,
+                               bbox=dict(boxstyle='round,pad=0.2', facecolor='white', 
                                        edgecolor='none', alpha=0.8))
                     
-                    # Set x-axis labels
-                    ax.set_xticks(positions)
-                    ax.set_xticklabels(labels, rotation=0, fontsize=10)
+                    # Set x-axis labels for hide fractions
+                    hide_labels = [f'{h:.2f}' if h is not None else 'Uniform' for h in hide_fractions]
+                    # Calculate center positions for each hide fraction group
+                    group_centers = []
+                    pos_offset = 0
+                    for _ in hide_fractions:
+                        center = pos_offset + (n_models - 1) * 0.7 / 2
+                        group_centers.append(center)
+                        pos_offset += group_width + 0.5
+                    
+                    ax.set_xticks(group_centers)
+                    ax.set_xticklabels(hide_labels, rotation=0, fontsize=10)
                     ax.set_xlabel('Hide Fraction', fontsize=10)
                 
                 # Set titles and labels
@@ -364,6 +395,12 @@ def plot_box_comparison_separate_variants(df, node_counts_to_compare, title_suff
                 ax.grid(True, alpha=0.3, axis='y')
                 ax.spines['top'].set_visible(False)
                 ax.spines['right'].set_visible(False)
+        
+        # Add legend for models (only once, in the first subplot)
+        if len(models) > 1:
+            legend_elements = [plt.Rectangle((0, 0), 1, 1, fc=MODEL_COLORS.get(m, '#808080'), alpha=0.7, label=m) 
+                             for m in models]
+            axes[0, 0].legend(handles=legend_elements, loc='upper left', fontsize=8)
         
         variant_display = variant_display_names.get(variant, variant)
         fig.suptitle(f'{variant_display} - {title_suffix}', 
@@ -453,11 +490,13 @@ def main():
     
     # 5-node IDK model
     print("\n" + "="*80)
-    print("Processing 5-Node IDK Model")
+    print("Processing 5-Node IDK Models")
     print("="*80)
     
     idk_keys_5node = [
         "lingaus_ancestor_5node_idk_gcn_and_softatt_16739007.0",
+        "lingaus_ancestor_5node_idk_gcn_and_softatt_hide_none_16741967.0",
+        "lingaus_ancestor_5node_idk_gcn_and_softatt_hide_all_16741968.0",
     ]
     
     results_dict_5node = {}
