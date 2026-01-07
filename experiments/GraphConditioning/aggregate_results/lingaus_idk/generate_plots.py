@@ -494,9 +494,9 @@ def main():
     print("="*80)
     
     idk_keys_5node = [
-        "lingaus_ancestor_5node_idk_gcn_and_softatt_16739007.0",
-        "lingaus_ancestor_5node_idk_gcn_and_softatt_hide_none_16741967.0",
-        "lingaus_ancestor_5node_idk_gcn_and_softatt_hide_all_16741968.0",
+        "lingaus_ancestor_5node_idk_gcn_and_softatt_16749444.0",
+        "lingaus_ancestor_5node_idk_gcn_and_softatt_hide_none_16749441.0",
+        "lingaus_ancestor_5node_idk_gcn_and_softatt_hide_all_16749443.0",
     ]
     
     results_dict_5node = {}
