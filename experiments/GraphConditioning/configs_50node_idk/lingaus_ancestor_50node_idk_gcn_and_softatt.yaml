@@ -377,7 +377,7 @@ model_config:
   
   # GCN Configuration (only applies when using GCN-based graph conditioning modes)
   gcn_use_transpose:  # whether to transpose adjacency matrix in GCN (for "j aggregates from i" convention)
-    value: true
+    value: false
   gcn_alpha_init:  # initial alpha value for unknown edges in partial graphs (weight for unknown edges)
     value: 0.1  # Range: (0, 1). Lower = less weight to unknown edges, Higher = more weight
   

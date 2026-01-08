@@ -1,16 +1,15 @@
 # ===============================================================================
-# Early Test 1 Configuration - First Pipeline Test
+# 50-Node IDK Configuration - Graph Conditioning with Partial Knowledge
 # ===============================================================================
-# This configuration serves as the initial end-to-end test if
-# training pipeline. It uses minimal settings based on default configurations
-# to ensure quick execution while testing all components.
+# This configuration uses 50-node graphs with partial graph knowledge (IDK),
+# where some edges are unknown. Uses GCN+AdaLN+soft attention for conditioning.
 #
 # You can specify a prior-distribution over most hyperparamters from which the value will be sampled during training.
 # 
 # ===============================================================================
 
-experiment_name: "lingaus_5node_idk_gcn_and_softatt"
-description: "Partial graph conditioning with GCN+AdaLN+soft attention, using ancestor matrix with unknown edges"
+experiment_name: "lingaus_50node_idk_gcn_and_softatt"
+description: "Partial graph conditioning with GCN+AdaLN+soft attention, using ancestor matrix with unknown edges, 50 nodes"
 
 mode: "interventional" # determine whether to train in predictive or interventional mode via "predictive" or "interventional"
 
@@ -19,7 +18,7 @@ scm_config:
     distribution: "discrete_uniform"
     distribution_parameters:
       low: 2
-      high: 5
+      high: 50
   graph_edge_prob:
     distribution: "beta"
     distribution_parameters:
@@ -264,7 +263,7 @@ dataset_config:
 
 
   max_number_features:
-    value: 3
+    value: 48
   seed:
     distribution: "discrete_uniform"
     distribution_parameters:
@@ -353,7 +352,7 @@ model_config:
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
     value: 2
   num_features:
-    value: 3  
+    value: 48  
   normalize_features:  # whether to apply quantile transform + standard normalization internally
     value: true
   
@@ -423,7 +422,7 @@ training_config:
   accumulate_grad_batches:
     value: 4
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
-    value: 50
+    value: 70
 
 
   # Training Control
