@@ -494,9 +494,9 @@ def main():
     print("="*80)
     
     idk_keys_5node = [
-        "lingaus_ancestor_5node_idk_gcn_and_softatt_16751139.0",
-        "lingaus_ancestor_5node_idk_gcn_and_softatt_hide_none_16751137.0",
-        "lingaus_ancestor_5node_idk_gcn_and_softatt_hide_all_16751138.0",
+        "lingaus_ancestor_20node_idk_gcn_and_softatt_16754880.0",
+        "lingaus_ancestor_20node_idk_gcn_and_softatt_hide_all_16754879.0",
+        "lingaus_ancestor_20node_idk_gcn_and_softatt_hide_none_16754878.0",
     ]
     
     
@@ -511,7 +511,7 @@ def main():
         print(f"Node counts: {sorted(df_5node['node_count'].unique())}")
         print(f"Variants: {sorted(df_5node['variant'].unique())}")
         
-        plot_box_comparison_separate_variants(df_5node, [2, 5], 
+        plot_box_comparison_separate_variants(df_5node, [2, 5, 20], 
                                              title_suffix="5-Node IDK Training", 
                                              output_prefix="5node_idk")
         print_summary_statistics(df_5node, title_suffix="5-Node IDK Training", 
