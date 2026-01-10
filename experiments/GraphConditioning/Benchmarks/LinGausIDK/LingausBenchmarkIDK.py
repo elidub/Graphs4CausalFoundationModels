@@ -565,15 +565,22 @@ class LinGausBenchmarkIDK:
             return default
         
         # Try to get batch_size from training_config first, then model_config
-        self.batch_size = _get_cfg_value(config.get('training_config', {}), 'batch_size', None)
-        if self.batch_size is None:
-            self.batch_size = _get_cfg_value(config.get('model_config', {}), 'batch_size', None)
+        training_batch_size = _get_cfg_value(config.get('training_config', {}), 'batch_size', None)
+        if training_batch_size is None:
+            training_batch_size = _get_cfg_value(config.get('model_config', {}), 'batch_size', None)
+        
+        # Use half the training batch size for evaluation to reduce memory pressure
+        if training_batch_size is not None:
+            self.batch_size = max(1, training_batch_size // 2)
+        else:
+            self.batch_size = None
         
         if verbose:
             print(f"  Model type: {'Graph-Conditioned' if use_graph_conditioning else 'Standard'} InterventionalPFN")
-            if self.batch_size:
-                print(f"  Batch size from config: {self.batch_size}")
-
+            if training_batch_size:
+                print(f"  Training batch size from config: {training_batch_size}")
+                print(f"  Evaluation batch size (half): {self.batch_size}")
+        
         
         # Create and load the appropriate model
         if use_graph_conditioning:
