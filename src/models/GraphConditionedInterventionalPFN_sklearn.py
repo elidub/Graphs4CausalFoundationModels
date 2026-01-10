@@ -465,7 +465,9 @@ class GraphConditionedInterventionalPFNSklearn:
             adjacency_matrix_t = adjacency_matrix_t.float()
         
         # propagate_ancestor_knowledge already handles both (N,N) and (B,N,N) shapes
-        return propagate_ancestor_knowledge(adjacency_matrix_t)
+        res =  propagate_ancestor_knowledge(adjacency_matrix_t)
+
+        return res
     
     def predict(
         self,
@@ -594,6 +596,8 @@ class GraphConditionedInterventionalPFNSklearn:
         
         # Preprocess adjacency matrix (propagate ancestor knowledge for partial graphs)
         adjacency_matrix_t = self._preprocess_adjacency_matrix(adjacency_matrix_t)
+
+        breakpoint()
         
         # Forward pass
         self.model.eval()

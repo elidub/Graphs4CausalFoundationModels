@@ -914,6 +914,7 @@ class InterventionalDataset(Dataset):
                         padded_matrix[:graph_matrix.shape[0], :graph_matrix.shape[1]] = graph_matrix
                         graph_matrix = padded_matrix
                 
+                #breakpoint()
                 # Convert binary adjacency/ancestor matrix {0, 1} to three-state format {-1, 0, 1}
                 # for compatibility with PartialGraphConditionedInterventionalPFN
                 # This conversion only happens if use_partial_graph_format=True
@@ -976,7 +977,7 @@ class InterventionalDataset(Dataset):
 
                 #breakpoint()
                 result = result + (graph_matrix,)
-            #breakpoint()
+            breakpoint()
             # Optionally add SCM for debugging
             if self.return_scm:
                 # Also return processor and intervention_node for detailed debugging
