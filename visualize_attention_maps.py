@@ -155,8 +155,18 @@ def create_sample_graphs(num_features=3):
         [-1,  0,  0,  1,  1],  # X2: edge to X1, no edge to T
     ]], dtype=torch.float32)
     
+    # Fully known graph (no unknowns, only 1 and -1)
+    adj_fully_known = torch.tensor([[
+        [ 1,  1, -1, -1, -1],  # T: edge to Y, no edges to X0/X1/X2
+        [-1,  1,  1, -1,  1],  # Y: edge to X0 and X2, no edge to T/X1
+        [-1,  1,  1, -1,  1],  # X0: edge to Y and X2, no edge to T/X1
+        [-1, -1, -1,  1, -1],  # X1: no edges except self-loop
+        [-1,  1, -1,  1,  1],  # X2: edge to Y and X1, no edge to T/X0
+    ]], dtype=torch.float32)
+    
     return {
         'Partially Known': adj_partial,
+        'Fully Known (No IDK)': adj_fully_known,
     }
 
 
@@ -180,126 +190,130 @@ def visualize_attention_maps(model, graphs, save_path='attention_maps_comparison
     feature_names = ['X₀', 'X₁', 'X₂', 'T', 'Y']
     n_layers = len(model.blocks)
     
-    # Get the partially known graph
-    graph_name, adj_matrix = list(graphs.items())[0]
+    # Visualize all graphs
+    for graph_idx, (graph_name, adj_matrix) in enumerate(graphs.items()):
+        save_path_graph = save_path.replace('.png', f'_{graph_idx+1}_{graph_name.replace(" ", "_").replace("(", "").replace(")", "")}.png')
+    # Visualize all graphs
+    for graph_idx, (graph_name, adj_matrix) in enumerate(graphs.items()):
+        save_path_graph = save_path.replace('.png', f'_{graph_idx+1}_{graph_name.replace(" ", "_").replace("(", "").replace(")", "")}.png')
     
-    # Permute adjacency matrix from dataset order [T, Y, X0, X1, X2] to internal order [X0, X1, X2, T, Y]
-    # Dataset indices: T=0, Y=1, X0=2, X1=3, X2=4
-    # Internal indices: X0=0, X1=1, X2=2, T=3, Y=4
-    perm = [2, 3, 4, 0, 1]  # [X0, X1, X2, T, Y]
-    adj_matrix_internal = adj_matrix[:, perm, :][:, :, perm]
-    
-    # Extract attention for the graph
-    attention_weights = extract_attention_weights(
-        model, X_obs, T_obs, Y_obs, X_intv, T_intv, adj_matrix
-    )
-    
-    # Use all layers
-    layer_indices = list(range(n_layers))
-    
-    # Get number of heads from first layer
-    n_heads = attention_weights[0].shape[1]  # (batch*seq, heads, seq, seq)
-    
-    # Create figure: rows for layers, columns for heads
-    fig = plt.figure(figsize=(4 * n_heads + 2, 4 * len(layer_indices) + 1))
-    
-    # Create grid: one extra column for the adjacency matrix
-    gs = fig.add_gridspec(len(layer_indices), n_heads + 1, 
-                          width_ratios=[1.2] + [1] * n_heads,
-                          hspace=0.3, wspace=0.3)
-    
-    # Plot adjacency matrix in the first column
-    for row_idx in range(len(layer_indices)):
-        ax = fig.add_subplot(gs[row_idx, 0])
+        # Permute adjacency matrix from dataset order [T, Y, X0, X1, X2] to internal order [X0, X1, X2, T, Y]
+        # Dataset indices: T=0, Y=1, X0=2, X1=3, X2=4
+        # Internal indices: X0=0, X1=1, X2=2, T=3, Y=4
+        perm = [2, 3, 4, 0, 1]  # [X0, X1, X2, T, Y]
+        adj_matrix_internal = adj_matrix[:, perm, :][:, :, perm]
         
-        # Show full adjacency matrix (5x5) in INTERNAL order [X0, X1, X2, T, Y]
-        adj_plot = adj_matrix_internal[0].numpy()
+        # Extract attention for the graph
+        attention_weights = extract_attention_weights(
+            model, X_obs, T_obs, Y_obs, X_intv, T_intv, adj_matrix
+        )
         
-        # Create custom colormap: red (-1), white (0), blue (1)
-        cmap = plt.cm.RdBu_r
-        im = ax.imshow(adj_plot, cmap=cmap, vmin=-1, vmax=1, aspect='auto')
+        # Use all layers
+        layer_indices = list(range(n_layers))
         
-        # Show all labels
-        ax.set_xticks(range(total_nodes))
-        ax.set_yticks(range(total_nodes))
-        ax.set_xticklabels(feature_names, fontsize=10)
-        ax.set_yticklabels(feature_names, fontsize=10)
-        ax.set_xlabel('To', fontsize=11, fontweight='bold')
-        ax.set_ylabel('From', fontsize=11, fontweight='bold')
+        # Get number of heads from first layer
+        n_heads = attention_weights[0].shape[1]  # (batch*seq, heads, seq, seq)
         
-        if row_idx == 0:
-            ax.set_title('Input Graph\n(Partial)', fontsize=12, fontweight='bold')
+        # Create figure: rows for layers, columns for heads
+        fig = plt.figure(figsize=(4 * n_heads + 2, 4 * len(layer_indices) + 1))
         
-        # Add grid
-        ax.set_xticks(np.arange(-0.5, total_nodes, 1), minor=True)
-        ax.set_yticks(np.arange(-0.5, total_nodes, 1), minor=True)
-        ax.grid(which='minor', color='gray', linestyle='-', linewidth=1)
+        # Create grid: one extra column for the adjacency matrix
+        gs = fig.add_gridspec(len(layer_indices), n_heads + 1, 
+                              width_ratios=[1.2] + [1] * n_heads,
+                              hspace=0.3, wspace=0.3)
         
-        # Add colorbar on first one only
-        if row_idx == 0:
-            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            cbar.set_label('Edge State', fontsize=9)
-            cbar.set_ticks([-1, 0, 1])
-            cbar.set_ticklabels(['No Edge', 'Unknown', 'Edge'], fontsize=8)
-    
-    # Plot attention maps for each head
-    for row_idx, layer_idx in enumerate(layer_indices):
-        attn_weights = attention_weights[layer_idx]
-        
-        # Average over batch dimension, get per-head attention: (heads, seq, seq)
-        attn_per_head = attn_weights.mean(dim=0).numpy()  # (heads, seq, seq)
-        
-        for head_idx in range(n_heads):
-            ax = fig.add_subplot(gs[row_idx, head_idx + 1])
+        # Plot adjacency matrix in the first column
+        for row_idx in range(len(layer_indices)):
+            ax = fig.add_subplot(gs[row_idx, 0])
             
-            # Get attention for this head, all 5 features
-            attn_feat = attn_per_head[head_idx, :total_nodes, :total_nodes]
+            # Show full adjacency matrix (5x5) in INTERNAL order [X0, X1, X2, T, Y]
+            adj_plot = adj_matrix_internal[0].numpy()
             
-            # Plot
-            im = ax.imshow(attn_feat, cmap='viridis', aspect='auto', vmin=0, vmax=attn_feat.max())
+            # Create custom colormap: red (-1), white (0), blue (1)
+            cmap = plt.cm.RdBu_r
+            im = ax.imshow(adj_plot, cmap=cmap, vmin=-1, vmax=1, aspect='auto')
             
-            # Add colorbar
-            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            cbar.set_label('Attention', fontsize=8)
-            cbar.ax.tick_params(labelsize=7)
-            
-            # Labels
+            # Show all labels
             ax.set_xticks(range(total_nodes))
             ax.set_yticks(range(total_nodes))
-            ax.set_xticklabels(feature_names, fontsize=9)
-            ax.set_yticklabels(feature_names, fontsize=9)
-            ax.set_xlabel('Key (To)', fontsize=9)
-            ax.set_ylabel('Query (From)', fontsize=9)
+            ax.set_xticklabels(feature_names, fontsize=10)
+            ax.set_yticklabels(feature_names, fontsize=10)
+            ax.set_xlabel('To', fontsize=11, fontweight='bold')
+            ax.set_ylabel('From', fontsize=11, fontweight='bold')
             
-            # Title
             if row_idx == 0:
-                ax.set_title(f'Head {head_idx}', fontsize=11, fontweight='bold')
-            
-            # Add text annotations with attention values
-            for i in range(total_nodes):
-                for j in range(total_nodes):
-                    text_color = 'white' if attn_feat[i, j] > attn_feat.max() * 0.5 else 'black'
-                    ax.text(j, i, f'{attn_feat[i, j]:.2f}',
-                           ha='center', va='center', color=text_color, fontsize=7)
+                ax.set_title(f'Input Graph\n({graph_name})', fontsize=12, fontweight='bold')
             
             # Add grid
             ax.set_xticks(np.arange(-0.5, total_nodes, 1), minor=True)
             ax.set_yticks(np.arange(-0.5, total_nodes, 1), minor=True)
-            ax.grid(which='minor', color='white', linestyle='-', linewidth=0.5)
+            ax.grid(which='minor', color='gray', linestyle='-', linewidth=1)
+            
+            # Add colorbar on first one only
+            if row_idx == 0:
+                cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                cbar.set_label('Edge State', fontsize=9)
+                cbar.set_ticks([-1, 0, 1])
+                cbar.set_ticklabels(['No Edge', 'Unknown', 'Edge'], fontsize=8)
         
-        # Add layer label on the left
-        fig.text(0.02, 1 - (row_idx + 0.5) / len(layer_indices), 
-                f'Layer {layer_idx + 1}',
-                fontsize=13, fontweight='bold',
-                rotation=90, va='center', ha='center')
-    
-    plt.suptitle('Per-Head Attention Maps with Partial Graph Conditioning\n' + 
-                 f'Graph: {graph_name} | Soft Bias: +edge_bias for edges (1), -no_edge_bias for no-edges (-1), no bias for unknown (0)',
-                 fontsize=13, fontweight='bold', y=0.995)
-    
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f'Saved attention map visualization to: {save_path}')
-    plt.close()
+        # Plot attention maps for each head
+        for row_idx, layer_idx in enumerate(layer_indices):
+            attn_weights = attention_weights[layer_idx]
+            
+            # Average over batch dimension, get per-head attention: (heads, seq, seq)
+            attn_per_head = attn_weights.mean(dim=0).numpy()  # (heads, seq, seq)
+            
+            for head_idx in range(n_heads):
+                ax = fig.add_subplot(gs[row_idx, head_idx + 1])
+                
+                # Get attention for this head, all 5 features
+                attn_feat = attn_per_head[head_idx, :total_nodes, :total_nodes]
+                
+                # Plot
+                im = ax.imshow(attn_feat, cmap='viridis', aspect='auto', vmin=0, vmax=attn_feat.max())
+                
+                # Add colorbar
+                cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                cbar.set_label('Attention', fontsize=8)
+                cbar.ax.tick_params(labelsize=7)
+                
+                # Labels
+                ax.set_xticks(range(total_nodes))
+                ax.set_yticks(range(total_nodes))
+                ax.set_xticklabels(feature_names, fontsize=9)
+                ax.set_yticklabels(feature_names, fontsize=9)
+                ax.set_xlabel('Key (To)', fontsize=9)
+                ax.set_ylabel('Query (From)', fontsize=9)
+                
+                # Title
+                if row_idx == 0:
+                    ax.set_title(f'Head {head_idx}', fontsize=11, fontweight='bold')
+                
+                # Add text annotations with attention values
+                for i in range(total_nodes):
+                    for j in range(total_nodes):
+                        text_color = 'white' if attn_feat[i, j] > attn_feat.max() * 0.5 else 'black'
+                        ax.text(j, i, f'{attn_feat[i, j]:.2f}',
+                               ha='center', va='center', color=text_color, fontsize=7)
+                
+                # Add grid
+                ax.set_xticks(np.arange(-0.5, total_nodes, 1), minor=True)
+                ax.set_yticks(np.arange(-0.5, total_nodes, 1), minor=True)
+                ax.grid(which='minor', color='white', linestyle='-', linewidth=0.5)
+            
+            # Add layer label on the left
+            fig.text(0.02, 1 - (row_idx + 0.5) / len(layer_indices), 
+                    f'Layer {layer_idx + 1}',
+                    fontsize=13, fontweight='bold',
+                    rotation=90, va='center', ha='center')
+        
+        plt.suptitle('Per-Head Attention Maps with Partial Graph Conditioning\n' + 
+                     f'Graph: {graph_name} | Soft Bias: +edge_bias for edges (1), -no_edge_bias for no-edges (-1), no bias for unknown (0)',
+                     fontsize=13, fontweight='bold', y=0.995)
+        
+        plt.savefig(save_path_graph, dpi=300, bbox_inches='tight')
+        print(f'Saved attention map visualization to: {save_path_graph}')
+        plt.close()
 
 
 def visualize_bias_effects(model, save_path='bias_effects.png'):
