@@ -16,7 +16,18 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import numpy as np
 import sys
-sys.path.append('src/models')
+import os
+from pathlib import Path
+
+# Add the necessary directories to Python path
+script_dir = Path(__file__).parent
+causal_prior_dir = script_dir  # This is the CausalPriorFitting directory
+src_dir = causal_prior_dir / 'src'
+src_models_dir = causal_prior_dir / 'src' / 'models'
+
+sys.path.insert(0, str(causal_prior_dir))
+sys.path.insert(0, str(src_dir))
+sys.path.insert(0, str(src_models_dir))
 
 from PartialGraphConditionedInterventionalPFN import PartialGraphConditionedInterventionalPFN
 

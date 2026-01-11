@@ -41,3 +41,7 @@ bias_effects.png
 /experiments/GraphConditioning/aggregate_results/lingaus_idk/plots
 
 /experiments/GraphConditioning/aggregate_results/lingaus/plots
+
+/ancestor_5node_attention_maps
+/ancestor_5node_random_attention_maps
+/ancestor_attention_maps

@@ -487,7 +487,51 @@ def analyze_models(checkpoint_base, regular_keys, ancestor_keys=None,
 
 
 def main():
-    """Main function for command line usage."""
+    """Main function to generate all plots."""
+    print("="*80)
+    print("Generating LinGaus Benchmark Plots")
+    print(f"Output directory: {output_dir}")
+    print("="*80)
+    
+    # 5-node models
+    print("\n" + "="*80)
+    print("Processing 5-Node Models")
+    print("="*80)
+    
+    regular_keys_5node = [
+        "lingaus_50node_benchmarked_baseline_16715917.0",
+    "lingaus_50node_benchmarked_gcn_16715920.0",
+    "lingaus_50node_benchmarked_gcn_and_hartatt_16694430.0",
+    "lingaus_50node_benchmarked_gcn_and_softatt_16715919.0",
+    "lingaus_50node_benchmarked_hardatt_16715921.0",
+    "lingaus_50node_benchmarked_softatt_16715922.0",
+    ]
+    
+    ancestor_keys_5node = [
+        "lingaus_ancestor_50node_baseline_16723333.0",
+    "lingaus_ancestor_50node_gcn_16723348.0",
+    "lingaus_ancestor_50node_gcn_and_hartatt_16726249.0",
+    "lingaus_ancestor_50node_gcn_and_softatt_16723335.0",
+    "lingaus_ancestor_50node_hardatt_16723337.0",
+    "lingaus_ancestor_50node_softatt_16723338.0",
+    ]
+    
+    df_5node = analyze_models(
+        checkpoint_base=checkpoint_base,
+        regular_keys=regular_keys_5node,
+        ancestor_keys=ancestor_keys_5node,
+        node_counts_to_compare=[2, 5, 20, 50],
+        title_suffix="50-Node Training (Regular + Ancestor)",
+        output_prefix="50node_analysis"
+    )
+    
+    print("\n" + "="*80)
+    print(f"All plots saved to: {output_dir}")
+    print("="*80)
+
+
+def main_cli():
+    """Command line interface for custom analysis."""
     parser = argparse.ArgumentParser(description='Analyze benchmark results and save plots')
     parser.add_argument('--checkpoint-path', required=True, 
                        help='Path to checkpoint directory')
@@ -529,41 +573,11 @@ def main():
 
 
 if __name__ == "__main__":
-    # Example usage when run as script
-    main()
-    
-    # Alternative: define keys directly in script for easy modification
-    """
-    # Example configuration - uncomment and modify as needed
-    # Set up output directory
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    regular_keys = [
-        "lingaus_5node_benchmarked_baseline_16715905.0",
-        "lingaus_5node_benchmarked_gcn_16715908.0",
-        "lingaus_5node_benchmarked_gcn_and_hartatt_16715906.0",
-        "lingaus_5node_benchmarked_gcn_and_softatt_16715907.0",
-        "lingaus_5node_benchmarked_hardatt_16715909.0",
-        "lingaus_5node_benchmarked_softatt_16715910.0",
-    ]
-    
-    ancestor_keys = [
-        "lingaus_ancestor_5node_gcn_16723322.0",
-        "lingaus_ancestor_5node_gcn_and_hartatt_16723320.0",
-        "lingaus_ancestor_5node_gcn_and_softatt_16723321.0",
-        "lingaus_ancestor_5node_hardatt_16723323.0",
-        "lingaus_ancestor_5node_softatt_16723324.0",
-    ]
-    
-    # Run analysis
-    df = analyze_models(
-        checkpoint_base=checkpoint_base,
-        regular_keys=regular_keys,
-        ancestor_keys=ancestor_keys,
-        node_counts_to_compare=[2, 5],
-        title_suffix="5-Node Training (Regular + Ancestor)",
-        output_prefix="5node_analysis"
-    )
-    
-    print(f"All plots saved to: {output_dir}")
-    """
+    # Check if command line arguments are provided
+    import sys
+    if len(sys.argv) > 1:
+        # Use command line interface
+        main_cli()
+    else:
+        # Use default main function with predefined keys
+        main()
