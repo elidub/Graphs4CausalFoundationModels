@@ -13,8 +13,8 @@ when_to_transfer_output = ON_EXIT
 environment = "HOME=/tmp/wandb_home WANDB_API_KEY=e5ba90a037256650557e4644545bd281151588c8"
 
 request_gpus   = 1
-request_memory = 256GB
-request_cpus   = 72
+request_memory = 128GB
+request_cpus   = 52
 request_disk   = 256GB
 
 # Pin to H100 nodes

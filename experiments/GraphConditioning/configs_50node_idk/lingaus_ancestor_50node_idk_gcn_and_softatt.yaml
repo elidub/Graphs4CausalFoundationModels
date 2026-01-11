@@ -425,7 +425,7 @@ training_config:
   accumulate_grad_batches:
     value: 4
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
-    value: 70
+    value: 50
 
 
   # Training Control
@@ -516,7 +516,7 @@ training_config:
   
   # LinGaus Benchmark Integration (evaluates on synthetic Linear-Gaussian SCMs)
   lingaus_benchmark_eval_fidelity: # run LinGaus benchmark at each evaluation step
-    value: low  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
+    value: "low"  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
   lingaus_benchmark_final_fidelity: # run LinGaus benchmark at end of training
     value: "high"  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
   lingaus_benchmark_dir: # directory containing LinGaus benchmark configs and data
