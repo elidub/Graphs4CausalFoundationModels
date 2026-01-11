@@ -151,6 +151,14 @@ class Trainer:
         # Check if Flash Attention is being used
         self._check_flash_attention()
         
+        # Validate learning rate before creating optimizer
+        if learning_rate is None:
+            raise ValueError(f"learning_rate cannot be None. Please provide a valid learning rate (e.g., 1e-3)")
+        if not isinstance(learning_rate, (int, float)):
+            raise ValueError(f"learning_rate must be a number, got {type(learning_rate)}: {learning_rate}")
+        if learning_rate <= 0:
+            raise ValueError(f"learning_rate must be positive, got {learning_rate}")
+        
         # Setup optimizer and loss
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         
@@ -1609,6 +1617,9 @@ class Trainer:
 
     def _run_benchmark_with_current_model(self, fidelity: str, tag: str) -> None:
         """Save a temporary checkpoint of the current model and run the OpenML benchmark with the given fidelity.
+        
+        To conserve GPU memory during evaluation, the training model is temporarily moved to CPU,
+        then restored after benchmark completion.
 
         Args:
             fidelity: One of {"minimal", "low", "high", "very high"}
@@ -1620,13 +1631,37 @@ class Trainer:
             self.run_save_dir = os.path.join(tempfile.gettempdir(), f"simplepfn_checkpoints_{self.run_name}")
             os.makedirs(self.run_save_dir, exist_ok=True)
 
-        # Save a checkpoint for the benchmark to load
+        # Save a checkpoint for the benchmark to load (before moving model)
         ckpt_name = f"benchmark_{tag}.pt"
         ckpt_path = self.save_model(filename=ckpt_name, metadata={"stage": tag, "benchmark": True})
         if not ckpt_path:
             raise RuntimeError("Failed to save checkpoint for benchmark.")
-
-        self._run_benchmark_with_checkpoint(fidelity=fidelity, tag=tag, checkpoint_path=ckpt_path)
+        
+        # Store original device and temporarily move model to CPU to free GPU memory
+        original_device = next(self.model.parameters()).device
+        model_was_on_cuda = original_device.type == 'cuda'
+        
+        if model_was_on_cuda:
+            print(f"[Trainer] Moving training model from {original_device} to CPU to conserve GPU memory during benchmark")
+            self.model.cpu()
+            # Clear GPU cache to free up memory for benchmark model
+            torch.cuda.empty_cache()
+        
+        try:
+            # Run benchmark (will load its own GPU copy from checkpoint)
+            self._run_benchmark_with_checkpoint(fidelity=fidelity, tag=tag, checkpoint_path=ckpt_path)
+        finally:
+            # Restore model to original device after benchmark completion
+            if model_was_on_cuda:
+                print(f"[Trainer] Restoring training model to {original_device}")
+                self.model.to(original_device)
+                # Ensure optimizer state is also on correct device if needed
+                if hasattr(self.optimizer, 'state') and self.optimizer.state:
+                    for state in self.optimizer.state.values():
+                        if isinstance(state, dict):
+                            for k, v in state.items():
+                                if isinstance(v, torch.Tensor):
+                                    state[k] = v.to(original_device)
 
     def _run_benchmark_with_checkpoint(self, fidelity: str, tag: str, checkpoint_path: str) -> None:
         """Run the OpenML benchmark with a specified checkpoint using the injected Benchmark instance."""
@@ -1772,6 +1807,9 @@ class Trainer:
     
     def _run_lingaus_benchmark_with_current_model(self, fidelity: str, tag: str) -> None:
         """Save a temporary checkpoint of the current model and run the LinGaus benchmark with the given fidelity.
+        
+        To conserve GPU memory during evaluation, the training model is temporarily moved to CPU,
+        then restored after benchmark completion.
 
         Args:
             fidelity: One of {"low", "high"}
@@ -1783,13 +1821,37 @@ class Trainer:
             self.run_save_dir = os.path.join(tempfile.gettempdir(), f"simplepfn_checkpoints_{self.run_name}")
             os.makedirs(self.run_save_dir, exist_ok=True)
 
-        # Save a checkpoint for the benchmark to load
+        # Save a checkpoint for the benchmark to load (before moving model)
         ckpt_name = f"lingaus_benchmark_{tag}.pt"
         ckpt_path = self.save_model(filename=ckpt_name, metadata={"stage": tag, "lingaus_benchmark": True})
         if not ckpt_path:
             raise RuntimeError("Failed to save checkpoint for LinGaus benchmark.")
-
-        self._run_lingaus_benchmark_with_checkpoint(fidelity=fidelity, tag=tag, checkpoint_path=ckpt_path)
+        
+        # Store original device and temporarily move model to CPU to free GPU memory
+        original_device = next(self.model.parameters()).device
+        model_was_on_cuda = original_device.type == 'cuda'
+        
+        if model_was_on_cuda:
+            print(f"[Trainer] Moving training model from {original_device} to CPU to conserve GPU memory during benchmark")
+            self.model.cpu()
+            # Clear GPU cache to free up memory for benchmark model
+            torch.cuda.empty_cache()
+        
+        try:
+            # Run benchmark (will load its own GPU copy from checkpoint)
+            self._run_lingaus_benchmark_with_checkpoint(fidelity=fidelity, tag=tag, checkpoint_path=ckpt_path)
+        finally:
+            # Restore model to original device after benchmark completion
+            if model_was_on_cuda:
+                print(f"[Trainer] Restoring training model to {original_device}")
+                self.model.to(original_device)
+                # Ensure optimizer state is also on correct device if needed
+                if hasattr(self.optimizer, 'state') and self.optimizer.state:
+                    for state in self.optimizer.state.values():
+                        if isinstance(state, dict):
+                            for k, v in state.items():
+                                if isinstance(v, torch.Tensor):
+                                    state[k] = v.to(original_device)
 
     def _run_lingaus_benchmark_with_checkpoint(self, fidelity: str, tag: str, checkpoint_path: str) -> None:
         """Run the LinGaus benchmark with a specified checkpoint using the injected LinGausBenchmark instance."""

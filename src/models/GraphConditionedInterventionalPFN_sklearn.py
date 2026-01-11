@@ -597,7 +597,7 @@ class GraphConditionedInterventionalPFNSklearn:
         # Preprocess adjacency matrix (propagate ancestor knowledge for partial graphs)
         adjacency_matrix_t = self._preprocess_adjacency_matrix(adjacency_matrix_t)
 
-        breakpoint()
+        #breakpoint()
         
         # Forward pass
         self.model.eval()

@@ -1338,12 +1338,18 @@ def main():
         if lingaus_benchmark is not None:
             print(f"  lingaus_benchmark type: {type(lingaus_benchmark)}")
             print(f"  lingaus_benchmark.benchmark_dir: {lingaus_benchmark.benchmark_dir}")
+        
+        # DEBUG: Print training config learning rate details
+        raw_lr = training_config.get("learning_rate")
+        default_lr = training_config.get("learning_rate", 1e-3)
+        print(f"  training_config['learning_rate'] (raw): {raw_lr} (type: {type(raw_lr)})")
+        print(f"  training_config.get('learning_rate', 1e-3): {default_lr} (type: {type(default_lr)})")
 
         # Initialize trainer
         trainer = Trainer(
             model=model,
             dataloader=dataloader,
-            learning_rate=training_config.get("learning_rate", 1e-3),
+            learning_rate=training_config.get("learning_rate") or 1e-3,
             max_steps=training_config.get("max_steps", 10),
             device=device,
             wandb_run=wandb_run,  # Pass wandb run for logging
