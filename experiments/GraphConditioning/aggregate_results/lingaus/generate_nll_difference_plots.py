@@ -43,13 +43,13 @@ r2_output_dir.mkdir(exist_ok=True)
 sns.set_style("whitegrid")
 plt.rcParams['figure.figsize'] = (12, 12)  # More square figure
 # Set uniform large font sizes throughout
-plt.rcParams['font.size'] = 24
-plt.rcParams['axes.titlesize'] = 24
-plt.rcParams['axes.labelsize'] = 24
-plt.rcParams['xtick.labelsize'] = 24
-plt.rcParams['ytick.labelsize'] = 24
-plt.rcParams['legend.fontsize'] = 24
-plt.rcParams['figure.titlesize'] = 24
+plt.rcParams['font.size'] = 30
+plt.rcParams['axes.titlesize'] = 30
+plt.rcParams['axes.labelsize'] = 30
+plt.rcParams['xtick.labelsize'] = 30
+plt.rcParams['ytick.labelsize'] = 30
+plt.rcParams['legend.fontsize'] = 30
+plt.rcParams['figure.titlesize'] = 30
 
 # Define model order and colors (excluding baseline since it will be the reference)
 # Order follows standard color sequence: blue, red, green, yellow, purple, magenta
@@ -749,7 +749,7 @@ def plot_nll_differences(df, node_counts_to_compare=None, title_suffix="", outpu
             continue
         
         # Create more square subplots - adjust for number of subplots
-        fig, axes = plt.subplots(1, len(node_counts_to_compare), figsize=(12 * len(node_counts_to_compare), 12))
+        fig, axes = plt.subplots(1, len(node_counts_to_compare), figsize=(15 * len(node_counts_to_compare), 15))
         
         # Handle single column case
         if len(node_counts_to_compare) == 1:
@@ -836,7 +836,7 @@ def plot_nll_differences(df, node_counts_to_compare=None, title_suffix="", outpu
             ax.set_xticklabels(model_display_names, rotation=45, ha='right', fontsize=30)
             
             ax.set_title(f'{node_count} Nodes', fontsize=30, fontweight='bold')
-            ax.set_ylabel('Absolute improvement', fontsize=30, fontweight='bold')
+            ax.set_ylabel('Improvement', fontsize=30)
             ax.grid(True, alpha=0.3, axis='y')
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
@@ -844,13 +844,13 @@ def plot_nll_differences(df, node_counts_to_compare=None, title_suffix="", outpu
         # Main title - use simple title for aggregated variants
         variant_display = variant_display_names.get(variant, variant)
         if variant == 'aggregated_TY_YT_indep':
-            fig.suptitle('Improvement over Baseline (NLL)', fontsize=30, fontweight='bold')
+            fig.suptitle('Improvement over Baseline (NLL)', fontsize=30, fontweight='bold', y=0.89)
         else:
             if title_suffix:
                 fig.suptitle(f'NLL Improvement over Baseline: {variant_display}\n{title_suffix}\n(90% Bootstrap CI)', 
-                            fontsize=30, fontweight='bold', y=0.95)
+                            fontsize=30, fontweight='bold', y=0.89)
             else:
-                fig.suptitle('Improvement over Baseline (NLL)', fontsize=30, fontweight='bold')
+                fig.suptitle('Improvement over Baseline (NLL)', fontsize=30, fontweight='bold', y=0.89)
         
         plt.tight_layout(rect=[0, 0, 1, 0.9])
         
@@ -993,11 +993,11 @@ def plot_mse_differences(df, node_counts_to_compare=None, title_suffix="", outpu
         # Main title - simple for aggregated variants
         variant_display = variant_display_names.get(variant, variant)
         if variant == 'aggregated_TY_YT_indep':
-            fig.suptitle('Improvement over Baseline (MSE)', fontsize=30, fontweight='bold')
+            fig.suptitle('Improvement over Baseline (MSE)', fontsize=30, fontweight='bold', y=0.95)
         else:
-            fig.suptitle(f'MSE Improvement: {variant_display}{title_suffix}', fontsize=30, fontweight='bold')
+            fig.suptitle(f'MSE Improvement: {variant_display}{title_suffix}', fontsize=30, fontweight='bold', y=0.95)
         
-        plt.tight_layout()
+        plt.tight_layout(rect=[0, 0, 1, 0.9])
         
         # Save plot with white background and optimized DPI
         filename = f"{output_prefix}_{variant}.png"
@@ -1138,11 +1138,11 @@ def plot_r2_differences(df, node_counts_to_compare=None, title_suffix="", output
         # Main title - simple for aggregated variants  
         variant_display = variant_display_names.get(variant, variant)
         if variant == 'aggregated_TY_YT_indep':
-            fig.suptitle('Improvement over Baseline (R²)', fontsize=30, fontweight='bold')
+            fig.suptitle('Improvement over Baseline (R²)', fontsize=30, fontweight='bold', y=0.95)
         else:
-            fig.suptitle(f'R² Improvement: {variant_display}{title_suffix}', fontsize=30, fontweight='bold')
+            fig.suptitle(f'R² Improvement: {variant_display}{title_suffix}', fontsize=30, fontweight='bold', y=0.95)
         
-        plt.tight_layout()
+        plt.tight_layout(rect=[0, 0, 1, 0.9])
         
         # Save plot with white background and optimized DPI
         filename = f"{output_prefix}_{variant}.png"
