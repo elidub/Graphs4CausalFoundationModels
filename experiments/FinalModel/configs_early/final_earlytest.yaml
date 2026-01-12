@@ -353,7 +353,7 @@ model_config:
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
     value: 2
   num_features:
-    value: 51  
+    value: 51
   normalize_features:  # whether to apply quantile transform + standard normalization internally
     value: true
   
@@ -514,8 +514,8 @@ training_config:
   
   # LinGaus Benchmark Integration (evaluates on synthetic Linear-Gaussian SCMs)
   lingaus_benchmark_eval_fidelity: # run LinGaus benchmark at each evaluation step
-    value: "low" # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
+    value: null # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
   lingaus_benchmark_final_fidelity: # run LinGaus benchmark at end of training
-    value: "low"  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
+    value: null  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
   lingaus_benchmark_dir: # directory containing LinGaus benchmark configs and data
     value: "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints"  # Results saved to <this_dir>/benchmark_res/

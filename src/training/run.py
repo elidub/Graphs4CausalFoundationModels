@@ -18,6 +18,22 @@ from pathlib import Path
 from torch.utils.data import DataLoader, Subset
 from typing import Callable
 
+# MULTIPROCESSING SETUP - CRITICAL FOR AVOIDING SEGFAULTS
+import multiprocessing as mp
+import torch
+
+# Force spawn method to avoid fork-related segmentation faults
+# This is especially important on HPC clusters and when using CUDA
+try:
+    mp.set_start_method('spawn', force=True)
+    print(f"[MULTIPROCESSING] Set start method to 'spawn' for stability")
+except RuntimeError as e:
+    print(f"[MULTIPROCESSING] Start method already set: {e}")
+
+# Set multiprocessing sharing strategy for better memory handling
+torch.multiprocessing.set_sharing_strategy('file_system')
+print(f"[MULTIPROCESSING] Set sharing strategy to 'file_system'")
+
 # Add src directory to path for imports
 src_dir = Path(__file__).parent.parent
 if str(src_dir) not in sys.path:
@@ -223,6 +239,65 @@ def _normalize_interp_name(s: str) -> str:
     if s2.endswith('.'):
         s2 = s2[:-1]
     return s2
+
+
+def test_dataloader_robustly(dataloader, max_batches=3):
+    """
+    Test dataloader with proper error handling for multiprocessing issues.
+    Returns True if successful, False if there are issues.
+    """
+    try:
+        print(f"   Testing DataLoader with {max_batches} batches...")
+        
+        # Test basic iteration
+        for i, batch in enumerate(dataloader):
+            if i >= max_batches:
+                break
+            print(f"   [Test Batch {i}] Successfully loaded batch with {len(batch)} elements")
+        
+        print(f"   DataLoader test passed!")
+        return True
+        
+    except Exception as e:
+        print(f"   DataLoader test FAILED: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        if "multiprocessing" in str(e).lower() or "segmentation" in str(e).lower():
+            print(f"   This looks like a multiprocessing issue!")
+            print(f"   Suggestions:")
+            print(f"   - Try reducing num_workers")
+            print(f"   - Check if dataset/collator are pickle-safe")
+            print(f"   - Ensure proper multiprocessing setup")
+        return False
+
+
+def validate_multiprocessing_compatibility(dataset, collator, num_workers):
+    """
+    Validate that dataset and collator can be pickled (required for multiprocessing).
+    """
+    import pickle
+    
+    print(f"   Validating multiprocessing compatibility...")
+    
+    try:
+        # Test dataset pickling
+        print(f"   Testing dataset pickle-ability...")
+        pickled_dataset = pickle.dumps(dataset)
+        unpickled_dataset = pickle.loads(pickled_dataset)
+        print(f"   Dataset pickle test: PASSED")
+        
+        # Test collator pickling
+        print(f"   Testing collator pickle-ability...")
+        pickled_collator = pickle.dumps(collator)
+        unpickled_collator = pickle.loads(pickled_collator)
+        print(f"   Collator pickle test: PASSED")
+        
+        return True
+        
+    except Exception as e:
+        print(f"   Multiprocessing compatibility test FAILED: {e}")
+        print(f"   This will cause segmentation faults with num_workers > 0")
+        print(f"   Recommendation: Use num_workers=0 or fix pickle issues")
+        return False
 
 
 def main():
@@ -624,11 +699,29 @@ def main():
         )
 
         if num_workers > 0:
-            prefetch_factor = 4
+            prefetch_factor = 2  # Reduced from 4 to be more conservative
             print(f"   Using prefetch_factor: {prefetch_factor}")
+            print(f"   Multiprocessing workers: {num_workers}")
+            
+            # Additional multiprocessing safety checks
+            print(f"   Multiprocessing start method: {mp.get_start_method()}")
+            print(f"   Torch sharing strategy: {torch.multiprocessing.get_sharing_strategy()}")
         else:
             prefetch_factor = None
+            print(f"   Single-threaded mode (num_workers=0)")
 
+        # Create DataLoader with robust multiprocessing settings
+        print(f"   Creating DataLoader...")
+        
+        # Validate multiprocessing compatibility if using workers
+        if num_workers > 0:
+            mp_compatible = validate_multiprocessing_compatibility(dataset, collator, num_workers)
+            if not mp_compatible:
+                print(f"   WARNING: Multiprocessing validation failed!")
+                print(f"   Forcing single-threaded mode for safety...")
+                num_workers = 0
+                prefetch_factor = None
+        
         dataloader = DataLoader(
             dataset,
             batch_size=batch_size,
@@ -636,16 +729,51 @@ def main():
             prefetch_factor=prefetch_factor,
             num_workers=num_workers,
             collate_fn=collator,
-            persistent_workers=num_workers > 0  # Only use persistent workers when num_workers > 0
+            persistent_workers=num_workers > 0,  # Only use persistent workers when num_workers > 0
+            pin_memory=False,  # Disable pin_memory to avoid CUDA context issues
+            drop_last=False,   # Keep all samples
+            timeout=120 if num_workers > 0 else 0,  # 2-minute timeout for worker processes
         )
         print(f"   DataLoader created successfully")
 
-        # Test first batch to get input size
+        # Test first batch to get input size (MOVED UP FOR EARLY ANALYSIS)
         print(f"\nANALYZING BATCH STRUCTURE:")
-        first_batch = next(iter(dataloader))
-        input_size, output_size = determine_input_size(first_batch)
-        print(f"   Input features: {input_size}")
-        print(f"   Output size: {output_size}")
+        
+        # Robust DataLoader testing with error handling
+        dataloader_ok = test_dataloader_robustly(dataloader, max_batches=1)
+        if not dataloader_ok:
+            print(f"   CRITICAL ERROR: DataLoader failed basic tests!")
+            print(f"   Attempting fallback to single-threaded mode...")
+            
+            # Fallback: recreate DataLoader with num_workers=0
+            dataloader = DataLoader(
+                dataset,
+                batch_size=batch_size,
+                shuffle=False,
+                prefetch_factor=None,
+                num_workers=0,  # Force single-threaded
+                collate_fn=collator,
+                persistent_workers=False,
+                pin_memory=False,
+                drop_last=False,
+                timeout=0,
+            )
+            print(f"   Fallback DataLoader created (single-threaded)")
+            
+            # Test fallback
+            dataloader_ok = test_dataloader_robustly(dataloader, max_batches=1)
+            if not dataloader_ok:
+                raise RuntimeError("DataLoader failed even in single-threaded mode! Check dataset/collator implementation.")
+            
+        # Get first batch for size analysis
+        try:
+            first_batch = next(iter(dataloader))
+            input_size, output_size = determine_input_size(first_batch)
+            print(f"   Input features: {input_size}")
+            print(f"   Output size: {output_size}")
+        except Exception as e:
+            print(f"   ERROR getting first batch: {e}")
+            raise
 
         # Print shapes of the first few batches to verify collator behavior
         print(f"\nBATCH SHAPE DIAGNOSTICS (first 3 batches):")
@@ -1447,4 +1575,18 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Multiprocessing protection - ensures proper initialization
+    # This is especially critical when using spawn method
+    print(f"[MULTIPROCESSING] Running main with protection...")
+    print(f"[MULTIPROCESSING] Process ID: {os.getpid()}")
+    print(f"[MULTIPROCESSING] Start method: {mp.get_start_method()}")
+    
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n[INTERRUPTED] Training interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n[FATAL ERROR] Unhandled exception in main: {e}")
+        traceback.print_exc()
+        sys.exit(1)
