@@ -5,7 +5,7 @@ output     = logs/final_earlytest_$(ClusterId).$(ProcId).out
 error      = logs/final_earlytest_$(ClusterId).$(ProcId).err
 log        = logs/final_earlytest_$(ClusterId).$(ProcId).log
 
-transfer_input_files = ../../../src, ../../../pyproject.toml, ../../../requirements.txt, ../../../setup.py, ../../../../venv.zip, run_final_earlytest.sh, final_earlytest.yaml, ../../../data_cache.zip, ../../GraphConditioning/Benchmarks
+transfer_input_files = ../../../src, ../../../pyproject.toml, ../../../requirements.txt, ../../../setup.py, ../../../../venv.zip, run_final_earlytest.sh, final_earlytest.yaml, ../../../data_cache.zip, ../../GraphConditioning/Benchmarks, ../../GraphConditioning/Benchmarks/ComplexMech/data_cache/Archive.zip
 should_transfer_files = Yes
 when_to_transfer_output = ON_EXIT
 

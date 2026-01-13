@@ -62,6 +62,19 @@ else
 	echo "No Benchmarks/LinGausIDK/data_cache/Archive.zip found; LinGausIDK benchmark will be disabled"
 fi
 
+# Unzip ComplexMech benchmark data
+echo "Unzipping ComplexMech benchmark data..."
+if [ -f "Benchmarks/ComplexMech/data_cache/Archive.zip" ]; then
+	mkdir -p Benchmarks/ComplexMech/data_cache
+	unzip -o -q Benchmarks/ComplexMech/data_cache/Archive.zip -d Benchmarks/ComplexMech/data_cache
+	echo "ComplexMech benchmark data unzipped. Contents:"
+	ls -la Benchmarks/ComplexMech/data_cache | head -20 || true
+	export COMPLEXMECH_BENCHMARK_DIR="${PWD}/Benchmarks/ComplexMech"
+	echo "Exported COMPLEXMECH_BENCHMARK_DIR=${COMPLEXMECH_BENCHMARK_DIR}"
+else
+	echo "No Benchmarks/ComplexMech/data_cache/Archive.zip found; ComplexMech benchmark will be disabled"
+fi
+
 # Copy benchmark module files to working directory
 echo "Setting up LinGaus benchmark module..."
 if [ -d "Benchmarks/LinGaus" ]; then
