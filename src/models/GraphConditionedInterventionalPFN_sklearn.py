@@ -20,6 +20,12 @@ Adjacency Matrix Format:
 - The matrix is transposed internally so that j can attend to i (effects attend to causes)
 - Self-loops are added automatically by the model for self-attention
 
+Special Inference Behavior for hide_fraction_matrix >= 1.0:
+- When a model is trained with dataset_config.hide_fraction_matrix = 1.0 (all graph entries hidden),
+  the wrapper automatically replaces ANY input adjacency matrix with all -1s during inference
+- This ensures the model sees the same "fully hidden" graph structure at inference time
+- Prevents information leakage and ensures fair evaluation of models trained without graph knowledge
+
 Usage:
     # Basic usage
     wrapper = GraphConditionedInterventionalPFNSklearn(
@@ -156,6 +162,7 @@ class GraphConditionedInterventionalPFNSklearn:
         self.graph_conditioning_mode = None  # Track which model type to use
         self.use_partial_graph_format = False  # Track if partial graph format is enabled
         self.propagate_partial_knowledge = True  # Auto-propagate knowledge in partial graphs
+        self.hide_fraction_matrix = 0.0  # Track hide_fraction for inference behavior
         
     def load(self, override_kwargs: Optional[dict[str, Any]] = None) -> "GraphConditionedInterventionalPFNSklearn":
         """
@@ -315,6 +322,16 @@ class GraphConditionedInterventionalPFNSklearn:
             self.graph_conditioning_mode in ['partial_soft_attention', 'partial_gcn_and_soft_attention']
         )
         
+        # Extract hide_fraction_matrix from dataset_config if available
+        # This controls whether to force all-unknown matrices during inference
+        if 'dataset_config' in config:
+            dataset_cfg = config['dataset_config']
+            self.hide_fraction_matrix = float(get_config_value(dataset_cfg, 'hide_fraction_matrix', 0.0))
+            if self.verbose and self.hide_fraction_matrix > 0:
+                print(f"  hide_fraction_matrix: {self.hide_fraction_matrix}")
+                if self.hide_fraction_matrix >= 1.0:
+                    print(f"  → Inference mode: ALL graph entries will be hidden (set to -1)")
+        
         if self.verbose and self.use_partial_graph_format:
             print(f"  Partial graph format enabled - will propagate ancestor knowledge automatically")
         
@@ -442,9 +459,13 @@ class GraphConditionedInterventionalPFNSklearn:
         """
         Preprocess adjacency/ancestor matrix before passing to model.
         
+        Special behavior when hide_fraction_matrix >= 1.0:
+        - Replaces the entire matrix with -1 (all unknown) regardless of input
+        - This ensures the model uses the same "fully hidden" setting it was trained with
+        
         For partial graph formats (three-state matrices with {-1, 0, 1}), this automatically
         propagates known ancestor relationships to fill in as many unknown (0) entries as
-        possible using transitivity and antisymmetry rules.
+        possible using transitivity and antisymmetry rules (unless hide_fraction_matrix >= 1.0).
         
         Args:
             adjacency_matrix_t: Tensor of shape (B, N, N) or (N, N)
@@ -455,7 +476,13 @@ class GraphConditionedInterventionalPFNSklearn:
         
         Returns:
             Preprocessed matrix with same shape, potentially with fewer unknowns
+            (or all -1s if hide_fraction_matrix >= 1.0)
         """
+        # If trained with hide_fraction_matrix >= 1.0, force all entries to -1 (unknown)
+        # This ensures inference matches the training condition
+        if self.hide_fraction_matrix >= 1.0:
+            return torch.full_like(adjacency_matrix_t, -1.0)
+        
         if not self.use_partial_graph_format or not self.propagate_partial_knowledge:
             # No preprocessing needed
             return adjacency_matrix_t
