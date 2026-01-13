@@ -231,6 +231,58 @@ except ImportError as e:
     print(f"[DEBUG] This will cause an error if partial graph benchmark is requested in config")
     LinGausBenchmarkIDK = None
 
+# Import ComplexMechBenchmark for complex mechanism evaluation
+ComplexMechBenchmark = None
+
+print("[DEBUG] Attempting to import ComplexMechBenchmark...")
+
+try:
+    # First, try direct import (relies on PYTHONPATH being set correctly)
+    try:
+        from ComplexMechBenchmark import ComplexMechBenchmark
+        print(f"[DEBUG] ComplexMechBenchmark imported successfully via PYTHONPATH")
+    except ImportError as e1:
+        print(f"[DEBUG] Direct ComplexMechBenchmark import failed: {e1}")
+        
+        # Fallback: Try multiple paths to find ComplexMechBenchmark module
+        possible_paths_complexmech = [
+            # Local development: relative path from src/training/
+            Path(__file__).parent.parent.parent / "experiments" / "GraphConditioning" / "Benchmarks" / "ComplexMech",
+            # Cluster job: check if Benchmarks/ComplexMech exists in cwd
+            Path.cwd() / "Benchmarks" / "ComplexMech",
+            # Cluster job: check if it's already in PYTHONPATH via environment
+            Path(os.environ.get("COMPLEXMECH_BENCHMARK_DIR", "")) if os.environ.get("COMPLEXMECH_BENCHMARK_DIR") else None,
+        ]
+        
+        print(f"[DEBUG] Checking fallback paths for ComplexMechBenchmark:")
+        for i, path in enumerate(possible_paths_complexmech):
+            if path:
+                print(f"  [{i}] {path} (exists: {path.exists()})")
+        
+        import_successful = False
+        for bench_path in possible_paths_complexmech:
+            if bench_path and bench_path.exists():
+                bench_path_str = str(bench_path)
+                if bench_path_str not in sys.path:
+                    print(f"[DEBUG] Adding {bench_path_str} to sys.path")
+                    sys.path.insert(0, bench_path_str)
+                try:
+                    from ComplexMechBenchmark import ComplexMechBenchmark
+                    import_successful = True
+                    print(f"[DEBUG] ComplexMechBenchmark imported successfully from: {bench_path}")
+                    break
+                except ImportError as ie:
+                    print(f"[DEBUG] Import failed from {bench_path}: {ie}")
+                    continue
+        
+        if not import_successful:
+            raise ImportError(f"Could not find ComplexMechBenchmark module. Original error: {e1}")
+        
+except ImportError as e:
+    print(f"[DEBUG] FINAL: ComplexMechBenchmark import failed: {e}")
+    print(f"[DEBUG] This will cause an error if ComplexMech benchmark is requested in config")
+    ComplexMechBenchmark = None
+
 
 def _normalize_interp_name(s: str) -> str:
     if not isinstance(s, str) or not s:
@@ -1467,6 +1519,89 @@ def main():
             print(f"  lingaus_benchmark type: {type(lingaus_benchmark)}")
             print(f"  lingaus_benchmark.benchmark_dir: {lingaus_benchmark.benchmark_dir}")
         
+        # Optional: build a ComplexMechBenchmark instance for periodic and final evaluation
+        complexmech_benchmark = None
+        complexmech_benchmark_eval_fidelity = training_config.get("complexmech_benchmark_eval_fidelity")
+        complexmech_benchmark_final_fidelity = training_config.get("complexmech_benchmark_final_fidelity")
+        
+        # Check if benchmark import failed but benchmark is requested
+        if ComplexMechBenchmark is None and (complexmech_benchmark_eval_fidelity or complexmech_benchmark_final_fidelity):
+            print(f"\nCOMPLEXMECH BENCHMARK IMPORT FAILED!")
+            print(f"   Eval fidelity requested: {complexmech_benchmark_eval_fidelity or 'disabled'}")
+            print(f"   Final fidelity requested: {complexmech_benchmark_final_fidelity or 'disabled'}")
+            print(f"   ComplexMechBenchmark class: {ComplexMechBenchmark}")
+            print(f"   ERROR: ComplexMechBenchmark import failed but benchmark is configured in YAML!")
+            print(f"   Check the import debug output above for details.")
+            raise RuntimeError(f"ComplexMechBenchmark import failed but benchmark is requested in config. Check import paths and file transfers.")
+        
+        if (complexmech_benchmark_eval_fidelity or complexmech_benchmark_final_fidelity) and ComplexMechBenchmark is not None:
+            print(f"\nCOMPLEXMECH BENCHMARK SETUP:")
+            print(f"   Eval fidelity: {complexmech_benchmark_eval_fidelity or 'disabled'}")
+            print(f"   Final fidelity: {complexmech_benchmark_final_fidelity or 'disabled'}")
+            
+            # Get benchmark directory from config or environment variable
+            complexmech_benchmark_dir = training_config.get(
+                "complexmech_benchmark_dir",
+                "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMech"
+            )
+            
+            # Check if COMPLEXMECH_BENCHMARK_DIR is set in environment (for cluster jobs)
+            env_benchmark_dir = os.environ.get("COMPLEXMECH_BENCHMARK_DIR")
+            if env_benchmark_dir:
+                print(f"   Using COMPLEXMECH_BENCHMARK_DIR from environment: {env_benchmark_dir}")
+                complexmech_benchmark_dir = env_benchmark_dir
+            
+            # Try to resolve relative path from job root
+            if not os.path.isabs(complexmech_benchmark_dir):
+                job_root = os.environ.get("JOB_ROOT_DIR", os.getcwd())
+                resolved_path = os.path.join(job_root, complexmech_benchmark_dir)
+                if os.path.exists(resolved_path):
+                    print(f"   Resolved relative path: {complexmech_benchmark_dir} -> {resolved_path}")
+                    complexmech_benchmark_dir = resolved_path
+                else:
+                    print(f"   WARNING: Relative path {complexmech_benchmark_dir} does not exist at {resolved_path}")
+            
+            # Check if ancestor matrix should be used (from dataset config)
+            use_ancestor_matrix = False
+            if 'return_ancestor_matrix' in dataset_config:
+                anc_cfg = dataset_config['return_ancestor_matrix']
+                if isinstance(anc_cfg, dict) and 'value' in anc_cfg:
+                    use_ancestor_matrix = anc_cfg['value']
+                elif isinstance(anc_cfg, bool):
+                    use_ancestor_matrix = anc_cfg
+            
+            try:
+                complexmech_benchmark = ComplexMechBenchmark(
+                    benchmark_dir=complexmech_benchmark_dir,
+                    cache_dir=None,  # Will use default: benchmark_dir/data_cache
+                    verbose=True,
+                    max_samples=None,  # Will be controlled by fidelity level
+                    use_ancestor_matrix=use_ancestor_matrix,  # Pass ancestor matrix flag from config
+                )
+                print(f"   ComplexMechBenchmark instance created!")
+                print(f"   Benchmark dir: {complexmech_benchmark_dir}")
+                print(f"   Data cache: {complexmech_benchmark.cache_dir}")
+                print(f"   Use ancestor matrix: {use_ancestor_matrix}")
+            except Exception as e:
+                print(f"   WARNING: Failed to create ComplexMechBenchmark: {e}")
+                print(f"   Exception details:")
+                import traceback
+                traceback.print_exc()
+                complexmech_benchmark = None
+        elif complexmech_benchmark_eval_fidelity or complexmech_benchmark_final_fidelity:
+            print(f"\nCOMPLEXMECH BENCHMARK SETUP:")
+            print(f"   WARNING: ComplexMech benchmark requested but benchmark class not available")
+            print(f"   Eval fidelity: {complexmech_benchmark_eval_fidelity or 'disabled'}")
+            print(f"   Final fidelity: {complexmech_benchmark_final_fidelity or 'disabled'}")
+        
+        print(f"  complexmech_benchmark_eval_fidelity: {complexmech_benchmark_eval_fidelity}")
+        print(f"  complexmech_benchmark_final_fidelity: {complexmech_benchmark_final_fidelity}")
+        print(f"  complexmech_benchmark variable: {complexmech_benchmark}")
+        print(f"  complexmech_benchmark is None: {complexmech_benchmark is None}")
+        if complexmech_benchmark is not None:
+            print(f"  complexmech_benchmark type: {type(complexmech_benchmark)}")
+            print(f"  complexmech_benchmark.benchmark_dir: {complexmech_benchmark.benchmark_dir}")
+        
         # DEBUG: Print training config learning rate details
         raw_lr = training_config.get("learning_rate")
         default_lr = training_config.get("learning_rate", 1e-3)
@@ -1503,6 +1638,10 @@ def main():
             lingaus_benchmark_eval_fidelity=lingaus_benchmark_eval_fidelity,
             lingaus_benchmark_final_fidelity=lingaus_benchmark_final_fidelity,
             lingaus_benchmark=lingaus_benchmark,
+            # ComplexMech Benchmark integration
+            complexmech_benchmark_eval_fidelity=complexmech_benchmark_eval_fidelity,
+            complexmech_benchmark_final_fidelity=complexmech_benchmark_final_fidelity,
+            complexmech_benchmark=complexmech_benchmark,
             # Mixed precision training
             use_amp=use_amp,
             amp_dtype=amp_dtype,

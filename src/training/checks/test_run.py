@@ -33,7 +33,7 @@ def load_and_modify_existing_config(config_path):
     
     # Modify for quick testing
     config['experiment_name'] = 'test_run'
-    config['description'] = 'Quick test run based on early_test1 config'
+    config['description'] = 'Quick test run based on final_earlytest config'
     
     # Reduce training iterations for quick test
 
@@ -43,16 +43,24 @@ def load_and_modify_existing_config(config_path):
     config['training_config']['num_workers'] = {'value': 0}  # Avoid multiprocessing issues
 
     config['model_config']['max_fit_items'] = {'value': 100}
-    config['training_config']['benchmark_final_fidelity'] = {'value': "low"}
-    config['training_config']['benchmark_final_fidelity'] = {'value': "low"}
-    config['training_config']['eval_batches'] = {'value': 5}  # Fewer eval batches
+    config['training_config']['eval_batches'] = {'value': 2}  # Fewer eval batches
     config['training_config']['accumulate_grad_batches'] = {'value': 1}  # More frequent logging
-    config['training_config']['eval_every'] = {'value': 3}  # Smaller eval dataset
-    config['training_config']["lingaus_benchmark_eval_fidelity"] = {'value': "low"}
-    config['training_config']["lingaus_benchmark_final_fidelity"] = {'value': "low"}
-
-
-    config['training_config']['lingaus_benchmark_dir'] = {'value': "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/LinGaus/"}
+    config['training_config']['eval_every'] = {'value': 1}  # Evaluate at step 3
+    
+    # Disable OpenML benchmark for quick test
+    config['training_config']['benchmark_enabled'] = {'value': False}
+    config['training_config']['benchmark_eval_fidelity'] = {'value': None}
+    config['training_config']['benchmark_final_fidelity'] = {'value': None}
+    
+    # Configure LinGaus benchmark (disabled for quick test)
+    config['training_config']['lingaus_benchmark_eval_fidelity'] = {'value': None}
+    config['training_config']['lingaus_benchmark_final_fidelity'] = {'value': None}
+    config['training_config']['lingaus_benchmark_dir'] = {'value': "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/LinGausIDK/"}
+    
+    # Configure ComplexMech benchmark (enabled for testing)
+    config['training_config']['complexmech_benchmark_eval_fidelity'] = {'value': "minimal"}
+    config['training_config']['complexmech_benchmark_final_fidelity'] = {'value': "minimal"}
+    config['training_config']['complexmech_benchmark_dir'] = {'value': "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMech/"}
     
     # Reduce dataset size for speed
     #if 'dataset_config' in config:
@@ -120,7 +128,7 @@ def run_simple_run_test(config_path):
 
 def main():
 
-    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "GraphConditioning" / "configs_5node_idk" / "lingaus_ancestor_5node_idk_gcn_and_softatt_hide_none.yaml"
+    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "FinalModel" / "configs_early" / "final_earlytest.yaml"
     
     """Main test function."""
     print("=" * 60)

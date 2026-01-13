@@ -603,9 +603,38 @@ class ComplexMechBenchmark:
         X_intv = data_item['X_intv']
         T_intv = data_item['T_intv']
         Y_intv = data_item['Y_intv']
-        adj = data_item['adjacency_matrix']
         
-        # Convert to numpy if needed (but keep tensor for ancestor matrix computation if needed)
+        # Choose which graph matrix to use based on use_ancestor_matrix flag
+        # This matches the behavior in LinGausBenchmarkIDK
+        if self.use_ancestor_matrix:
+            # Try to get ancestor matrix, fall back to graph_matrix
+            adj = data_item.get('ancestor_matrix', None)
+            if adj is None:
+                adj = data_item.get('graph_matrix', None)
+                if adj is not None and self.verbose:
+                    print(f"Warning: ancestor_matrix not found, using graph_matrix instead")
+        else:
+            # Try to get adjacency/graph matrix
+            adj = data_item.get('adjacency_matrix', None)
+            if adj is None:
+                adj = data_item.get('graph_matrix', None)
+        
+        # If still None, try any available matrix as fallback
+        if adj is None:
+            for key in ['ancestor_matrix', 'graph_matrix', 'adjacency_matrix']:
+                if key in data_item and data_item[key] is not None:
+                    adj = data_item[key]
+                    if self.verbose:
+                        print(f"Warning: Using fallback matrix '{key}'")
+                    break
+        
+        if adj is None:
+            raise ValueError(
+                f"No graph matrix found in data_item. Available keys: {list(data_item.keys())}. "
+                f"use_ancestor_matrix={self.use_ancestor_matrix}"
+            )
+        
+        # Convert to numpy if needed (but keep tensor for any additional computations)
         adj_tensor = adj if torch.is_tensor(adj) else torch.tensor(adj)
         
         # Convert tensors to numpy if needed
@@ -714,6 +743,8 @@ class ComplexMechBenchmark:
             except Exception as e:
                 if verbose:
                     print(f"Error evaluating sample: {e}")
+                    import traceback
+                    traceback.print_exc()
                 continue
         
         return results
@@ -991,6 +1022,171 @@ class ComplexMechBenchmark:
             print(f"\nCompleted benchmarking on {len(all_results)} configurations!")
         
         return all_results
+    
+    def run(
+        self,
+        fidelity: str,
+        checkpoint_path: str,
+        config_path: Optional[str] = None,
+        output_dir: Optional[str] = None,
+    ) -> Dict[Tuple[int, str, Optional[int]], Dict[str, Any]]:
+        """
+        Run ComplexMech benchmark with specified fidelity level on all variants.
+        
+        This method provides a unified interface compatible with the Trainer's benchmark
+        integration pattern. It maps fidelity levels to evaluation configurations and runs
+        on ALL variants (base, path_TY, path_YT, path_independent_TY) with all sample sizes.
+        
+        - "minimal": 3 samples from all node counts (2, 5, 20, 50) and all variants
+        - "low": 100 samples from all node counts (2, 5, 20, 50) and all variants
+        - "high": 1000 samples from all node counts (2, 5, 20, 50) and all variants
+        
+        Args:
+            fidelity: Fidelity level ("minimal", "low", or "high")
+            checkpoint_path: Path to the model checkpoint .pt file
+            config_path: Path to the model config YAML file (optional, for model loading)
+            output_dir: Directory to save results (default: self.benchmark_dir)
+            
+        Returns:
+            Dictionary mapping (node_count, variant, sample_size) -> aggregated_results
+            where sample_size is None for base variant
+            
+        Raises:
+            ValueError: If fidelity is not "minimal", "low", or "high"
+        """
+        # Normalize fidelity
+        fidelity = fidelity.strip().lower()
+        
+        # Map fidelity to max_samples
+        fidelity_map = {
+            "minimal": 3,
+            "low": 100,
+            "high": 1000,
+        }
+        
+        if fidelity not in fidelity_map:
+            raise ValueError(
+                f"Invalid fidelity '{fidelity}' for ComplexMech benchmark. "
+                f"Choose 'minimal' (3 samples), 'low' (100 samples), or 'high' (1000 samples)."
+            )
+        
+        max_samples = fidelity_map[fidelity]
+        
+        if self.verbose:
+            print(f"\n{'='*80}")
+            print(f"ComplexMech Benchmark - Fidelity: {fidelity.upper()}")
+            print(f"  Max samples per dataset: {max_samples}")
+            print(f"  Node counts: {self.NODE_COUNTS}")
+            print(f"  Variants: {self.VARIANTS}")
+            print(f"  Sample sizes: {self.SAMPLE_SIZES}")
+            print(f"  Checkpoint: {checkpoint_path}")
+            print(f"{'='*80}\n")
+        
+        # Load model from checkpoint
+        if config_path is not None:
+            self.load_model(config_path, checkpoint_path)
+        else:
+            raise RuntimeError(
+                "config_path is required for ComplexMech benchmark. "
+                "Provide config_path when calling run()."
+            )
+        
+        # Temporarily override max_samples for this run
+        original_max_samples = self.max_samples
+        self.max_samples = max_samples
+        
+        try:
+            # Run benchmark on all node counts, variants, and sample sizes
+            all_results = {}
+            
+            # Count total configurations for progress reporting
+            total_configs = len(self.NODE_COUNTS) * (1 + len([v for v in self.VARIANTS if v != "base"]) * len(self.SAMPLE_SIZES))
+            config_idx = 0
+            
+            for node_count in self.NODE_COUNTS:
+                for variant in self.VARIANTS:
+                    if variant == "base":
+                        # Base variant - no sample size parameter
+                        config_idx += 1
+                        data_filename = f"complexmech_{node_count}nodes_{variant}_1000samples_seed42.pkl"
+                        config_key = (node_count, variant, None)
+                        
+                        if self.verbose:
+                            print(f"\n[{config_idx}/{total_configs}] Running: {node_count} nodes, {variant}")
+                            print(f"  Data file: {data_filename}")
+                            print(f"  Max samples: {max_samples}")
+                        
+                        try:
+                            result = self.run_benchmark(
+                                data_filename=data_filename,
+                                model=self.model,
+                                output_dir=output_dir,
+                                model_name=None,
+                                n_bootstrap=1000,
+                                save_individual_results=False,
+                            )
+                            all_results[config_key] = result
+                            
+                            if self.verbose:
+                                print(f"  ✓ MSE={result.get('mse', {}).get('mean', float('nan')):.6f}")
+                        
+                        except Exception as e:
+                            if self.verbose:
+                                print(f"  ✗ Failed: {e}")
+                            # Store NaN results for failed configs
+                            all_results[config_key] = {
+                                'mse': {'mean': float('nan'), 'median': float('nan'), 'std': float('nan')},
+                                'r2': {'mean': float('nan'), 'median': float('nan'), 'std': float('nan')},
+                                'nll': {'mean': float('nan'), 'median': float('nan'), 'std': float('nan')},
+                            }
+                    
+                    else:
+                        # Path variants - loop through all sample sizes
+                        for sample_size in self.SAMPLE_SIZES:
+                            config_idx += 1
+                            data_filename = f"complexmech_{node_count}nodes_{variant}_ntest{sample_size}_1000samples_seed42.pkl"
+                            config_key = (node_count, variant, sample_size)
+                            
+                            if self.verbose:
+                                print(f"\n[{config_idx}/{total_configs}] Running: {node_count} nodes, {variant}, ntest={sample_size}")
+                                print(f"  Data file: {data_filename}")
+                                print(f"  Max samples: {max_samples}")
+                            
+                            try:
+                                result = self.run_benchmark(
+                                    data_filename=data_filename,
+                                    model=self.model,
+                                    output_dir=output_dir,
+                                    model_name=None,
+                                    n_bootstrap=1000,
+                                    save_individual_results=False,
+                                )
+                                all_results[config_key] = result
+                                
+                                if self.verbose:
+                                    print(f"  ✓ MSE={result.get('mse', {}).get('mean', float('nan')):.6f}")
+                            
+                            except Exception as e:
+                                if self.verbose:
+                                    print(f"  ✗ Failed: {e}")
+                                # Store NaN results for failed configs
+                                all_results[config_key] = {
+                                    'mse': {'mean': float('nan'), 'median': float('nan'), 'std': float('nan')},
+                                    'r2': {'mean': float('nan'), 'median': float('nan'), 'std': float('nan')},
+                                    'nll': {'mean': float('nan'), 'median': float('nan'), 'std': float('nan')},
+                                }
+            
+            if self.verbose:
+                print(f"\n{'='*80}")
+                print(f"ComplexMech Benchmark Complete!")
+                print(f"  Evaluated {len(all_results)}/{total_configs} configurations")
+                print(f"{'='*80}\n")
+            
+            return all_results
+            
+        finally:
+            # Restore original max_samples
+            self.max_samples = original_max_samples
     
     def quick_benchmark(
         self,

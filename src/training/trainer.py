@@ -50,6 +50,10 @@ class Trainer:
         lingaus_benchmark_eval_fidelity: Optional[str] = None,  # Run LinGaus benchmark at each eval ("low" or "high")
         lingaus_benchmark_final_fidelity: Optional[str] = None,  # Run LinGaus benchmark at end ("low" or "high")
         lingaus_benchmark: Optional[object] = None,  # LinGausBenchmark instance constructed by run.py
+        # ComplexMech Benchmark integration (separate from OpenML and LinGaus benchmarks)
+        complexmech_benchmark_eval_fidelity: Optional[str] = None,  # Run ComplexMech benchmark at each eval ("low" or "high")
+        complexmech_benchmark_final_fidelity: Optional[str] = None,  # Run ComplexMech benchmark at end ("low" or "high")
+        complexmech_benchmark: Optional[object] = None,  # ComplexMechBenchmark instance constructed by run.py
         # Mixed precision training
         use_amp: bool = False,  # Enable automatic mixed precision
         amp_dtype: Optional[str] = None,  # 'fp16' or 'bf16' to select autocast dtype
@@ -110,6 +114,10 @@ class Trainer:
         self.lingaus_benchmark_eval_fidelity = lingaus_benchmark_eval_fidelity
         self.lingaus_benchmark_final_fidelity = lingaus_benchmark_final_fidelity
         self.lingaus_benchmark = lingaus_benchmark  # store externally constructed LinGausBenchmark instance
+        # ComplexMech Benchmark integration config
+        self.complexmech_benchmark_eval_fidelity = complexmech_benchmark_eval_fidelity
+        self.complexmech_benchmark_final_fidelity = complexmech_benchmark_final_fidelity
+        self.complexmech_benchmark = complexmech_benchmark  # store externally constructed ComplexMechBenchmark instance
         
         # DEBUG: Print what we received
         print(f"\n[DEBUG Trainer.__init__] LinGaus Benchmark Configuration:")
@@ -118,6 +126,13 @@ class Trainer:
         print(f"  lingaus_benchmark parameter: {lingaus_benchmark}")
         print(f"  lingaus_benchmark is None: {lingaus_benchmark is None}")
         print(f"  lingaus_benchmark type: {type(lingaus_benchmark)}")
+        
+        print(f"\n[DEBUG Trainer.__init__] ComplexMech Benchmark Configuration:")
+        print(f"  complexmech_benchmark_eval_fidelity: {complexmech_benchmark_eval_fidelity}")
+        print(f"  complexmech_benchmark_final_fidelity: {complexmech_benchmark_final_fidelity}")
+        print(f"  complexmech_benchmark parameter: {complexmech_benchmark}")
+        print(f"  complexmech_benchmark is None: {complexmech_benchmark is None}")
+        print(f"  complexmech_benchmark type: {type(complexmech_benchmark)}")
         
         # Cached training shapes for aligning benchmark subsampling
         self._train_n_features = None
@@ -231,6 +246,16 @@ class Trainer:
             self._latest_lingaus_metrics[f'lingaus/n{node_count}/r2_median'] = float('nan')
             self._latest_lingaus_metrics[f'lingaus/n{node_count}/nll_mean'] = float('nan')
             self._latest_lingaus_metrics[f'lingaus/n{node_count}/nll_median'] = float('nan')
+        # Initialize ComplexMech benchmark metric caches (will be populated when benchmark runs)
+        # These cover common node configurations from the ComplexMech benchmark
+        self._latest_complexmech_metrics = {}
+        for node_count in [2, 5, 20, 50]:
+            self._latest_complexmech_metrics[f'complexmech/n{node_count}/mse_mean'] = float('nan')
+            self._latest_complexmech_metrics[f'complexmech/n{node_count}/mse_median'] = float('nan')
+            self._latest_complexmech_metrics[f'complexmech/n{node_count}/r2_mean'] = float('nan')
+            self._latest_complexmech_metrics[f'complexmech/n{node_count}/r2_median'] = float('nan')
+            self._latest_complexmech_metrics[f'complexmech/n{node_count}/nll_mean'] = float('nan')
+            self._latest_complexmech_metrics[f'complexmech/n{node_count}/nll_median'] = float('nan')
         # Seed per-set and overall eval metric placeholders so keys exist from step 1
         if self.eval_dataloaders is not None:
             # Ensure names are defined
@@ -1476,6 +1501,7 @@ class Trainer:
                     log_dict.update(self._latest_eval_metrics)
                     log_dict.update(self._latest_benchmark_metrics)
                     log_dict.update(self._latest_lingaus_metrics)
+                    log_dict.update(self._latest_complexmech_metrics)
                     self.wandb_run.log(log_dict, step=self.global_step)
 
                 # Print progress - more frequent at start, less frequent later
@@ -1520,6 +1546,20 @@ class Trainer:
                             )
                         except Exception as e:
                             print(f"[Trainer] LinGaus benchmark at eval step {self.global_step} failed: {e}")
+                            import traceback
+                            traceback.print_exc()
+                    if self.complexmech_benchmark_eval_fidelity:
+                        print(f"\n[DEBUG] ComplexMech benchmark triggered at step {self.global_step}")
+                        print(f"[DEBUG] self.complexmech_benchmark_eval_fidelity = {self.complexmech_benchmark_eval_fidelity}")
+                        print(f"[DEBUG] self.complexmech_benchmark is None: {self.complexmech_benchmark is None}")
+                        print(f"[DEBUG] self.complexmech_benchmark type: {type(self.complexmech_benchmark)}")
+                        try:
+                            self._run_complexmech_benchmark_with_current_model(
+                                fidelity=self.complexmech_benchmark_eval_fidelity,
+                                tag=f"eval_step{self.global_step}"
+                            )
+                        except Exception as e:
+                            print(f"[Trainer] ComplexMech benchmark at eval step {self.global_step} failed: {e}")
                             import traceback
                             traceback.print_exc()
                 else:
@@ -1599,6 +1639,19 @@ class Trainer:
                     )
                 except Exception as e:
                     print(f"[Trainer] Final LinGaus benchmark failed: {e}")
+            
+            # Run final ComplexMech benchmark if requested
+            if self.complexmech_benchmark_final_fidelity:
+                # Use the just-saved final checkpoint
+                final_ckpt = os.path.join(self.run_save_dir, "final.pt")
+                try:
+                    self._run_complexmech_benchmark_with_checkpoint(
+                        fidelity=self.complexmech_benchmark_final_fidelity,
+                        tag="final",
+                        checkpoint_path=final_ckpt,
+                    )
+                except Exception as e:
+                    print(f"[Trainer] Final ComplexMech benchmark failed: {e}")
             
             # Save best model if model selection was enabled
             if self.enable_model_selection and self.best_model_state is not None:
@@ -1972,5 +2025,231 @@ class Trainer:
                     
         except Exception as e:
             print(f"[Trainer] LinGaus benchmark failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _run_complexmech_benchmark_with_current_model(self, fidelity: str, tag: str) -> None:
+        """Save a temporary checkpoint of the current model and run the ComplexMech benchmark with the given fidelity.
+        
+        To conserve GPU memory during evaluation, the training model is temporarily moved to CPU,
+        then restored after benchmark completion.
+
+        Args:
+            fidelity: One of {"low", "high"}
+            tag: Short label used in output filenames (e.g., "eval_step1000")
+        """
+        # Ensure we have a place to save
+        if not self.run_save_dir:
+            import tempfile
+            self.run_save_dir = os.path.join(tempfile.gettempdir(), f"simplepfn_checkpoints_{self.run_name}")
+            os.makedirs(self.run_save_dir, exist_ok=True)
+
+        # Save a checkpoint for the benchmark to load (before moving model)
+        ckpt_name = f"complexmech_benchmark_{tag}.pt"
+        ckpt_path = self.save_model(filename=ckpt_name, metadata={"stage": tag, "complexmech_benchmark": True})
+        if not ckpt_path:
+            raise RuntimeError("Failed to save checkpoint for ComplexMech benchmark.")
+        
+        # Store original device and temporarily move model to CPU to free GPU memory
+        original_device = next(self.model.parameters()).device
+        model_was_on_cuda = original_device.type == 'cuda'
+        
+        if model_was_on_cuda:
+            print(f"[Trainer] Moving training model from {original_device} to CPU to conserve GPU memory during benchmark")
+            self.model.cpu()
+            # Clear GPU cache to free up memory for benchmark model
+            torch.cuda.empty_cache()
+        
+        try:
+            # Run benchmark (will load its own GPU copy from checkpoint)
+            self._run_complexmech_benchmark_with_checkpoint(fidelity=fidelity, tag=tag, checkpoint_path=ckpt_path)
+        finally:
+            # Restore model to original device after benchmark completion
+            if model_was_on_cuda:
+                print(f"[Trainer] Restoring training model to {original_device}")
+                self.model.to(original_device)
+                # Ensure optimizer state is also on correct device if needed
+                if hasattr(self.optimizer, 'state') and self.optimizer.state:
+                    for state in self.optimizer.state.values():
+                        if isinstance(state, dict):
+                            for k, v in state.items():
+                                if isinstance(v, torch.Tensor):
+                                    state[k] = v.to(original_device)
+
+    def _run_complexmech_benchmark_with_checkpoint(self, fidelity: str, tag: str, checkpoint_path: str) -> None:
+        """Run the ComplexMech benchmark with a specified checkpoint using the injected ComplexMechBenchmark instance."""
+        if self.complexmech_benchmark is None:
+            raise RuntimeError("Trainer.complexmech_benchmark is None; please construct a ComplexMechBenchmark in run.py and pass it into Trainer.")
+
+        # Ensure we have a run directory for outputs
+        base_out_dir = self.run_save_dir or "."
+        
+        # Create a dedicated subfolder for this benchmark run (e.g., "complexmech_step1000")
+        benchmark_subdir = f"complexmech_{tag}"
+        benchmark_out_dir = os.path.join(base_out_dir, benchmark_subdir)
+        os.makedirs(benchmark_out_dir, exist_ok=True)
+        
+        print(f"[Trainer] Running ComplexMech benchmark ({fidelity}) with checkpoint: {checkpoint_path}")
+        print(f"[Trainer] Results will be saved to: {benchmark_out_dir}")
+        
+        try:
+            # Run the benchmark - pass output_dir so JSON files are saved in dedicated subfolder
+            results = self.complexmech_benchmark.run(
+                fidelity=fidelity,
+                checkpoint_path=checkpoint_path,
+                config_path=self.config_path,
+                output_dir=benchmark_out_dir,
+            )
+            
+            # Save results to CSV and JSON in the benchmark subfolder for HTCondor transfer
+            import json
+            import pandas as pd
+            
+            # Create results filename in the benchmark subfolder
+            results_json_path = os.path.join(benchmark_out_dir, f"complexmech_benchmark_{tag}.json")
+            results_csv_path = os.path.join(benchmark_out_dir, f"complexmech_benchmark_{tag}.csv")
+            
+            # Convert tuple keys to strings for JSON serialization
+            results_serializable = {}
+            for key, value in results.items():
+                if isinstance(key, tuple):
+                    # Convert tuple (node_count, variant, sample_size) to string
+                    node_count, variant, sample_size = key
+                    if sample_size is None:
+                        str_key = f"{node_count}_{variant}"
+                    else:
+                        str_key = f"{node_count}_{variant}_ntest{sample_size}"
+                    results_serializable[str_key] = value
+                else:
+                    results_serializable[str(key)] = value
+            
+            # Save JSON (complete results with all statistics)
+            with open(results_json_path, 'w') as f:
+                json.dump(results_serializable, f, indent=2)
+            print(f"[Trainer] Saved ComplexMech benchmark JSON results to: {results_json_path}")
+            
+            # Save CSV (flattened for easy viewing)
+            rows = []
+            for config_key, node_results in results.items():
+                # Handle tuple format: (node_count, variant, sample_size)
+                if isinstance(config_key, tuple) and len(config_key) == 3:
+                    node_count, variant, sample_size = config_key
+                    row = {
+                        'node_count': node_count,
+                        'variant': variant,
+                        'sample_size': sample_size if sample_size is not None else 'base'
+                    }
+                else:
+                    # Fallback for old format
+                    row = {'node_count': config_key, 'variant': 'base', 'sample_size': 'N/A'}
+                
+                for metric_name in ['mse', 'r2', 'nll']:
+                    if metric_name in node_results:
+                        for stat_name, stat_value in node_results[metric_name].items():
+                            row[f'{metric_name}_{stat_name}'] = stat_value
+                rows.append(row)
+            
+            if rows:
+                df = pd.DataFrame(rows)
+                df.to_csv(results_csv_path, index=False)
+                print(f"[Trainer] Saved ComplexMech benchmark CSV results to: {results_csv_path}")
+            
+            # Print summary of results
+            print(f"\n[ComplexMech Benchmark] Results for {len(results)} configurations:")
+            for config_key in sorted(results.keys()):
+                node_results = results[config_key]
+                # Format key for display
+                if isinstance(config_key, tuple) and len(config_key) == 3:
+                    node_count, variant, sample_size = config_key
+                    if sample_size is None:
+                        config_str = f"{node_count} nodes, {variant}"
+                    else:
+                        config_str = f"{node_count} nodes, {variant}, ntest={sample_size}"
+                else:
+                    config_str = f"{config_key} nodes"
+                
+                if 'mse' in node_results:
+                    mse_mean = node_results['mse'].get('mean', float('nan'))
+                    mse_median = node_results['mse'].get('median', float('nan'))
+                    print(f"  {config_str}: MSE mean={mse_mean:.6f}, median={mse_median:.6f}")
+            
+            # Log to wandb if available
+            if hasattr(self, 'wandb_run') and self.wandb_run is not None:
+                try:
+                    log = {}
+                    for config_key, node_results in results.items():
+                        # Handle new tuple format: (node_count, variant, sample_size)
+                        if isinstance(config_key, tuple) and len(config_key) == 3:
+                            node_count, variant, sample_size = config_key
+                            if sample_size is None:
+                                # Base variant
+                                prefix = f"complexmech_benchmark/{tag}/{node_count}nodes_{variant}"
+                            else:
+                                # Path variant with sample size
+                                prefix = f"complexmech_benchmark/{tag}/{node_count}nodes_{variant}_ntest{sample_size}"
+                        else:
+                            # Fallback for old int-only format
+                            node_count = config_key
+                            prefix = f"complexmech_benchmark/{tag}/{node_count}nodes"
+                        
+                        # Log only mean values for MSE, R², and NLL
+                        if 'mse' in node_results and 'mean' in node_results['mse']:
+                            log[f"{prefix}/mse_mean"] = float(node_results['mse']['mean'])
+                        
+                        if 'r2' in node_results and 'mean' in node_results['r2']:
+                            log[f"{prefix}/r2_mean"] = float(node_results['r2']['mean'])
+                        
+                        if 'nll' in node_results and 'mean' in node_results['nll']:
+                            log[f"{prefix}/nll_mean"] = float(node_results['nll']['mean'])
+                    
+                    if log:
+                        self.wandb_run.log(log, step=self.global_step)
+                        print(f"[Trainer] Logged {len(log)} ComplexMech benchmark metrics to wandb")
+                        
+                except Exception as e:
+                    print(f"[Trainer] Failed to log ComplexMech benchmark metrics to wandb: {e}")
+            
+            # Update cached ComplexMech metrics for per-step logging
+            # These will be logged at every training step (similar to OpenML benchmark metrics)
+            for config_key, node_results in results.items():
+                # Handle new tuple format: (node_count, variant, sample_size)
+                if isinstance(config_key, tuple) and len(config_key) == 3:
+                    node_count, variant, sample_size = config_key
+                    if sample_size is None:
+                        # Base variant
+                        prefix = f'complexmech/n{node_count}_{variant}'
+                    else:
+                        # Path variant with sample size
+                        prefix = f'complexmech/n{node_count}_{variant}_ntest{sample_size}'
+                else:
+                    # Fallback for old int-only format
+                    node_count = config_key
+                    prefix = f'complexmech/n{node_count}'
+                
+                # Update MSE metrics (mean and median)
+                if 'mse' in node_results:
+                    if 'mean' in node_results['mse']:
+                        self._latest_complexmech_metrics[f'{prefix}/mse_mean'] = float(node_results['mse']['mean'])
+                    if 'median' in node_results['mse']:
+                        self._latest_complexmech_metrics[f'{prefix}/mse_median'] = float(node_results['mse']['median'])
+                
+                # Update R² metrics (mean and median)
+                if 'r2' in node_results:
+                    if 'mean' in node_results['r2']:
+                        self._latest_complexmech_metrics[f'{prefix}/r2_mean'] = float(node_results['r2']['mean'])
+                    if 'median' in node_results['r2']:
+                        self._latest_complexmech_metrics[f'{prefix}/r2_median'] = float(node_results['r2']['median'])
+                
+                # Update NLL metrics (mean and median)
+                if 'nll' in node_results:
+                    if 'mean' in node_results['nll']:
+                        self._latest_complexmech_metrics[f'{prefix}/nll_mean'] = float(node_results['nll']['mean'])
+                    if 'median' in node_results['nll']:
+                        self._latest_complexmech_metrics[f'{prefix}/nll_median'] = float(node_results['nll']['median'])
+            
+            print(f"[Trainer] Updated {len([k for k in self._latest_complexmech_metrics if not np.isnan(self._latest_complexmech_metrics[k])])} ComplexMech metrics for per-step logging")
+                    
+        except Exception as e:
+            print(f"[Trainer] ComplexMech benchmark failed: {e}")
             import traceback
             traceback.print_exc()
