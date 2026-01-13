@@ -128,7 +128,7 @@ def run_simple_run_test(config_path):
 
 def main():
 
-    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "FinalModel" / "configs_early" / "final_earlytest.yaml"
+    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "FinalModel" / "configs_early" / "final_earlytest_hide_all.yaml"
     
     """Main test function."""
     print("=" * 60)
