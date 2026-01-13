@@ -45,3 +45,7 @@ bias_effects.png
 /ancestor_5node_attention_maps
 /ancestor_5node_random_attention_maps
 /ancestor_attention_maps
+
+/experiments/GraphConditioning/Benchmarks/ComplexMech/data_cache
+
+*.DS_Store

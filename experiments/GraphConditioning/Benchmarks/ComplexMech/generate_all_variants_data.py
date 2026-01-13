@@ -18,8 +18,17 @@ Usage:
 
 import argparse
 import sys
+import os
 from pathlib import Path
 import yaml
+import time
+
+# Only import signal on Unix-like systems
+if os.name != 'nt':
+    import signal
+    HAS_SIGNAL = True
+else:
+    HAS_SIGNAL = False
 
 # Add src to path
 repo_root = Path(__file__).resolve().parents[4]
@@ -34,7 +43,6 @@ if str(benchmark_dir) not in sys.path:
 
 from priordata_processing.Datasets.InterventionalDataset import InterventionalDataset
 import pickle
-from tqdm import tqdm
 
 
 def parse_args():
@@ -97,6 +105,51 @@ def load_config(config_path: Path):
         return yaml.safe_load(f)
 
 
+class TimeoutError(Exception):
+    """Custom timeout exception."""
+    pass
+
+
+# Only define signal handler if signal is available
+if HAS_SIGNAL:
+    def timeout_handler(signum, frame):
+        """Signal handler for timeout."""
+        raise TimeoutError("Dataset access timed out")
+
+
+def safe_dataset_access(dataset, idx, timeout_seconds=30):
+    """
+    Safely access dataset with timeout protection.
+    
+    Args:
+        dataset: The dataset to access
+        idx: Index to access
+        timeout_seconds: Timeout in seconds
+        
+    Returns:
+        Dataset item or raises TimeoutError
+    """
+    if HAS_SIGNAL:
+        # Use signal-based timeout on Unix-like systems
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(timeout_seconds)
+        
+        try:
+            result = dataset[idx]
+            signal.alarm(0)  # Cancel alarm
+            return result
+        except TimeoutError:
+            raise
+        except Exception as e:
+            signal.alarm(0)  # Cancel alarm
+            raise e
+        finally:
+            signal.signal(signal.SIGALRM, old_handler)
+    else:
+        # Fallback for Windows - no timeout protection
+        return dataset[idx]
+
+
 def sample_config(config_path: Path, num_samples: int, seed: int, verbose: bool = True):
     """
     Sample data from a config file using the same approach as LinGausIDK benchmark.
@@ -120,17 +173,23 @@ def sample_config(config_path: Path, num_samples: int, seed: int, verbose: bool 
     dataset_config = config['dataset_config']
     preprocessing_config = config['preprocessing_config']
     
-    # Ensure adjacency matrix is returned (we always need it)
-    if 'return_adjacency_matrix' not in dataset_config:
-        dataset_config['return_adjacency_matrix'] = {'value': True}
-    else:
-        dataset_config['return_adjacency_matrix']['value'] = True
+    # Use config exactly as training would - no modifications!
+    # The ComplexMech configs are designed to return ancestor matrices directly:
+    # - return_adjacency_matrix: false
+    # - return_ancestor_matrix: true  
+    # - use_partial_graph_format: true
+    # This avoids PAM inconsistency errors since no propagation is needed
     
-    # Ensure ancestor matrix is not directly requested from dataset
-    if 'return_ancestor_matrix' in dataset_config:
-        dataset_config['return_ancestor_matrix']['value'] = False
+    if verbose:
+        return_adj = dataset_config.get('return_adjacency_matrix', {}).get('value', False)
+        return_anc = dataset_config.get('return_ancestor_matrix', {}).get('value', False)
+        use_partial = dataset_config.get('use_partial_graph_format', {}).get('value', False)
+        print(f"  Config matrix settings:")
+        print(f"    return_adjacency_matrix: {return_adj}")
+        print(f"    return_ancestor_matrix: {return_anc}")
+        print(f"    use_partial_graph_format: {use_partial}")
     
-    # Create dataset (following LinGausIDK approach)
+    # Create dataset (following training approach - use config as-is)
     dataset = InterventionalDataset(
         scm_config=scm_config,
         preprocessing_config=preprocessing_config,
@@ -149,22 +208,38 @@ def sample_config(config_path: Path, num_samples: int, seed: int, verbose: bool 
     failed_attempts = 0
     max_failed_attempts = num_samples * 10  # Allow up to 10x failed attempts before giving up
     
+    # Use simple counter instead of tqdm to avoid threading issues
     if verbose:
-        pbar = tqdm(total=num_samples, desc="  Sampling")
+        print(f"  Sampling {num_samples} elements...")
     
     while len(sampled_data) < num_samples and failed_attempts < max_failed_attempts:
         try:
-            # Get data tuple: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adj, scm, processor, intervention_node)
-            data_item = dataset[idx]
+            # Progress reporting without tqdm
+            if verbose and len(sampled_data) % max(1, num_samples // 10) == 0:
+                print(f"    Progress: {len(sampled_data)}/{num_samples} samples collected...")
+            
+            # Get data tuple with timeout protection: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, graph_matrix, scm, processor, intervention_node)
+            try:
+                data_item = safe_dataset_access(dataset, idx, timeout_seconds=60)
+            except TimeoutError:
+                if verbose:
+                    print(f"\n  Timeout: Dataset access for item {idx} timed out, skipping...")
+                failed_attempts += 1
+                idx += 1
+                continue
             
             # Debug first sample structure
             if verbose and len(sampled_data) == 0:
                 print(f"\n  Debug: Dataset returns {len(data_item)} elements")
             
-            # Get adjacency matrix (position 6 based on LinGausIDK)
-            adjacency_matrix = data_item[6]
+            # Get graph matrix (position 6) - could be adjacency or ancestor matrix
+            graph_matrix = data_item[6]
             
-            # Store as dict format (following LinGausIDK structure)
+            # Determine what type of matrix we have based on config
+            return_adj = dataset_config.get('return_adjacency_matrix', {}).get('value', False)
+            return_anc = dataset_config.get('return_ancestor_matrix', {}).get('value', False)
+            
+            # Store as dict format (maintaining compatibility with LinGausIDK structure)
             sample_dict = {
                 'X_obs': data_item[0],
                 'T_obs': data_item[1],
@@ -172,9 +247,15 @@ def sample_config(config_path: Path, num_samples: int, seed: int, verbose: bool 
                 'X_intv': data_item[3],
                 'T_intv': data_item[4],
                 'Y_intv': data_item[5],
-                'adjacency_matrix': adjacency_matrix,
+                
+                'graph_matrix': graph_matrix,  # Generic name for the graph representation
+                # For backward compatibility, also store with the expected name
+                'adjacency_matrix': graph_matrix if return_adj else None,
+                'ancestor_matrix': graph_matrix if return_anc else None,
                 'intervention_node': data_item[9] if len(data_item) > 9 else None,
                 'metadata': {
+                    'matrix_type': 'adjacency' if return_adj else 'ancestor',
+                    'use_partial_format': dataset_config.get('use_partial_graph_format', {}).get('value', False),
                     'intervened_feature': data_item[8].intervened_feature if len(data_item) > 8 else None,
                     'selected_target_feature': data_item[8].selected_target_feature if len(data_item) > 8 else None,
                     'kept_feature_indices': data_item[8].kept_feature_indices if len(data_item) > 8 else None,
@@ -182,15 +263,10 @@ def sample_config(config_path: Path, num_samples: int, seed: int, verbose: bool 
             }
             
             sampled_data.append(sample_dict)
-            if verbose:
-                pbar.update(1)
             
         except Exception as e:
             failed_attempts += 1
-            if verbose and "Inconsistent PAM" in str(e):
-                # Just show a brief message for PAM inconsistencies, not full traceback
-                print(f"\n  Warning: Skipping item {idx} due to PAM inconsistency")
-            elif verbose:
+            if verbose:
                 print(f"\n  Warning: Failed to sample item {idx}: {e}")
                 import traceback
                 traceback.print_exc()
@@ -198,11 +274,12 @@ def sample_config(config_path: Path, num_samples: int, seed: int, verbose: bool 
         idx += 1
     
     if verbose:
-        pbar.close()
         if failed_attempts >= max_failed_attempts:
             print(f"\n  Warning: Reached maximum failed attempts ({max_failed_attempts}), collected {len(sampled_data)}/{num_samples} samples")
         elif failed_attempts > 0:
             print(f"\n  Successfully collected {len(sampled_data)} samples after {failed_attempts} failed attempts")
+        else:
+            print(f"\n  Successfully collected all {len(sampled_data)} samples")
     
     # Create metadata (following LinGausIDK structure)
     metadata = {
