@@ -22,7 +22,9 @@ Adjacency Matrix Format:
 
 Special Inference Behavior for hide_fraction_matrix >= 1.0:
 - When a model is trained with dataset_config.hide_fraction_matrix = 1.0 (all graph entries hidden),
-  the wrapper automatically replaces ANY input adjacency matrix with all -1s during inference
+  the wrapper automatically replaces off-diagonal entries in the (L+2)×(L+2) submatrix with 0s
+- Only applies to active features (features with at least one non-zero entry in their row/column)
+- Diagonal entries (self-loops) and any padding (sink columns) remain unchanged
 - This ensures the model sees the same "fully hidden" graph structure at inference time
 - Prevents information leakage and ensures fair evaluation of models trained without graph knowledge
 
@@ -330,7 +332,7 @@ class GraphConditionedInterventionalPFNSklearn:
             if self.verbose and self.hide_fraction_matrix > 0:
                 print(f"  hide_fraction_matrix: {self.hide_fraction_matrix}")
                 if self.hide_fraction_matrix >= 1.0:
-                    print(f"  → Inference mode: ALL graph entries will be hidden (set to -1)")
+                    print(f"  → Inference mode: Off-diagonal entries in (L+2)×(L+2) will be hidden (set to 0)")
         
         if self.verbose and self.use_partial_graph_format:
             print(f"  Partial graph format enabled - will propagate ancestor knowledge automatically")
@@ -460,7 +462,9 @@ class GraphConditionedInterventionalPFNSklearn:
         Preprocess adjacency/ancestor matrix before passing to model.
         
         Special behavior when hide_fraction_matrix >= 1.0:
-        - Replaces the entire matrix with -1 (all unknown) regardless of input
+        - Replaces off-diagonal entries in the (L+2)×(L+2) submatrix with 0 (all unknown)
+        - Only applies to active features (rows/columns with at least one non-zero entry)
+        - Keeps diagonal entries and any padding (sink columns) unchanged
         - This ensures the model uses the same "fully hidden" setting it was trained with
         
         For partial graph formats (three-state matrices with {-1, 0, 1}), this automatically
@@ -476,12 +480,52 @@ class GraphConditionedInterventionalPFNSklearn:
         
         Returns:
             Preprocessed matrix with same shape, potentially with fewer unknowns
-            (or all -1s if hide_fraction_matrix >= 1.0)
+            (or all off-diagonal 0s for active features in (L+2)×(L+2) block if hide_fraction_matrix >= 1.0)
         """
-        # If trained with hide_fraction_matrix >= 1.0, force all entries to -1 (unknown)
+        # If trained with hide_fraction_matrix >= 1.0, force off-diagonal entries to 0 (unknown)
         # This ensures inference matches the training condition
         if self.hide_fraction_matrix >= 1.0:
-            return torch.full_like(adjacency_matrix_t, -1.0)
+            # Get the size of the feature adjacency part (L+2)
+            # The matrix may be larger if there are sink columns added
+            # We determine L+2 as the model's num_features + 2
+            L_plus_2 = self.model.num_features + 2
+            
+            # Clone to avoid modifying the input
+            result = adjacency_matrix_t.clone()
+            
+            # Identify active features (rows/columns with at least one non-zero entry)
+            if result.ndim == 3:  # Batched: (B, N, N)
+                # Check if any entry in each row or column is non-zero
+                # A feature is active if either its row or column has non-zero entries
+                row_active = (result[:, :L_plus_2, :L_plus_2] != 0).any(dim=2)  # (B, L+2)
+                col_active = (result[:, :L_plus_2, :L_plus_2] != 0).any(dim=1)  # (B, L+2)
+                active_mask = row_active | col_active  # (B, L+2) - True if feature is active
+                
+                # Create off-diagonal mask for (L+2)×(L+2) block
+                eye_mask = torch.eye(L_plus_2, device=result.device, dtype=torch.bool)
+                off_diag_mask = ~eye_mask  # (L+2, L+2)
+                
+                # For each batch element, zero out off-diagonal entries for active features
+                for b in range(result.shape[0]):
+                    active_indices = torch.where(active_mask[b])[0]
+                    for i in active_indices:
+                        for j in active_indices:
+                            if i != j:  # Off-diagonal
+                                result[b, i, j] = 0.0
+            else:  # Non-batched: (N, N)
+                # Check if any entry in each row or column is non-zero
+                row_active = (result[:L_plus_2, :L_plus_2] != 0).any(dim=1)  # (L+2,)
+                col_active = (result[:L_plus_2, :L_plus_2] != 0).any(dim=0)  # (L+2,)
+                active_mask = row_active | col_active  # (L+2,) - True if feature is active
+                
+                # Zero out off-diagonal entries only for active features
+                active_indices = torch.where(active_mask)[0]
+                for i in active_indices:
+                    for j in active_indices:
+                        if i != j:  # Off-diagonal
+                            result[i, j] = 0.0
+            
+            return result
         
         if not self.use_partial_graph_format or not self.propagate_partial_knowledge:
             # No preprocessing needed
@@ -629,6 +673,7 @@ class GraphConditionedInterventionalPFNSklearn:
         # Forward pass
         self.model.eval()
         with torch.no_grad():
+            #breakpoint()
             out = self.model(X_obs_t, T_obs_t, Y_obs_t, X_intv_t, T_intv_t, adjacency_matrix_t)
             predictions = out["predictions"]  # (B, M) or (B, M, output_dim)
         
