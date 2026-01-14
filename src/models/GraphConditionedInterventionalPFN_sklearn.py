@@ -328,7 +328,14 @@ class GraphConditionedInterventionalPFNSklearn:
         # This controls whether to force all-unknown matrices during inference
         if 'dataset_config' in config:
             dataset_cfg = config['dataset_config']
-            self.hide_fraction_matrix = float(get_config_value(dataset_cfg, 'hide_fraction_matrix', 0.0))
+            hide_frac_value = get_config_value(dataset_cfg, 'hide_fraction_matrix', 0.0)
+            # Check if it's a number (int or float) before converting
+            if isinstance(hide_frac_value, (int, float)):
+                self.hide_fraction_matrix = float(hide_frac_value)
+            else:
+                # If it's not a number, skip and use default
+                self.hide_fraction_matrix = 0.0
+            
             if self.verbose and self.hide_fraction_matrix > 0:
                 print(f"  hide_fraction_matrix: {self.hide_fraction_matrix}")
                 if self.hide_fraction_matrix >= 1.0:
