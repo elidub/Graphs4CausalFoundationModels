@@ -622,7 +622,10 @@ class InterventionalDataset(Dataset):
             # Sample an SCM
             scm = self.scm_sampler.sample(seed=seed + retry_attempt)
 
-            if self.return_scm:
+            # Always save original SCM if we need to return adjacency/ancestor matrices
+            # (need unmodified SCM before intervention removes incoming edges)
+            # Also save if return_scm is True for debugging
+            if self.return_scm or self.return_adjacency_matrix or self.return_ancestor_matrix:
                 org_scm = deepcopy(scm)
             
             # sample the observational data first
@@ -868,7 +871,12 @@ class InterventionalDataset(Dataset):
                     # Get adjacency matrix with this specific ordering: [T, Y, X_0, ..., X_{L-1}]
                     # where X_i corresponds to X[:, i] in the returned tensor
                     # This will be size (len(kept_features) + 2) x (len(kept_features) + 2)
-                    adj_matrix_unpadded = scm.get_adjacency_matrix(node_order=ordered_nodes)
+                    # 
+                    # IMPORTANT: Use org_scm (original SCM before intervention) to get the 
+                    # adjacency matrix! After scm.intervene() is called, the incoming edges
+                    # to the intervention node are removed, which would corrupt the graph.
+                    # We want the original causal structure for graph conditioning.
+                    adj_matrix_unpadded = org_scm.get_adjacency_matrix(node_order=ordered_nodes)
                     
                     # Convert to ancestor matrix if requested
                     if self.return_ancestor_matrix:
