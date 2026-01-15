@@ -13,9 +13,9 @@ when_to_transfer_output = ON_EXIT
 environment = "HOME=/tmp/wandb_home WANDB_API_KEY=e5ba90a037256650557e4644545bd281151588c8"
 
 request_gpus   = 1
-request_memory = 128GB
+request_memory = 512GB
 request_cpus   = 52
-request_disk   = 256GB
+request_disk   = 512GB
 
 # Pin to H100 nodes
 requirements = (regexp("H100", GPUs_DeviceName) && CUDAGlobalMemoryMb >= 75000)
