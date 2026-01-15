@@ -328,8 +328,21 @@ class GraphConditionedInterventionalPFNSklearn:
         # This controls whether to force all-unknown matrices during inference
         if 'dataset_config' in config:
             dataset_cfg = config['dataset_config']
-            self.hide_fraction_matrix = float(get_config_value(dataset_cfg, 'hide_fraction_matrix', 0.0))
-            if self.verbose and self.hide_fraction_matrix > 0:
+            hide_fraction_raw = get_config_value(dataset_cfg, 'hide_fraction_matrix', 0.0)
+            # Handle case where hide_fraction_matrix is a distribution (dict) rather than a fixed value
+            if isinstance(hide_fraction_raw, dict):
+                # If it's a distribution, use a default value (0.5 for variable, or check if it's fixed)
+                if 'value' in hide_fraction_raw:
+                    self.hide_fraction_matrix = float(hide_fraction_raw['value'])
+                else:
+                    # It's a distribution - for inference, we'll use the data's actual hide fraction
+                    # Set to None to indicate variable/unknown
+                    self.hide_fraction_matrix = None
+                    if self.verbose:
+                        print(f"  hide_fraction_matrix: variable (distribution)")
+            else:
+                self.hide_fraction_matrix = float(hide_fraction_raw)
+            if self.hide_fraction_matrix is not None and self.verbose and self.hide_fraction_matrix > 0:
                 print(f"  hide_fraction_matrix: {self.hide_fraction_matrix}")
                 if self.hide_fraction_matrix >= 1.0:
                     print(f"  → Inference mode: Off-diagonal entries in (L+2)×(L+2) will be hidden (set to 0)")
