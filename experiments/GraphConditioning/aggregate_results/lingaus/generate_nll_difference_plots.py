@@ -82,17 +82,17 @@ MODEL_COLORS = {
 
 # Model display names for plots
 MODEL_DISPLAY_NAMES = {
-    'hardatt': 'Hard Attention',
-    'ancestor_hardatt': 'Hard Attention (Ancestor)',
-    'softatt': 'Soft Attention',
-    'ancestor_softatt': 'Soft Attention (Ancestor)', 
-    'gcn': 'GCN',
-    'ancestor_gcn': 'GCN (Ancestor)',
-    'gcn_and_hartatt': 'GCN + Hard Attention',
-    'ancestor_gcn_and_hartatt': 'GCN + Hard Attention (Ancestor)',
-    'gcn_and_softatt': 'GCN + Soft Attention', 
-    'ancestor_gcn_and_softatt': 'GCN + Soft Attention (Ancestor)',
-    'gcn_and_softatt_fixed': 'GCN + Soft Attention (Fixed)',
+    'hardatt': 'Hard Att. (Adj.)',
+    'ancestor_hardatt': 'Hard Att. (Anc.)',
+    'softatt': 'Soft Att. (Adj.)',
+    'ancestor_softatt': 'Soft Att. (Anc.)', 
+    'gcn': 'GCN (Adj.)',
+    'ancestor_gcn': 'GCN (Anc.)',
+    'gcn_and_hartatt': 'GCN + Hard Att. (Adj.)',
+    'ancestor_gcn_and_hartatt': 'GCN + Hard Att. (Anc.)',
+    'gcn_and_softatt': 'GCN + Soft Att. (Adj.)', 
+    'ancestor_gcn_and_softatt': 'GCN + Soft Att. (Anc.)',
+    'gcn_and_softatt_fixed': 'GCN + Soft Att. (Fixed)',
     'baseline': 'Baseline'
 }
 
@@ -279,6 +279,101 @@ def compute_aggregated_nll_differences_with_bootstrap(results_dict, confidence_l
                 'baseline_nll_mean': np.nan,  # Not meaningful for aggregated
                 'model_nll_mean': np.nan      # Not meaningful for aggregated
             })
+    
+    return pd.DataFrame(difference_data)
+
+
+def compute_fully_aggregated_nll_differences_with_bootstrap(results_dict, confidence_level=0.90):
+    """Compute NLL differences with bootstrap CI fully aggregated across all variants AND all node counts.
+    
+    Creates a single comparison per model by aggregating:
+    1. All variants (TY, YT, independent_TY)
+    2. All node counts (2, 5, 10, 20, 35, 50)
+    """
+    difference_data = []
+    
+    # Variants to aggregate
+    variants_to_aggregate = ['path_TY', 'path_YT', 'path_independent_TY']
+    
+    # Collect ALL mean differences for each model (across all variants and node counts)
+    model_all_differences = {}  # {model: [all_mean_diffs]}
+    
+    # First get all baseline data organized by variant
+    baseline_data = {}  # {variant: {node_count: [nll_values]}}
+    for ckpt_key, ckpt_results in results_dict.items():
+        model_name = extract_model_name(ckpt_key)
+        if model_name == 'baseline':
+            for variant, variant_data in ckpt_results.items():
+                if variant in variants_to_aggregate:
+                    baseline_data[variant] = {}
+                    for node_count, individual_results in variant_data.items():
+                        baseline_data[variant][node_count] = [sample['nll'] for sample in individual_results]
+    
+    for ckpt_key, ckpt_results in results_dict.items():
+        model_name = extract_model_name(ckpt_key)
+        
+        if model_name == 'baseline':
+            continue  # Skip baseline
+            
+        # Initialize storage for this model
+        if model_name not in model_all_differences:
+            model_all_differences[model_name] = []
+            
+        # Process each variant separately
+        for variant in variants_to_aggregate:
+            if variant not in ckpt_results:
+                continue
+                
+            variant_data = ckpt_results[variant]
+            
+            # Check if we have baseline data for this specific variant
+            if variant not in baseline_data:
+                continue
+                
+            for node_count, individual_results in variant_data.items():
+                if node_count not in baseline_data[variant]:
+                    continue
+                    
+                # Get NLL values for this variant and node count
+                model_nll_values = [sample['nll'] for sample in individual_results]
+                baseline_nll_values = baseline_data[variant][node_count]
+                
+                if len(model_nll_values) == 0 or len(baseline_nll_values) == 0:
+                    continue
+                
+                # Compute mean NLLs for this variant/node_count combination
+                model_mean_nll = np.mean(model_nll_values)
+                baseline_mean_nll = np.mean(baseline_nll_values)
+                
+                # Compute difference for this variant (baseline - model, so positive = improvement)
+                variant_mean_diff = baseline_mean_nll - model_mean_nll
+                
+                # Store this mean difference (aggregating across ALL variants and node counts)
+                model_all_differences[model_name].append(variant_mean_diff)
+    
+    # Now compute bootstrap CI for ALL collected mean differences (fully aggregated)
+    for model_name, all_differences in model_all_differences.items():
+        if len(all_differences) == 0:
+            continue
+            
+        print(f"Fully aggregated - Model {model_name}: {len(all_differences)} data points")
+            
+        # Bootstrap confidence interval for the mean of ALL mean differences
+        mean_diff, ci_lower, ci_upper = bootstrap_confidence_interval(
+            all_differences, confidence_level=confidence_level
+        )
+        
+        difference_data.append({
+            'model': model_name,
+            'variant': 'fully_aggregated',
+            'node_count': 0,  # Dummy value to indicate aggregated across all
+            'n_samples': len(all_differences),
+            'nll_difference_mean': mean_diff,
+            'nll_difference_ci_lower': ci_lower,
+            'nll_difference_ci_upper': ci_upper,
+            'baseline_nll_mean': np.nan,  # Not meaningful for fully aggregated
+            'model_nll_mean': np.nan      # Not meaningful for fully aggregated
+        })
     
     return pd.DataFrame(difference_data)
 
@@ -749,7 +844,12 @@ def plot_nll_differences(df, node_counts_to_compare=None, title_suffix="", outpu
             continue
         
         # Create more square subplots - adjust for number of subplots
-        fig, axes = plt.subplots(1, len(node_counts_to_compare), figsize=(15 * len(node_counts_to_compare), 15))
+        # Make individual subplots square
+        if variant in ['aggregated_TY_YT_indep', 'fully_aggregated']:
+            fig, axes = plt.subplots(1, len(node_counts_to_compare), figsize=(15 * len(node_counts_to_compare), 15))
+        else:
+            # Non-aggregated plots: increase height by 50% for heading space
+            fig, axes = plt.subplots(1, len(node_counts_to_compare), figsize=(15 * len(node_counts_to_compare), 22.5))
         
         # Handle single column case
         if len(node_counts_to_compare) == 1:
@@ -827,16 +927,29 @@ def plot_nll_differences(df, node_counts_to_compare=None, title_suffix="", outpu
                                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
                                        edgecolor='none', alpha=0.7))
                 
-                # Add horizontal line at zero (no difference)
-                ax.axhline(y=0, color='black', linestyle='-', linewidth=1, alpha=0.8)
+                # Add horizontal line at zero (no difference) - thicker baseline
+                ax.axhline(y=0, color='black', linestyle='-', linewidth=3, alpha=0.9)
             
             # Set x-axis labels with display names
             ax.set_xticks(range(len(models)))
             model_display_names = [get_model_display_name(model) for model in models]
-            ax.set_xticklabels(model_display_names, rotation=45, ha='right', fontsize=30)
             
-            ax.set_title(f'{node_count} Nodes', fontsize=30, fontweight='bold')
-            ax.set_ylabel('Improvement', fontsize=30)
+            # Use larger font sizes for non-aggregated plots
+            if variant in ['aggregated_TY_YT_indep', 'fully_aggregated']:
+                label_fontsize = 30
+                ylabel_fontsize = 30
+                subplot_title_fontsize = 30
+            else:
+                label_fontsize = 45  # 50% increase from 30
+                ylabel_fontsize = 45
+                subplot_title_fontsize = 45
+            
+            ax.set_xticklabels(model_display_names, rotation=45, ha='right', fontsize=label_fontsize)
+            
+            # Only show node count in subplot title if there are multiple subplots
+            if len(node_counts_to_compare) > 1:
+                ax.set_title(f'{node_count} Nodes', fontsize=subplot_title_fontsize, fontweight='bold')
+            ax.set_ylabel('Improvement', fontsize=ylabel_fontsize)
             ax.grid(True, alpha=0.3, axis='y')
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
@@ -845,12 +958,15 @@ def plot_nll_differences(df, node_counts_to_compare=None, title_suffix="", outpu
         variant_display = variant_display_names.get(variant, variant)
         if variant == 'aggregated_TY_YT_indep':
             fig.suptitle('Improvement over Baseline (NLL)', fontsize=30, fontweight='bold', y=0.89)
+        elif variant == 'fully_aggregated':
+            fig.suptitle('Improvement over Baseline (NLL)', fontsize=30, fontweight='bold', y=0.89)
         else:
+            # Non-aggregated plots: 100% increase in title size (30→60)
             if title_suffix:
-                fig.suptitle(f'NLL Improvement over Baseline: {variant_display}\n{title_suffix}\n(90% Bootstrap CI)', 
-                            fontsize=30, fontweight='bold', y=0.89)
+                fig.suptitle(f'NLL Improvement over Baseline: {variant_display}\n{title_suffix}', 
+                            fontsize=60, fontweight='bold', y=0.89)
             else:
-                fig.suptitle('Improvement over Baseline (NLL)', fontsize=30, fontweight='bold', y=0.89)
+                fig.suptitle('Improvement over Baseline (NLL)', fontsize=60, fontweight='bold', y=0.89)
         
         plt.tight_layout(rect=[0, 0, 1, 0.9])
         
@@ -898,7 +1014,12 @@ def plot_mse_differences(df, node_counts_to_compare=None, title_suffix="", outpu
             continue
         
         # Create more square subplots - adjust for number of subplots
-        fig, axes = plt.subplots(1, len(node_counts_to_compare), figsize=(12 * len(node_counts_to_compare), 12))
+        # Make individual subplots square
+        if variant in ['aggregated_TY_YT_indep', 'fully_aggregated']:
+            fig, axes = plt.subplots(1, len(node_counts_to_compare), figsize=(12 * len(node_counts_to_compare), 12))
+        else:
+            # Non-aggregated plots: increase height by 50% for heading space
+            fig, axes = plt.subplots(1, len(node_counts_to_compare), figsize=(15 * len(node_counts_to_compare), 22.5))
         
         # Handle single column case
         if len(node_counts_to_compare) == 1:
@@ -976,16 +1097,27 @@ def plot_mse_differences(df, node_counts_to_compare=None, title_suffix="", outpu
                                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
                                        edgecolor='none', alpha=0.7))
                 
-                # Add horizontal line at zero (no difference)
-                ax.axhline(y=0, color='black', linestyle='-', linewidth=1, alpha=0.8)
+                # Add horizontal line at zero (no difference) - thicker baseline
+                ax.axhline(y=0, color='black', linestyle='-', linewidth=3, alpha=0.9)
             
             # Set x-axis labels with display names
             ax.set_xticks(range(len(models)))
             model_display_names = [get_model_display_name(model) for model in models]
-            ax.set_xticklabels(model_display_names, rotation=45, ha='right', fontsize=30)
             
-            ax.set_title(f'{node_count} Nodes', fontsize=30, fontweight='bold')
-            ax.set_ylabel('Absolute improvement', fontsize=30, fontweight='bold')
+            # Use larger font sizes for non-aggregated plots
+            if variant in ['aggregated_TY_YT_indep', 'fully_aggregated']:
+                label_fontsize = 30
+                ylabel_fontsize = 30
+                subplot_title_fontsize = 30
+            else:
+                label_fontsize = 45  # 50% increase from 30
+                ylabel_fontsize = 45
+                subplot_title_fontsize = 45
+            
+            ax.set_xticklabels(model_display_names, rotation=45, ha='right', fontsize=label_fontsize)
+            
+            ax.set_title(f'{node_count} Nodes', fontsize=subplot_title_fontsize, fontweight='bold')
+            ax.set_ylabel('Absolute improvement', fontsize=ylabel_fontsize, fontweight='bold')
             ax.grid(True, alpha=0.3, axis='y')
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
@@ -994,8 +1126,15 @@ def plot_mse_differences(df, node_counts_to_compare=None, title_suffix="", outpu
         variant_display = variant_display_names.get(variant, variant)
         if variant == 'aggregated_TY_YT_indep':
             fig.suptitle('Improvement over Baseline (MSE)', fontsize=30, fontweight='bold', y=0.95)
+        elif variant == 'fully_aggregated':
+            fig.suptitle('Improvement over Baseline (MSE)', fontsize=30, fontweight='bold', y=0.95)
         else:
-            fig.suptitle(f'MSE Improvement: {variant_display}{title_suffix}', fontsize=30, fontweight='bold', y=0.95)
+            # Non-aggregated plots: 100% increase in title size (30→60), match NLL format
+            if title_suffix:
+                fig.suptitle(f'MSE Improvement over Baseline: {variant_display}\n{title_suffix}', 
+                            fontsize=60, fontweight='bold', y=0.95)
+            else:
+                fig.suptitle('Improvement over Baseline (MSE)', fontsize=60, fontweight='bold', y=0.95)
         
         plt.tight_layout(rect=[0, 0, 1, 0.9])
         
@@ -1043,7 +1182,12 @@ def plot_r2_differences(df, node_counts_to_compare=None, title_suffix="", output
             continue
         
         # Create more square subplots - adjust for number of subplots
-        fig, axes = plt.subplots(1, len(node_counts_to_compare), figsize=(12 * len(node_counts_to_compare), 12))
+        # Make individual subplots square
+        if variant in ['aggregated_TY_YT_indep', 'fully_aggregated']:
+            fig, axes = plt.subplots(1, len(node_counts_to_compare), figsize=(12 * len(node_counts_to_compare), 12))
+        else:
+            # Non-aggregated plots: increase height by 50% for heading space
+            fig, axes = plt.subplots(1, len(node_counts_to_compare), figsize=(15 * len(node_counts_to_compare), 22.5))
         
         # Handle single column case
         if len(node_counts_to_compare) == 1:
@@ -1121,16 +1265,27 @@ def plot_r2_differences(df, node_counts_to_compare=None, title_suffix="", output
                                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
                                        edgecolor='none', alpha=0.7))
                 
-                # Add horizontal line at zero (no difference)
-                ax.axhline(y=0, color='black', linestyle='-', linewidth=1, alpha=0.8)
+                # Add horizontal line at zero (no difference) - thicker baseline
+                ax.axhline(y=0, color='black', linestyle='-', linewidth=3, alpha=0.9)
             
             # Set x-axis labels with display names
             ax.set_xticks(range(len(models)))
             model_display_names = [get_model_display_name(model) for model in models]
-            ax.set_xticklabels(model_display_names, rotation=45, ha='right', fontsize=30)
             
-            ax.set_title(f'{node_count} Nodes', fontsize=30, fontweight='bold')
-            ax.set_ylabel('Absolute improvement', fontsize=30, fontweight='bold')
+            # Use larger font sizes for non-aggregated plots
+            if variant in ['aggregated_TY_YT_indep', 'fully_aggregated']:
+                label_fontsize = 30
+                ylabel_fontsize = 30
+                subplot_title_fontsize = 30
+            else:
+                label_fontsize = 45  # 50% increase from 30
+                ylabel_fontsize = 45
+                subplot_title_fontsize = 45
+            
+            ax.set_xticklabels(model_display_names, rotation=45, ha='right', fontsize=label_fontsize)
+            
+            ax.set_title(f'{node_count} Nodes', fontsize=subplot_title_fontsize, fontweight='bold')
+            ax.set_ylabel('Absolute improvement', fontsize=ylabel_fontsize, fontweight='bold')
             ax.grid(True, alpha=0.3, axis='y')
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
@@ -1139,8 +1294,15 @@ def plot_r2_differences(df, node_counts_to_compare=None, title_suffix="", output
         variant_display = variant_display_names.get(variant, variant)
         if variant == 'aggregated_TY_YT_indep':
             fig.suptitle('Improvement over Baseline (R²)', fontsize=30, fontweight='bold', y=0.95)
+        elif variant == 'fully_aggregated':
+            fig.suptitle('Improvement over Baseline (R²)', fontsize=30, fontweight='bold', y=0.95)
         else:
-            fig.suptitle(f'R² Improvement: {variant_display}{title_suffix}', fontsize=30, fontweight='bold', y=0.95)
+            # Non-aggregated plots: 100% increase in title size (30→60), match NLL format
+            if title_suffix:
+                fig.suptitle(f'R² Improvement over Baseline: {variant_display}\n{title_suffix}', 
+                            fontsize=60, fontweight='bold', y=0.95)
+            else:
+                fig.suptitle('Improvement over Baseline (R²)', fontsize=60, fontweight='bold', y=0.95)
         
         plt.tight_layout(rect=[0, 0, 1, 0.9])
         
@@ -1337,11 +1499,35 @@ def main():
     if not aggregated_df.empty:
         print(f"Computed aggregated differences for {len(aggregated_df)} model-node combinations")
         
-        # Generate aggregated plots
+        # Generate aggregated plots - original version (5, 20, 50 nodes)
         plot_nll_differences(aggregated_df, 
                             node_counts_to_compare=[5, 20, 50],
                             title_suffix="",
                             output_prefix="nll_difference_aggregated",
+                            show_values=False,
+                            output_dir=nll_output_dir)
+        
+        # Generate aggregated plot - only 20 nodes
+        plot_nll_differences(aggregated_df, 
+                            node_counts_to_compare=[20],
+                            title_suffix="",
+                            output_prefix="nll_difference_aggregated_20node",
+                            show_values=False,
+                            output_dir=nll_output_dir)
+        
+        # Generate aggregated plot - only 35 nodes
+        plot_nll_differences(aggregated_df, 
+                            node_counts_to_compare=[35],
+                            title_suffix="",
+                            output_prefix="nll_difference_aggregated_35node",
+                            show_values=False,
+                            output_dir=nll_output_dir)
+        
+        # Generate aggregated plot - all node counts
+        plot_nll_differences(aggregated_df, 
+                            node_counts_to_compare=[2, 5, 10, 20, 35, 50],
+                            title_suffix="",
+                            output_prefix="nll_difference_aggregated_allnodes",
                             show_values=False,
                             output_dir=nll_output_dir)
         
@@ -1352,6 +1538,23 @@ def main():
                                       output_dir=nll_output_dir)
     else:
         print("No aggregated data could be computed!")
+    
+    # Compute and plot FULLY aggregated data (all variants + all node counts)
+    print("\nComputing FULLY aggregated NLL differences (all variants + all node counts)...")
+    fully_aggregated_df = compute_fully_aggregated_nll_differences_with_bootstrap(results_dict, confidence_level=0.90)
+    
+    if not fully_aggregated_df.empty:
+        print(f"Computed fully aggregated differences for {len(fully_aggregated_df)} models")
+        
+        # Generate fully aggregated plot - single comparison across all models
+        plot_nll_differences(fully_aggregated_df, 
+                            node_counts_to_compare=[0],  # Dummy value, will create single column
+                            title_suffix="",
+                            output_prefix="nll_difference_fully_aggregated",
+                            show_values=False,
+                            output_dir=nll_output_dir)
+    else:
+        print("No fully aggregated data could be computed!")
     
     # MSE Analysis
     print("\n" + "="*80)
