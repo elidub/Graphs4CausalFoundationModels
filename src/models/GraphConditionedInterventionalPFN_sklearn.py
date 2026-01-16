@@ -497,7 +497,8 @@ class GraphConditionedInterventionalPFNSklearn:
         """
         # If trained with hide_fraction_matrix >= 1.0, force off-diagonal entries to 0 (unknown)
         # This ensures inference matches the training condition
-        if self.hide_fraction_matrix >= 1.0:
+        # Skip if hide_fraction_matrix is None (variable/distribution mode)
+        if self.hide_fraction_matrix is not None and self.hide_fraction_matrix >= 1.0:
             # Get the size of the feature adjacency part (L+2)
             # The matrix may be larger if there are sink columns added
             # We determine L+2 as the model's num_features + 2
