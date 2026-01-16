@@ -1123,7 +1123,7 @@ class ComplexMechBenchmark:
                                 output_dir=output_dir,
                                 model_name=None,
                                 n_bootstrap=1000,
-                                save_individual_results=False,
+                                save_individual_results=True,
                             )
                             all_results[config_key] = result
                             
@@ -1159,7 +1159,7 @@ class ComplexMechBenchmark:
                                     output_dir=output_dir,
                                     model_name=None,
                                     n_bootstrap=1000,
-                                    save_individual_results=False,
+                                    save_individual_results=True,
                                 )
                                 all_results[config_key] = result
                                 
