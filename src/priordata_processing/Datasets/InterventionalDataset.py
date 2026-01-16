@@ -14,6 +14,7 @@ from priors.causal_prior.noise_distributions.ResamplingDist import ResamplingDis
 from priors.causal_prior.noise_distributions.RescaledResamplingDist import RescaledResamplingDist
 from priors.causal_prior.noise_distributions.UniformResamplingDist import UniformResamplingDist
 from priors.causal_prior.noise_distributions.ScaledUniformResamplingDist import ScaledUniformResamplingDist
+from priors.causal_prior.mechanisms.BinarizingMechanism import BinarizingMechanism
 
 from priors.causal_prior.scm.SCMSampler import SCMSampler
 from priordata_processing.BasicProcessing import BasicProcessing
@@ -245,6 +246,11 @@ class InterventionalDataset(Dataset):
         # Value between 0 and 1. Can be specified as a distribution in the YAML (e.g. uniform 0..1).
         # Requires use_partial_graph_format=True if > 0.
         "hide_fraction_matrix": float,
+        # Probability of binarizing the treatment variable.
+        # Value between 0 and 1. When triggered, the treatment mechanism is wrapped
+        # to threshold its output at the median of the observational distribution,
+        # creating a binary (0/1) treatment variable.
+        "binarize_treatment_prob": float,
     }
     
     # Distribution factories for building samplers
@@ -639,6 +645,44 @@ class InterventionalDataset(Dataset):
             # now, do interventional sampling
             # for interventional sampling, first determine intervention node
             intervention_node = torch.randint(0, len(scm.dag.nodes()), (1,)).item() # select random node for intervention
+            
+            # === TREATMENT BINARIZATION ===
+            # Optionally binarize the treatment variable based on binarize_treatment_prob
+            binarize_prob = dataset_params.get("binarize_treatment_prob", 0.0)
+            should_binarize = False
+            if binarize_prob is not None and binarize_prob > 0:
+                # Sample whether to binarize
+                if torch.rand(1, generator=item_generator).item() < binarize_prob:
+                    should_binarize = True
+            
+            if should_binarize:
+                # Get observational treatment values for quantile-based sampling
+                treatment_values = obs0_raw[intervention_node]
+                
+                # Try to wrap the treatment node's mechanism with BinarizingMechanism
+                # using the factory method that samples threshold, t0, t1 from quantiles.
+                # If the treatment values have no variance (e.g., constant), skip binarization.
+                original_mechanism = scm.mechanisms[intervention_node]
+                try:
+                    binarized_mechanism = BinarizingMechanism.from_observational_data(
+                        wrapped_mechanism=original_mechanism,
+                        obs_values=treatment_values
+                    )
+                    scm.mechanisms[intervention_node] = binarized_mechanism
+                    
+                    # Re-sample observational data with the binarized mechanism
+                    # to ensure obs0 reflects the binarized treatment
+                    scm.sample_exogenous(num_samples=number_train_samples)
+                    scm.sample_endogenous(num_samples=number_train_samples)
+                    obs0_raw = scm.propagate(num_samples=number_train_samples)
+                    obs0 = {k: v.reshape(-1, 1) if v.dim() == 1 else v for k, v in obs0_raw.items()}
+                    
+                    # Also update org_scm if we're returning matrices
+                    if self.return_scm or self.return_adjacency_matrix or self.return_ancestor_matrix:
+                        org_scm.mechanisms[intervention_node] = binarized_mechanism
+                except ValueError:
+                    # Treatment values have no variance, skip binarization for this sample
+                    pass
             
             # CRITICAL: Check path constraints on the ORIGINAL SCM before intervention
             # We need to determine the target node first to check constraints

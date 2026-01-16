@@ -1851,7 +1851,7 @@ def main():
     # =============================================================
     
     # Path to YAML config file (relative to repository root)
-    CONFIG_PATH = 'experiments/GraphConditioning/configs/two_nodes_lingaus.yaml'
+    CONFIG_PATH = '/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FinalModel/configs_early/final_earlytest_binarize.yaml'
     
     # Random seed for reproducibility
     SEED = 42
