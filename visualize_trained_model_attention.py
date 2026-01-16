@@ -513,6 +513,7 @@ def visualize_attention_maps(model, config, save_dir: str = './attention_visuali
         # Use multiple samples from the dataset to show different graph structures
         sample_indices = [0, 2, 5, 8]  # Sample a few different cases
         graphs = {}
+        sample_X_obs = sample_T_obs = sample_Y_obs = sample_X_intv = sample_T_intv = None
         
         for i, sample_idx in enumerate(sample_indices):
             try:
@@ -525,7 +526,8 @@ def visualize_attention_maps(model, config, save_dir: str = './attention_visuali
                 
                 graphs[graph_name] = adj
                 
-                if i == 0:  # Use first sample's data for all visualizations
+                # Use first successfully sampled data for all visualizations
+                if sample_X_obs is None:
                     sample_X_obs, sample_T_obs, sample_Y_obs = X_obs, T_obs, Y_obs
                     sample_X_intv, sample_T_intv = X_intv, T_intv
                 
@@ -913,8 +915,8 @@ def main():
     print()
     
     # Hardcoded paths - modify these to visualize different models
-    config_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/lingaus_ancestor_5node_idk_gcn_and_softatt_16754875.0/best_model_config.yaml"
-    checkpoint_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/lingaus_ancestor_5node_idk_gcn_and_softatt_16754875.0/best_model.pt"
+    config_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/step_200000_config.yaml"
+    checkpoint_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/step_200000.pt"
     trained_output_dir = "./ancestor_5node_attention_maps"
     random_output_dir = "./ancestor_5node_random_attention_maps"
     
