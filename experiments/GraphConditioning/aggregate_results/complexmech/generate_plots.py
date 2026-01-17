@@ -245,6 +245,7 @@ def create_dataframe(results: Dict, individual_results: Optional[Dict] = None,
     
     If individual_results are provided, recompute CIs at the specified confidence level.
     Uses median statistics instead of mean for robustness against outliers.
+    Falls back to pre-computed mean values if no individual results are available.
     """
     data_rows = []
     
@@ -283,6 +284,19 @@ def create_dataframe(results: Dict, individual_results: Optional[Dict] = None,
                     row[f'{metric_name}_median'] = median_val
                     row[f'{metric_name}_median_ci_lower'] = ci_lower
                     row[f'{metric_name}_median_ci_upper'] = ci_upper
+        else:
+            # Fall back to pre-computed mean values if no individual results
+            for metric_name in ['mse', 'r2', 'nll']:
+                if metric_name in metrics:
+                    metric_values = metrics[metric_name]
+                    if isinstance(metric_values, dict):
+                        # Use mean as fallback for median
+                        if 'mean' in metric_values:
+                            row[f'{metric_name}_median'] = metric_values['mean']
+                        if 'ci_lower' in metric_values:
+                            row[f'{metric_name}_median_ci_lower'] = metric_values['ci_lower']
+                        if 'ci_upper' in metric_values:
+                            row[f'{metric_name}_median_ci_upper'] = metric_values['ci_upper']
         
         data_rows.append(row)
     
@@ -568,6 +582,200 @@ def print_summary_statistics(df: pd.DataFrame, output_dir: Path,
     print(f"Saved summary: {output_file}")
 
 
+def plot_comparison(dfs: Dict[str, pd.DataFrame], model_labels: List[str],
+                   node_counts_to_compare: List[int], output_dir: Path,
+                   title_suffix: str = "", output_prefix: str = ""):
+    """Create comparison plots showing multiple models side by side.
+    
+    Args:
+        dfs: Dictionary mapping model label to its DataFrame
+        model_labels: List of model labels in order
+        node_counts_to_compare: Node counts to include
+        output_dir: Directory to save plots
+        title_suffix: Suffix for plot titles
+        output_prefix: Prefix for output filenames
+    """
+    # Define colors for different models
+    MODEL_COLORS = [
+        '#1f77b4',  # Blue
+        '#ff7f0e',  # Orange
+        '#2ca02c',  # Green
+        '#d62728',  # Red
+        '#9467bd',  # Purple
+        '#8c564b',  # Brown
+    ]
+    
+    # Get all variants across all models
+    all_variants = set()
+    for df in dfs.values():
+        all_variants.update(df['variant'].unique())
+    variants = sorted(all_variants)
+    
+    metrics_to_plot = ['mse', 'r2', 'nll']
+    metric_titles = ['MSE', 'R²', 'NLL']
+    
+    for variant in variants:
+        # Get variant data for each model
+        variant_dfs = {}
+        for label, df in dfs.items():
+            variant_data = df[df['variant'] == variant].copy()
+            if len(variant_data) > 0:
+                variant_dfs[label] = variant_data
+        
+        if not variant_dfs:
+            print(f"No data for variant: {variant}")
+            continue
+        
+        # Get sample sizes from all models
+        if variant == 'base':
+            sample_sizes = [None]
+        else:
+            all_sample_sizes = set()
+            for vdf in variant_dfs.values():
+                all_sample_sizes.update([s for s in vdf['sample_size'].unique() if s is not None])
+            sample_sizes = sorted(all_sample_sizes)
+        
+        # Get node counts
+        if variant == 'aggregated_all':
+            node_counts_for_plot = [0]
+        else:
+            all_node_counts = set()
+            for vdf in variant_dfs.values():
+                all_node_counts.update(vdf['node_count'].unique())
+            node_counts_for_plot = sorted([n for n in all_node_counts if n in node_counts_to_compare])
+        
+        if not node_counts_for_plot:
+            print(f"No matching node counts for variant {variant}")
+            continue
+        
+        # Create figure
+        if variant == 'aggregated_all':
+            fig, axes = plt.subplots(1, len(metrics_to_plot), 
+                                    figsize=(6 * len(metrics_to_plot), 5))
+            axes = axes.reshape(1, -1)
+        else:
+            fig, axes = plt.subplots(len(metrics_to_plot), len(node_counts_for_plot), 
+                                    figsize=(6 * len(node_counts_for_plot), 5 * len(metrics_to_plot)))
+            if len(node_counts_for_plot) == 1:
+                axes = axes.reshape(-1, 1)
+        
+        # Calculate bar width and positions for grouped bars
+        n_models = len(model_labels)
+        bar_width = 0.8 / n_models
+        
+        # Plot each metric
+        for metric_idx, (metric, metric_title) in enumerate(zip(metrics_to_plot, metric_titles)):
+            for node_idx, node_count in enumerate(node_counts_for_plot):
+                if variant == 'aggregated_all':
+                    ax = axes[0, metric_idx]
+                else:
+                    ax = axes[metric_idx, node_idx]
+                
+                metric_col = f'{metric}_median'
+                ci_lower_col = f'{metric}_median_ci_lower'
+                ci_upper_col = f'{metric}_median_ci_upper'
+                
+                # Plot bars for each model
+                for model_idx, model_label in enumerate(model_labels):
+                    if model_label not in variant_dfs:
+                        continue
+                    
+                    vdf = variant_dfs[model_label]
+                    
+                    if variant == 'aggregated_all':
+                        node_data = vdf.copy()
+                    else:
+                        node_data = vdf[vdf['node_count'] == node_count].copy()
+                    
+                    if len(node_data) == 0 or metric_col not in node_data.columns:
+                        continue
+                    
+                    positions = []
+                    heights = []
+                    error_lower = []
+                    error_upper = []
+                    
+                    for ss_idx, sample_size in enumerate(sample_sizes):
+                        if sample_size is None:
+                            ss_data = node_data
+                        else:
+                            ss_data = node_data[node_data['sample_size'] == sample_size]
+                        
+                        if len(ss_data) == 0:
+                            continue
+                        
+                        median_val = ss_data[metric_col].values[0]
+                        # Calculate offset for grouped bars
+                        offset = (model_idx - (n_models - 1) / 2) * bar_width
+                        positions.append(ss_idx + offset)
+                        heights.append(median_val)
+                        
+                        if ci_lower_col in ss_data.columns and ci_upper_col in ss_data.columns:
+                            ci_low = ss_data[ci_lower_col].values[0]
+                            ci_high = ss_data[ci_upper_col].values[0]
+                            if not np.isnan(ci_low) and not np.isnan(ci_high):
+                                error_lower.append(median_val - ci_low)
+                                error_upper.append(ci_high - median_val)
+                            else:
+                                error_lower.append(0)
+                                error_upper.append(0)
+                        else:
+                            error_lower.append(0)
+                            error_upper.append(0)
+                    
+                    if positions:
+                        color = MODEL_COLORS[model_idx % len(MODEL_COLORS)]
+                        bars = ax.bar(positions, heights, width=bar_width, 
+                                     color=color, alpha=0.7,
+                                     edgecolor='black', linewidth=1.0,
+                                     label=model_label if (metric_idx == 0 and node_idx == 0) else "")
+                        
+                        if any(e > 0 for e in error_lower) or any(e > 0 for e in error_upper):
+                            ax.errorbar(positions, heights,
+                                       yerr=[error_lower, error_upper],
+                                       fmt='none', color='black', capsize=3, capthick=1.5)
+                
+                # Set x-axis labels
+                if variant == 'base':
+                    ax.set_xticks([0])
+                    ax.set_xticklabels(['Base'], fontsize=12)
+                else:
+                    ax.set_xticks(range(len(sample_sizes)))
+                    ax.set_xticklabels([str(s) for s in sample_sizes], fontsize=12)
+                    ax.set_xlabel('Sample Size (ntest)', fontsize=14)
+                
+                # Set titles and labels
+                if variant == 'aggregated_all':
+                    ax.set_title(metric_title, fontsize=16, fontweight='bold')
+                else:
+                    if metric_idx == 0:
+                        ax.set_title(f'{node_count} Nodes', fontsize=16, fontweight='bold')
+                    if node_idx == 0:
+                        ax.set_ylabel(metric_title, fontsize=16, fontweight='bold')
+                
+                ax.tick_params(axis='y', labelsize=12)
+                ax.grid(True, alpha=0.3, axis='y')
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+        
+        # Add legend
+        handles, labels = axes[0, 0].get_legend_handles_labels() if variant == 'aggregated_all' else axes[0, -1].get_legend_handles_labels()
+        fig.legend(handles, labels, loc='upper right', fontsize=12, bbox_to_anchor=(0.98, 0.98))
+        
+        # Add variant title
+        variant_display = VARIANT_DISPLAY_NAMES.get(variant, variant)
+        fig.suptitle(f'{variant_display} - Model Comparison\n{title_suffix}', 
+                    fontsize=16, fontweight='bold', y=1.02)
+        
+        plt.tight_layout(rect=[0, 0, 0.95, 0.95])
+        
+        filename = f"{output_prefix}_comparison_{variant}.png"
+        filepath = output_dir / filename
+        plt.savefig(filepath, dpi=300, bbox_inches='tight')
+        print(f"Saved: {filepath}")
+        plt.close(fig)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate plots for ComplexMech benchmark results (LinGaus IDK style).",
@@ -576,8 +784,28 @@ def main():
     parser.add_argument(
         "--results_dir",
         type=str,
-        required=True,
-        help="Directory containing ComplexMech benchmark JSON results"
+        required=False,
+        default=None,
+        help="Directory containing ComplexMech benchmark JSON results (for single model)"
+    )
+    parser.add_argument(
+        "--compare",
+        action="store_true",
+        help="Enable comparison mode to plot multiple models together"
+    )
+    parser.add_argument(
+        "--compare_dirs",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Directories containing results for comparison (use with --compare)"
+    )
+    parser.add_argument(
+        "--model_labels",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Labels for each model in comparison (must match number of --compare_dirs)"
     )
     parser.add_argument(
         "--output_dir",
@@ -606,6 +834,100 @@ def main():
     )
     
     args = parser.parse_args()
+    
+    # Handle comparison mode
+    if args.compare:
+        if not args.compare_dirs or len(args.compare_dirs) < 2:
+            print("ERROR: --compare requires at least 2 directories via --compare_dirs")
+            return
+        
+        # Validate directories
+        compare_dirs = [Path(d) for d in args.compare_dirs]
+        for d in compare_dirs:
+            if not d.exists():
+                print(f"ERROR: Results directory not found: {d}")
+                return
+        
+        # Generate model labels if not provided
+        if args.model_labels:
+            if len(args.model_labels) != len(args.compare_dirs):
+                print(f"ERROR: Number of --model_labels ({len(args.model_labels)}) must match --compare_dirs ({len(args.compare_dirs)})")
+                return
+            model_labels = args.model_labels
+        else:
+            # Auto-generate labels from directory names
+            model_labels = [d.parent.name if d.name.startswith('complexmech') else d.name for d in compare_dirs]
+        
+        # Setup output directory
+        if args.output_dir:
+            output_dir = Path(args.output_dir)
+        else:
+            output_dir = compare_dirs[0].parent / "comparison_plots" / timestamp
+        
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        print("="*80)
+        print("ComplexMech Benchmark Comparison")
+        print("="*80)
+        print(f"Comparing {len(compare_dirs)} models:")
+        for label, d in zip(model_labels, compare_dirs):
+            print(f"  - {label}: {d}")
+        print(f"Output directory: {output_dir}")
+        print(f"Confidence level: {args.confidence_level*100:.0f}%")
+        print()
+        
+        # Load data for each model
+        dfs = {}
+        for label, results_dir in zip(model_labels, compare_dirs):
+            print(f"\n--- Loading: {label} ---")
+            results = load_complexmech_results(results_dir)
+            if not results:
+                print(f"  WARNING: No results loaded for {label}")
+                continue
+            
+            individual_results = load_individual_results(results_dir)
+            df = create_dataframe(results, individual_results, confidence_level=args.confidence_level)
+            
+            if len(df) > 0:
+                dfs[label] = df
+                
+                # Also add aggregated data
+                df_agg = create_aggregated_dataframe(df)
+                if len(df_agg) > 0:
+                    # Merge aggregated into main df
+                    dfs[label] = pd.concat([df, df_agg], ignore_index=True)
+            else:
+                print(f"  WARNING: Empty DataFrame for {label}")
+        
+        if len(dfs) < 2:
+            print("ERROR: Need at least 2 models with valid data for comparison")
+            return
+        
+        # Generate comparison plots
+        print("\n" + "="*80)
+        print("Generating comparison plots...")
+        print("="*80)
+        
+        plot_comparison(
+            dfs,
+            model_labels,
+            args.node_counts,
+            output_dir,
+            title_suffix="",
+            output_prefix="complexmech"
+        )
+        
+        print()
+        print("="*80)
+        print("Comparison complete!")
+        print(f"Plots saved to: {output_dir}")
+        print("="*80)
+        return
+    
+    # Single model mode (original behavior)
+    if not args.results_dir:
+        print("ERROR: --results_dir is required for single model mode")
+        return
     
     results_dir = Path(args.results_dir)
     

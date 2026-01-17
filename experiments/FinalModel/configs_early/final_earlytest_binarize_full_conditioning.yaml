@@ -338,7 +338,7 @@ preprocessing_config:
   # Test feature masking: randomly mask a fraction of features in test set only
   # Creates distribution shift where test has fewer features than train
   test_feature_mask_fraction:
-    value: 1.0
+    value: 0.0
   
   random_seed:
     distribution: "discrete_uniform"

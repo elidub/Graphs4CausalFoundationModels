@@ -28,6 +28,6 @@ requirements = (regexp("H100", GPUs_DeviceName) && CUDAGlobalMemoryMb >= 75000)
 # Model 16773480.0 - High fidelity
 config_path = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773480.0/step_200000_config.yaml
 checkpoint_path = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773480.0/step_200000.pt
-fidelity = low
+fidelity = high
 output_dir = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773480.0/complexmech_high
 queue 1
