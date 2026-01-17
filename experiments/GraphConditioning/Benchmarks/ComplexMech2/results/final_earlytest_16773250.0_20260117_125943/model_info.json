@@ -1,0 +1,6 @@
+{
+  "model_id": "final_earlytest_16773250.0",
+  "config_path": "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist_config.yaml",
+  "checkpoint_path": "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist.pt",
+  "timestamp": "20260117_125943"
+}
