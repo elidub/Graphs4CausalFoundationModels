@@ -128,7 +128,8 @@ def run_simple_run_test(config_path):
 
 def main():
     
-    CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "experiments" / "FinalModel" / "configs_early" / "final_earlytest_binarize.yaml"
+    path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMech2/config/config.yaml"
+    CONFIG_PATH = Path(path)
     
     """Main test function."""
     print("=" * 60)
