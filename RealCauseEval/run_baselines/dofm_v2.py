@@ -131,8 +131,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Model paths
-    checkpoint_path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist.pt"
-    model_config_path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist_config.yaml"
+    checkpoint_path = "path_to_the_checkpoint"
+    model_config_path = "path_to_the_model_config.yaml"
     
     print(f"Loading model from: {checkpoint_path}")
     model = PreprocessingGraphConditionedPFN(
