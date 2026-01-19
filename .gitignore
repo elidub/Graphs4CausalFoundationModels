@@ -51,9 +51,14 @@ bias_effects.png
 *.DS_Store
 
 # Ignore RealCauseEval but keep specific files
-/RealCauseEval/*
-!/RealCauseEval/run_baselines
-/RealCauseEval/run_baselines/*
-!/RealCauseEval/run_baselines/dofm_v2.py
+#RealCauseEval/*
+#RealCauseEval/run_baselines
+#RealCauseEval/run_baselines/*
+#RealCauseEval/run_baselines/dofm_v2.py
 
 /experiments/GraphConditioning/Benchmarks/ComplexMech2/data_cache
+
+/benchmark_analysis
+
+
+/RealCauseEval/results
