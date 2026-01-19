@@ -30,6 +30,7 @@ if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
 from priordata_processing.Datasets.InterventionalDataset import InterventionalDataset
+from priordata_processing.Datasets.Collator import BatchSplitCollator
 from models.GraphConditionedInterventionalPFN_sklearn import GraphConditionedInterventionalPFNSklearn
 
 
@@ -74,6 +75,7 @@ class ComplexMechBenchmark:
         self.verbose = verbose
         self.config = None
         self.dataset = None
+        self.collator = None  # BatchSplitCollator for varying dataset sizes
         self.model = None  # GraphConditionedInterventionalPFNSklearn model
         
         # Create cache directory if it doesn't exist
@@ -99,6 +101,81 @@ class ComplexMechBenchmark:
             print(f"  Mode: {self.config.get('mode', 'N/A')}")
         
         return self.config
+    
+    def create_collator(self) -> BatchSplitCollator:
+        """
+        Create a BatchSplitCollator from the dataset config.
+        This handles varying train/test splits just like in training.
+        
+        Returns:
+            BatchSplitCollator instance
+        """
+        if self.config is None:
+            self.load_config()
+        
+        dataset_config = self.config.get('dataset_config', {})
+        
+        # Import torch.distributions for creating distribution objects
+        import torch.distributions as dist
+        
+        # Helper to extract values from config (handles both plain values and dict with 'value' key)
+        def _get_value(cfg_entry):
+            """Extract value from config entry that may be plain value or dict."""
+            if isinstance(cfg_entry, dict):
+                if "value" in cfg_entry:
+                    return cfg_entry["value"]
+                # If it's a distribution config, return it as-is
+                return cfg_entry
+            return cfg_entry
+        
+        # Get max sizes from config
+        max_total = int(_get_value(dataset_config.get("max_number_samples_per_dataset", 1000)))
+        max_train_cap = int(_get_value(dataset_config.get("max_number_train_samples_per_dataset", max_total)))
+        max_test_cap = int(_get_value(dataset_config.get("max_number_test_samples_per_dataset", max_total)))
+        
+        # Build distribution for n_test per dataset (must be torch.distributions.Distribution or int)
+        n_test_cfg = dataset_config.get("n_test_samples_per_dataset")
+        n_test_val = _get_value(n_test_cfg)
+        
+        if isinstance(n_test_val, dict) and n_test_val.get("distribution"):
+            # Distribution-based test size - create actual torch.distributions object
+            dist_type = n_test_val.get("distribution")
+            params = n_test_val.get("distribution_parameters", {})
+            
+            if dist_type == "discrete_uniform":
+                low = int(params.get("low", 0))
+                high = int(params.get("high", max_total))
+                # Use Uniform and cast to int inside collator
+                n_test_dist = dist.Uniform(low=low, high=high)
+            elif dist_type == "uniform":
+                n_test_dist = dist.Uniform(low=float(params.get("low", 0)), high=float(params.get("high", max_total)))
+            elif dist_type == "normal":
+                n_test_dist = dist.Normal(loc=float(params.get("mean", max_total // 2)), scale=float(params.get("std", max(1, max_total/10))))
+            else:
+                # Fallback: fixed half split
+                n_test_dist = max_total // 2
+        elif isinstance(n_test_val, int):
+            # Fixed test size
+            n_test_dist = n_test_val
+        else:
+            # Default to half split
+            n_test_dist = max_total // 2
+        
+        if self.verbose:
+            print(f"Creating BatchSplitCollator:")
+            print(f"  max_number_samples_per_dataset: {max_total}")
+            print(f"  max_number_train_samples_per_dataset: {max_train_cap}")
+            print(f"  max_number_test_samples_per_dataset: {max_test_cap}")
+            print(f"  n_test_samples_distribution: {n_test_dist}")
+        
+        self.collator = BatchSplitCollator(
+            max_number_samples_per_dataset=max_total,
+            max_number_train_samples_per_dataset=max_train_cap,
+            max_number_test_samples_per_dataset=max_test_cap,
+            n_test_samples_distribution=n_test_dist,
+        )
+        
+        return self.collator
     
     def create_dataset(self, seed: Optional[int] = None) -> InterventionalDataset:
         """
@@ -147,19 +224,25 @@ class ComplexMechBenchmark:
     ) -> List[Dict[str, Any]]:
         """
         Generate data samples from the dataset and save each to individual .pkl files.
+        Uses BatchSplitCollator to vary train/test split sizes like in training.
         
         Args:
             num_samples: Number of samples to generate
             seed: Random seed for reproducibility
             save_to_cache: Whether to save each sample to disk as individual .pkl file
             overwrite: Whether to overwrite existing cached files
+            keep_in_memory: Whether to keep samples in memory (if False, only saves to disk)
             
         Returns:
-            List of sampled data dictionaries
+            List of sampled data dictionaries (empty if keep_in_memory=False)
         """
         # Create dataset if not already created
         if self.dataset is None:
             self.create_dataset(seed=seed)
+        
+        # Create collator if not already created
+        if self.collator is None:
+            self.create_collator()
         
         # Create samples subdirectory
         samples_dir = self.cache_dir / "samples"
@@ -168,6 +251,7 @@ class ComplexMechBenchmark:
         if self.verbose:
             print(f"\nGenerating {num_samples} data samples...")
             print(f"  Saving individual samples to: {samples_dir}")
+            print(f"  Using BatchSplitCollator for varying train/test splits")
         
         # Sample data
         sampled_data = [] if keep_in_memory else None
@@ -187,34 +271,48 @@ class ComplexMechBenchmark:
             
             try:
                 # Get sample from dataset
-                sample = self.dataset[idx]
+                raw_sample = self.dataset[idx]
                 
-                # Parse the sample tuple
+                # Parse the raw sample tuple
                 # Expected format from InterventionalDataset with ancestor matrix:
                 # (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv) - 6 elements
                 # (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, adj_matrix) - 7 elements (adjacency or ancestor)
                 
-                if len(sample) == 6:
-                    X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = sample
+                if len(raw_sample) == 6:
+                    X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv = raw_sample
                     ancestor_matrix = None
-                elif len(sample) == 7:
-                    X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, ancestor_matrix = sample
+                elif len(raw_sample) == 7:
+                    X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv, ancestor_matrix = raw_sample
                 else:
-                    raise ValueError(f"Unexpected sample length: {len(sample)}")
+                    raise ValueError(f"Unexpected sample length: {len(raw_sample)}")
                 
-                # Store sample as dictionary
+                # Apply collator to get varying train/test splits
+                # Collator expects a batch (list of samples), so wrap in list
+                batch = [raw_sample]
+                collated_batch = self.collator(batch)
+                
+                # Extract the collated sample (first and only element in batch)
+                if len(collated_batch) == 6:
+                    X_obs_c, T_obs_c, Y_obs_c, X_intv_c, T_intv_c, Y_intv_c = collated_batch
+                    ancestor_matrix_c = ancestor_matrix  # Use original if not in collated output
+                elif len(collated_batch) == 7:
+                    X_obs_c, T_obs_c, Y_obs_c, X_intv_c, T_intv_c, Y_intv_c, ancestor_matrix_c = collated_batch
+                else:
+                    raise ValueError(f"Unexpected collated batch length: {len(collated_batch)}")
+                
+                # Store sample as dictionary (using collated versions)
                 sample_dict = {
-                    'X_obs': X_obs.numpy() if torch.is_tensor(X_obs) else X_obs,
-                    'T_obs': T_obs.numpy() if torch.is_tensor(T_obs) else T_obs,
-                    'Y_obs': Y_obs.numpy() if torch.is_tensor(Y_obs) else Y_obs,
-                    'X_intv': X_intv.numpy() if torch.is_tensor(X_intv) else X_intv,
-                    'T_intv': T_intv.numpy() if torch.is_tensor(T_intv) else T_intv,
-                    'Y_intv': Y_intv.numpy() if torch.is_tensor(Y_intv) else Y_intv,
+                    'X_obs': X_obs_c.numpy() if torch.is_tensor(X_obs_c) else X_obs_c,
+                    'T_obs': T_obs_c.numpy() if torch.is_tensor(T_obs_c) else T_obs_c,
+                    'Y_obs': Y_obs_c.numpy() if torch.is_tensor(Y_obs_c) else Y_obs_c,
+                    'X_intv': X_intv_c.numpy() if torch.is_tensor(X_intv_c) else X_intv_c,
+                    'T_intv': T_intv_c.numpy() if torch.is_tensor(T_intv_c) else T_intv_c,
+                    'Y_intv': Y_intv_c.numpy() if torch.is_tensor(Y_intv_c) else Y_intv_c,
                     'sample_idx': idx,
                 }
                 
-                if ancestor_matrix is not None:
-                    sample_dict['ancestor_matrix'] = ancestor_matrix.numpy() if torch.is_tensor(ancestor_matrix) else ancestor_matrix
+                if ancestor_matrix_c is not None:
+                    sample_dict['ancestor_matrix'] = ancestor_matrix_c.numpy() if torch.is_tensor(ancestor_matrix_c) else ancestor_matrix_c
                 
                 # Optionally keep in memory
                 if keep_in_memory:
@@ -583,7 +681,11 @@ if __name__ == "__main__":
     # Create dataset
     dataset = benchmark.create_dataset(seed=42)
     
+    # Create collator (will vary train/test sizes)
+    collator = benchmark.create_collator()
+    
     # Generate a few samples (saved as individual .pkl files)
+    # Each sample will have DIFFERENT train/test splits due to collator
     samples = benchmark.generate_data(
         num_samples=5,
         seed=42,

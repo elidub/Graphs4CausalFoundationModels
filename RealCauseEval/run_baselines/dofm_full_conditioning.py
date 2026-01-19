@@ -1,0 +1,388 @@
+import argparse
+import os
+import sys
+import numpy as np
+import torch
+import os
+import yaml
+
+# Add paths
+sys.path.insert(0, '/Users/arikreuter/Documents/PhD/CausalPriorFitting')
+sys.path.insert(0, '/Users/arikreuter/Documents/PhD/CausalPriorFitting/RealCauseEval')
+
+from src.models.GraphConditionedInterventionalPFN_sklearn import GraphConditionedInterventionalPFNSklearn
+from run_baselines.eval import evaluate_pipeline
+
+# Global config for preprocessing
+MODEL_CONFIG = None
+
+def load_preprocessing_config(config_path):
+    """Load preprocessing configuration from model config file."""
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config.get('preprocessing_config', {}), config.get('dataset_config', {})
+
+def get_config_value(config_dict, key, default=None):
+    """Extract value from config entry that may be plain or dict with 'value' key."""
+    raw = config_dict.get(key, default)
+    if isinstance(raw, dict) and "value" in raw:
+        return raw["value"]
+    return raw
+
+def dofm_full_conditioning_pipeline(model, cate_dataset, include_x_to_y=True, all_unknown=False, t_to_y_only=False):
+    """
+    Use the GraphConditionedInterventionalPFN model (full conditioning variant) to predict CATE.
+    
+    This variant does NOT hide test features (test_feature_mask_fraction=0.0).
+    The model sees all features for both train and test samples.
+    
+    Args:
+        model: GraphConditionedInterventionalPFNSklearn instance
+        cate_dataset: CATE_Dataset with X_train, t_train, y_train, X_test, true_cate
+        include_x_to_y: If True, include X→Y edges in adjacency matrix. If False, set them to unknown (0).
+        all_unknown: If True, set ALL edges to unknown (0), ignoring other flags.
+        t_to_y_only: If True, only set T→Y=1, all other edges unknown (0).
+        
+    Returns:
+        cate_pred: Array of CATE predictions for X_test
+    """
+    global MODEL_CONFIG
+    
+    # Extract data from cate_dataset
+    X_train = cate_dataset.X_train
+    t_train = cate_dataset.t_train.reshape(-1, 1) if cate_dataset.t_train.ndim == 1 else cate_dataset.t_train
+    y_train = cate_dataset.y_train.reshape(-1, 1) if cate_dataset.y_train.ndim == 1 else cate_dataset.y_train
+    X_test = cate_dataset.X_test
+    
+    n_train = X_train.shape[0]
+    n_test = X_test.shape[0]
+    n_features_orig = X_train.shape[1]
+    
+    # Get model's expected number of features
+    model_n_features = model.model.num_features
+    
+    # Load preprocessing config if not already loaded
+    if MODEL_CONFIG is None:
+        preprocessing_config, dataset_config = load_preprocessing_config(
+            "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist_config.yaml"
+        )
+        MODEL_CONFIG = {
+            'preprocessing': preprocessing_config,
+            'dataset': dataset_config
+        }
+    
+    preprocessing_config = MODEL_CONFIG['preprocessing']
+    dataset_config = MODEL_CONFIG['dataset']
+    
+    # Note: This model has test_feature_mask_fraction=0.0, so test features are NOT hidden
+    test_mask_frac = get_config_value(preprocessing_config, 'test_feature_mask_fraction', 0.0)
+    if test_mask_frac > 0:
+        print(f"Note: test_feature_mask_fraction={test_mask_frac} - {int(test_mask_frac*100)}% of test features will be masked")
+    else:
+        print(f"Full conditioning: test features are NOT masked (test_feature_mask_fraction=0.0)")
+    
+    # Truncate or pad features to match model size (before preprocessing)
+    if n_features_orig > model_n_features:
+        print(f"Truncating features from {n_features_orig} to {model_n_features}")
+        X_train = X_train[:, :model_n_features]
+        X_test = X_test[:, :model_n_features]
+        n_features = model_n_features
+    elif n_features_orig < model_n_features:
+        print(f"Padding features from {n_features_orig} to {model_n_features}")
+        # Pad with zeros
+        X_train = np.hstack([X_train, np.zeros((n_train, model_n_features - n_features_orig))])
+        X_test = np.hstack([X_test, np.zeros((n_test, model_n_features - n_features_orig))])
+        n_features = model_n_features
+    else:
+        n_features = n_features_orig
+    
+    # Apply feature preprocessing as done during training
+    outlier_quantile = get_config_value(preprocessing_config, 'outlier_quantile', 0.99)
+    remove_outliers = get_config_value(preprocessing_config, 'remove_outliers', True)
+    feature_standardize = get_config_value(preprocessing_config, 'feature_standardize', True)
+    
+    if remove_outliers:
+        # Compute outlier bounds from training data only
+        lower_quantile = 1.0 - outlier_quantile
+        upper_quantile = outlier_quantile
+        lower_bounds = np.quantile(X_train, lower_quantile, axis=0)
+        upper_bounds = np.quantile(X_train, upper_quantile, axis=0)
+        
+        # Clip both train and test
+        X_train = np.clip(X_train, lower_bounds, upper_bounds)
+        X_test = np.clip(X_test, lower_bounds, upper_bounds)
+        print(f"Applied outlier removal at quantile {outlier_quantile}")
+    
+    if feature_standardize:
+        # Standardize features: (X - mean) / std
+        # Compute stats from training data only
+        X_mean = np.mean(X_train, axis=0, keepdims=True)
+        X_std = np.std(X_train, axis=0, keepdims=True)
+        X_std = np.where(X_std < 1e-8, 1.0, X_std)  # Avoid division by zero
+        
+        X_train = (X_train - X_mean) / X_std
+        X_test = (X_test - X_mean) / X_std
+        print(f"Applied feature standardization")
+    
+    # Apply target scaling to [-1, 1] as done during model training
+    ymin = float(np.min(y_train))
+    ymax = float(np.max(y_train))
+    y_range = max(ymax - ymin, 1e-8)
+    
+    print(f"Target scaling stats: ymin={ymin:.4f}, ymax={ymax:.4f}, range={y_range:.4f}")
+    
+    # Scale targets to [-1, 1]
+    y_train_scaled = 2.0 * (y_train - ymin) / y_range - 1.0
+    
+    print(f"Scaled target range: [{np.min(y_train_scaled):.4f}, {np.max(y_train_scaled):.4f}]")
+    
+    # Prepare data for model
+    X_train = X_train.astype(np.float32)
+    X_test = X_test.astype(np.float32)
+    T_train = t_train.astype(np.float32)
+    Y_train = y_train_scaled.flatten().astype(np.float32)
+    
+    # Get max samples from config (what the model was trained with)
+    max_n_train_samples = get_config_value(dataset_config, 'max_number_train_samples_per_dataset', n_train)
+    max_n_test_samples = get_config_value(dataset_config, 'max_number_test_samples_per_dataset', n_test)
+    max_n_features = model_n_features
+    
+    # Features should already be exactly model_n_features from truncation/padding above
+    assert X_train.shape[1] == model_n_features, f"X_train has {X_train.shape[1]} features, expected {model_n_features}"
+    assert X_test.shape[1] == model_n_features, f"X_test has {X_test.shape[1]} features, expected {model_n_features}"
+    
+    # Truncate samples if needed (random subsample to fit model capacity)
+    if n_train > max_n_train_samples:
+        print(f"Truncating training samples from {n_train} to {max_n_train_samples}")
+        indices = np.random.choice(n_train, max_n_train_samples, replace=False)
+        X_train = X_train[indices]
+        T_train = T_train[indices]
+        Y_train = Y_train[indices]
+        n_train = max_n_train_samples
+    
+    if n_test > max_n_test_samples:
+        print(f"Test samples ({n_test}) exceed model capacity ({max_n_test_samples}). Processing in batches.")
+        process_test_in_batches = True
+    else:
+        process_test_in_batches = False
+    
+    # Pad samples if needed
+    if n_train < max_n_train_samples:
+        pad_train = max_n_train_samples - n_train
+        X_train = np.vstack([X_train, np.zeros((pad_train, X_train.shape[1]), dtype=np.float32)])
+        T_train = np.vstack([T_train, np.zeros((pad_train, 1), dtype=np.float32)])
+        Y_train = np.concatenate([Y_train, np.zeros(pad_train, dtype=np.float32)])
+    
+    if n_test < max_n_test_samples:
+        pad_test = max_n_test_samples - n_test
+        X_test = np.vstack([X_test, np.zeros((pad_test, X_test.shape[1]), dtype=np.float32)])
+    
+    # Ensure T_train is 2D
+    if T_train.ndim == 1:
+        T_train = T_train.reshape(-1, 1)
+    
+    # Create partial ancestral matrix with known causal structure (partial graph format)
+    # Shape: (model_n_features + 2, model_n_features + 2) for features + treatment + outcome
+    # Partial graph format uses three states:
+    #   -1: No edge/ancestor relationship (known non-edge)
+    #   0: Unknown whether edge/ancestor exists
+    #   1: Edge/ancestor relationship exists (known edge)
+    
+    # Position mapping:
+    # - Positions 0 to model_n_features-1: Feature variables
+    # - Position model_n_features: Treatment (T)
+    # - Position model_n_features+1: Outcome (Y)
+    
+    # Number of real (non-padded) features
+    n_real_features = min(n_features_orig, model_n_features)
+    
+    # Initialize all as unknown (0)
+    adjacency_matrix = np.zeros((model_n_features + 2, model_n_features + 2), dtype=np.float32)
+    
+    # Add known causal edges for REAL features only:
+    T_idx = model_n_features
+    Y_idx = model_n_features + 1
+    
+    if all_unknown:
+        # Leave everything as unknown (0) - no graph knowledge at all
+        print(f"Graph knowledge: ALL UNKNOWN (no graph information provided)")
+    elif t_to_y_only:
+        # Only T -> Y is known
+        adjacency_matrix[T_idx, Y_idx] = 1.0
+        print(f"Graph knowledge: T→Y=1 only (X→T=0, X→Y=0 unknown)")
+    else:
+        # 1. T -> Y (treatment causes outcome)
+        adjacency_matrix[T_idx, Y_idx] = 1.0
+        
+        # 2. Real features -> T (features cause treatment)
+        for i in range(n_real_features):
+            adjacency_matrix[i, T_idx] = 1.0
+        
+        # 3. Real features -> Y (features cause outcome) - OPTIONAL
+        if include_x_to_y:
+            for i in range(n_real_features):
+                adjacency_matrix[i, Y_idx] = 1.0
+            print(f"Graph knowledge: T→Y=1, X→T=1, X→Y=1 (full graph)")
+        else:
+            # Leave X→Y as unknown (0)
+            print(f"Graph knowledge: T→Y=1, X→T=1, X→Y=0 (unknown)")
+    
+    # Note: Relationships between real features remain unknown (0)
+    
+    # 4. PADDED features: Set all edges to -1 (no edge) since they don't exist
+    for i in range(n_real_features, model_n_features):
+        adjacency_matrix[i, :] = -1.0
+        adjacency_matrix[:, i] = -1.0
+        adjacency_matrix[i, i] = -1.0
+    
+    print(f"Predicting CATE with test samples: {n_test}, train-samples: {n_train}")
+    
+    if process_test_in_batches:
+        # Process test samples in batches of max_n_test_samples
+        all_y_pred_1 = []
+        all_y_pred_0 = []
+        
+        n_original_test = n_test
+        
+        for batch_start in range(0, n_original_test, max_n_test_samples):
+            batch_end = min(batch_start + max_n_test_samples, n_original_test)
+            batch_size = batch_end - batch_start
+            
+            X_test_batch = X_test[batch_start:batch_end]
+            
+            if batch_size < max_n_test_samples:
+                pad_size = max_n_test_samples - batch_size
+                X_test_batch = np.vstack([X_test_batch, np.zeros((pad_size, X_test_batch.shape[1]), dtype=np.float32)])
+            
+            T_intv_1 = np.ones((max_n_test_samples, 1), dtype=np.float32)
+            T_intv_0 = np.zeros((max_n_test_samples, 1), dtype=np.float32)
+            
+            y_pred_1_batch = model.predict(
+                X_obs=X_train,
+                T_obs=T_train,
+                Y_obs=Y_train,
+                X_intv=X_test_batch,
+                T_intv=T_intv_1,
+                adjacency_matrix=adjacency_matrix,
+                prediction_type="mean",
+                batched=False
+            )
+            
+            y_pred_0_batch = model.predict(
+                X_obs=X_train,
+                T_obs=T_train,
+                Y_obs=Y_train,
+                X_intv=X_test_batch,
+                T_intv=T_intv_0,
+                adjacency_matrix=adjacency_matrix,
+                prediction_type="mean",
+                batched=False
+            )
+            
+            all_y_pred_1.append(y_pred_1_batch[:batch_size])
+            all_y_pred_0.append(y_pred_0_batch[:batch_size])
+        
+        y_pred_1 = np.concatenate(all_y_pred_1)
+        y_pred_0 = np.concatenate(all_y_pred_0)
+        cate_pred_scaled = y_pred_1 - y_pred_0
+    else:
+        T_intv_1 = np.ones((max_n_test_samples, 1), dtype=np.float32)
+        T_intv_0 = np.zeros((max_n_test_samples, 1), dtype=np.float32)
+        
+        y_pred_1 = model.predict(
+            X_obs=X_train,
+            T_obs=T_train,
+            Y_obs=Y_train,
+            X_intv=X_test,
+            T_intv=T_intv_1,
+            adjacency_matrix=adjacency_matrix,
+            prediction_type="mean",
+            batched=False
+        )
+        
+        y_pred_0 = model.predict(
+            X_obs=X_train,
+            T_obs=T_train,
+            Y_obs=Y_train,
+            X_intv=X_test,
+            T_intv=T_intv_0,
+            adjacency_matrix=adjacency_matrix,
+            prediction_type="mean",
+            batched=False
+        )
+        
+        cate_pred_scaled = (y_pred_1 - y_pred_0)[:n_test]
+    
+    # Inverse transform: CATE_original = CATE_scaled * range / 2.0
+    cate_pred = cate_pred_scaled * y_range / 2.0
+    
+    return cate_pred
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run DOFM full conditioning experiments (test features NOT hidden).")
+
+    parser.add_argument("--dataset", type=str, required=True, help="Name of the dataset (IHDP, ACIC, CPS, PSID) or 'all' for all datasets")
+    parser.add_argument("--model", type=str, required=True, help="Model architecture")    
+    parser.add_argument("--exp_name", type=str, required=True, help="Current time of experiment")    
+    parser.add_argument("--no_x_to_y", action="store_true", help="If set, do NOT include X→Y edges in the adjacency matrix (set to unknown)")
+    parser.add_argument("--all_unknown", action="store_true", help="If set, ALL edges in the adjacency matrix are set to unknown (0)")
+    parser.add_argument("--t_to_y_only", action="store_true", help="If set, only T→Y=1 is known, all other edges are unknown (0)")
+
+    args = parser.parse_args()
+    
+    # Determine include_x_to_y based on flag
+    include_x_to_y = not args.no_x_to_y
+    all_unknown = args.all_unknown
+    t_to_y_only = args.t_to_y_only
+    
+    # Create a pipeline wrapper that includes the parameters
+    def pipeline_wrapper(model, cate_dataset):
+        return dofm_full_conditioning_pipeline(model, cate_dataset, include_x_to_y=include_x_to_y, all_unknown=all_unknown, t_to_y_only=t_to_y_only)
+
+    # Full conditioning model checkpoint (test_feature_mask_fraction=0.0)
+    checkpoint_path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist.pt"
+    model_config_path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist_config.yaml"
+    
+    print(f"Loading full conditioning model from: {checkpoint_path}")
+    graphintpfn = GraphConditionedInterventionalPFNSklearn(
+        config_path=model_config_path,
+        checkpoint_path=checkpoint_path,
+        verbose=True,
+    )
+    graphintpfn.load()
+    model = graphintpfn
+
+    # Determine which datasets to run
+    ALL_DATASETS = ["IHDP", "ACIC", "CPS", "PSID"]
+    if args.dataset.lower() == "all":
+        datasets_to_run = ALL_DATASETS
+    else:
+        datasets_to_run = [args.dataset]
+    
+    # Run evaluation for each dataset
+    for dataset in datasets_to_run:
+        print(f"\n{'='*60}")
+        print(f"--- Starting Full Conditioning Experiment ---")
+        print(f"Dataset: {dataset}")
+        print(f"Model:   {args.model}")
+        print(f"{'='*60}\n")
+        
+        dataset_args = argparse.Namespace(**vars(args))
+        dataset_args.dataset = dataset
+        
+        try:
+            evaluate_pipeline(
+                exp_name=args.exp_name,
+                model_pipeline=pipeline_wrapper,
+                model=model,
+                args=dataset_args)
+            print(f"\n--- {dataset} Experiment Finished ---")
+        except Exception as e:
+            print(f"\n--- {dataset} Experiment FAILED: {e} ---")
+            import traceback
+            traceback.print_exc()
+            continue
+    
+    print(f"\n{'='*60}")
+    print(f"--- All Experiments Finished ---")
+    print(f"{'='*60}")
