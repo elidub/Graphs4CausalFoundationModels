@@ -359,6 +359,22 @@ class ComplexMechBenchmark:
         if ancestor_matrix is None:
             raise ValueError("Sample missing ancestor_matrix")
         
+        # Remove batch dimension if present (shape (1, ...) -> (...))
+        if X_obs.ndim == 3 and X_obs.shape[0] == 1:
+            X_obs = X_obs.squeeze(0)
+        if T_obs.ndim == 3 and T_obs.shape[0] == 1:
+            T_obs = T_obs.squeeze(0)
+        if Y_obs.ndim == 3 and Y_obs.shape[0] == 1:
+            Y_obs = Y_obs.squeeze(0)
+        if X_intv.ndim == 3 and X_intv.shape[0] == 1:
+            X_intv = X_intv.squeeze(0)
+        if T_intv.ndim == 3 and T_intv.shape[0] == 1:
+            T_intv = T_intv.squeeze(0)
+        if Y_intv.ndim == 3 and Y_intv.shape[0] == 1:
+            Y_intv = Y_intv.squeeze(0)
+        if ancestor_matrix.ndim == 3 and ancestor_matrix.shape[0] == 1:
+            ancestor_matrix = ancestor_matrix.squeeze(0)
+        
         # Ensure correct shapes
         if T_obs.ndim == 1:
             T_obs = T_obs.reshape(-1, 1)
@@ -453,14 +469,31 @@ class ComplexMechBenchmark:
         for sample in iterator:
             try:
                 metrics = self.evaluate_sample(sample, model=model)
+                
+                # Get shapes - handle batch dimension if present
+                X_obs_shape = sample['X_obs'].shape
+                X_intv_shape = sample['X_intv'].shape
+                
+                if len(X_obs_shape) == 3:  # (batch, samples, features)
+                    n_obs = X_obs_shape[1]
+                    n_features = X_obs_shape[2]
+                else:  # (samples, features)
+                    n_obs = X_obs_shape[0]
+                    n_features = X_obs_shape[1]
+                
+                if len(X_intv_shape) == 3:
+                    n_intv = X_intv_shape[1]
+                else:
+                    n_intv = X_intv_shape[0]
+                
                 result = {
                     'sample_idx': sample['sample_idx'],
                     'mse': metrics['mse'],
                     'r2': metrics['r2'],
                     'nll': metrics['nll'],
-                    'n_obs': sample['X_obs'].shape[0],
-                    'n_intv': sample['X_intv'].shape[0],
-                    'n_features': sample['X_obs'].shape[1],
+                    'n_obs': n_obs,
+                    'n_intv': n_intv,
+                    'n_features': n_features,
                 }
                 results.append(result)
                 

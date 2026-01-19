@@ -4,6 +4,7 @@ import sys
 import os
 import json
 import shutil
+import argparse
 from pathlib import Path
 from datetime import datetime
 
@@ -14,12 +15,55 @@ sys.path.insert(0, os.path.join(repo_root, 'src'))
 
 from ComplexMechBenchmark import ComplexMechBenchmark
 
+# Parse command-line arguments
+parser = argparse.ArgumentParser(
+    description="Run ComplexMechBenchmark with a specific model.",
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter
+)
+parser.add_argument(
+    "--config_path",
+    type=str,
+    default="/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist_config.yaml",
+    help="Path to model configuration YAML file"
+)
+parser.add_argument(
+    "--checkpoint_path",
+    type=str,
+    default="/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist.pt",
+    help="Path to model checkpoint file"
+)
+parser.add_argument(
+    "--max_samples",
+    type=int,
+    default=10,
+    help="Number of samples to evaluate"
+)
+parser.add_argument(
+    "--output_dir",
+    type=str,
+    default=None,
+    help="Directory to save results (default: ./results/<model_id>_<timestamp>)"
+)
+
+args = parser.parse_args()
+
 # Model configuration
-CONFIG_PATH = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist_config.yaml"
-CHECKPOINT_PATH = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist.pt"
+CONFIG_PATH = args.config_path
+CHECKPOINT_PATH = args.checkpoint_path
+MAX_SAMPLES = args.max_samples
 
 # Extract model ID from checkpoint path (e.g., "final_earlytest_16773250.0")
 MODEL_ID = Path(CHECKPOINT_PATH).parent.name
+
+print("="*80)
+print("ComplexMech Benchmark Evaluation")
+print("="*80)
+print(f"Config path: {CONFIG_PATH}")
+print(f"Checkpoint path: {CHECKPOINT_PATH}")
+print(f"Model ID: {MODEL_ID}")
+print(f"Max samples: {MAX_SAMPLES}")
+print("="*80)
+print()
 
 # Initialize benchmark
 benchmark = ComplexMechBenchmark()
@@ -30,8 +74,8 @@ benchmark.load_model(
     checkpoint_path=CHECKPOINT_PATH,
 )
 
-# Run evaluation on 100 samples
-results = benchmark.run_evaluation(max_samples=10, save_results=True)
+# Run evaluation
+results = benchmark.run_evaluation(max_samples=MAX_SAMPLES, save_results=True)
 
 # Compute aggregate metrics
 import numpy as np
@@ -57,7 +101,12 @@ print(f"Samples evaluated: {aggregate_metrics['n_samples']}")
 
 # Create results directory with model ID and timestamp
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-results_dir = Path(__file__).parent / "results" / f"{MODEL_ID}_{timestamp}"
+
+if args.output_dir:
+    results_dir = Path(args.output_dir)
+else:
+    results_dir = Path(__file__).parent / "results" / f"{MODEL_ID}_{timestamp}"
+
 results_dir.mkdir(parents=True, exist_ok=True)
 
 print(f"\nSaving results to: {results_dir}")

@@ -53,3 +53,9 @@ bias_effects.png
 /RealCauseEval
 
 /experiments/GraphConditioning/Benchmarks/ComplexMech2/data_cache
+
+/experiments/GraphConditioning/Benchmarks/ComplexMech2/results
+
+/experiments/GraphConditioning/Benchmarks/ComplexMech2/plots_by_node_count
+
+/experiments/GraphConditioning/Benchmarks/ComplexMech2/plots_sample_size
