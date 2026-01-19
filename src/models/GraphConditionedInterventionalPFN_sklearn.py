@@ -12,13 +12,14 @@ Key differences from InterventionalPFN_sklearn:
 
 Adjacency Matrix Format:
 - Shape: (L+2, L+2) where L is the number of features
-- Position ordering: [X_0, X_1, ..., X_{L-1}, T, Y]
-  * Positions 0 to L-1: Feature variables (sorted order, kept after dropout)
-  * Position L: Treatment variable (intervention node)
-  * Position L+1: Outcome variable (target feature)
+- Position ordering: [T, Y, X_0, X_1, ..., X_{L-1}]
+  * Position 0: Treatment variable (T)
+  * Position 1: Outcome variable (Y)
+  * Positions 2 to L+1: Feature variables (X[:,0] to X[:,L-1])
 - Edge semantics: A[i,j] = 1 means directed edge from i to j (i causes j)
 - The matrix is transposed internally so that j can attend to i (effects attend to causes)
 - Self-loops are added automatically by the model for self-attention
+- This matches the format created by InterventionalDataset
 
 Special Inference Behavior for hide_fraction_matrix >= 1.0:
 - When a model is trained with dataset_config.hide_fraction_matrix = 1.0 (all graph entries hidden),
@@ -589,10 +590,13 @@ class GraphConditionedInterventionalPFNSklearn:
                 - If batched=False: (L+2, L+2)
                 - If batched=True: (B, L+2, L+2)
                 
-                Position ordering (matches internal embedding order):
-                  - Position 0 to L-1: Feature variables (X[:,0] to X[:,L-1])
-                  - Position L: Treatment variable (T)
-                  - Position L+1: Outcome variable (Y)
+                Position ordering (matches InterventionalDataset format):
+                  - Position 0: Treatment variable (T)
+                  - Position 1: Outcome variable (Y)
+                  - Positions 2 to L+1: Feature variables (X[:,0] to X[:,L-1])
+                
+                Note: The model internally reorders to [X_0, ..., X_{L-1}, T, Y]
+                for processing, but INPUT must be in [T, Y, X...] format.
                 
                 Edge semantics:
                   - A[i,j] = 1 means directed edge from i to j (i causes j)
@@ -767,10 +771,13 @@ class GraphConditionedInterventionalPFNSklearn:
                 - If batched=False: (L+2, L+2)
                 - If batched=True: (B, L+2, L+2)
                 
-                Position ordering (matches internal embedding order):
-                  - Position 0 to L-1: Feature variables (X[:,0] to X[:,L-1])
-                  - Position L: Treatment variable (T)
-                  - Position L+1: Outcome variable (Y)
+                Position ordering (matches InterventionalDataset format):
+                  - Position 0: Treatment variable (T)
+                  - Position 1: Outcome variable (Y)
+                  - Positions 2 to L+1: Feature variables (X[:,0] to X[:,L-1])
+                
+                Note: The model internally reorders to [X_0, ..., X_{L-1}, T, Y]
+                for processing, but INPUT must be in [T, Y, X...] format.
                 
                 Edge semantics:
                   - A[i,j] = 1 means directed edge from i to j (i causes j)
@@ -917,10 +924,13 @@ class GraphConditionedInterventionalPFNSklearn:
                 - If batched=False: (L+2, L+2)
                 - If batched=True: (B, L+2, L+2)
                 
-                Position ordering (matches internal embedding order):
-                  - Position 0 to L-1: Feature variables (X[:,0] to X[:,L-1])
-                  - Position L: Treatment variable (T)
-                  - Position L+1: Outcome variable (Y)
+                Position ordering (matches InterventionalDataset format):
+                  - Position 0: Treatment variable (T)
+                  - Position 1: Outcome variable (Y)
+                  - Positions 2 to L+1: Feature variables (X[:,0] to X[:,L-1])
+                
+                Note: The model internally reorders to [X_0, ..., X_{L-1}, T, Y]
+                for processing, but INPUT must be in [T, Y, X...] format.
                 
                 Edge semantics:
                   - A[i,j] = 1 means directed edge from i to j (i causes j)
@@ -977,10 +987,13 @@ class GraphConditionedInterventionalPFNSklearn:
                 - If batched=False: (L+2, L+2)
                 - If batched=True: (B, L+2, L+2)
                 
-                Position ordering (matches internal embedding order):
-                  - Position 0 to L-1: Feature variables (X[:,0] to X[:,L-1])
-                  - Position L: Treatment variable (T)
-                  - Position L+1: Outcome variable (Y)
+                Position ordering (matches InterventionalDataset format):
+                  - Position 0: Treatment variable (T)
+                  - Position 1: Outcome variable (Y)
+                  - Positions 2 to L+1: Feature variables (X[:,0] to X[:,L-1])
+                
+                Note: The model internally reorders to [X_0, ..., X_{L-1}, T, Y]
+                for processing, but INPUT must be in [T, Y, X...] format.
                 
                 Edge semantics:
                   - A[i,j] = 1 means directed edge from i to j (i causes j)

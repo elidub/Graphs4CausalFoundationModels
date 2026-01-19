@@ -30,10 +30,30 @@ def dofm_pipeline(model, cate_dataset):
     """
     # Extract data from cate_dataset
     X_train = cate_dataset.X_train
-    t_train = cate_dataset.t_train.reshape(-1, 1) if cate_dataset.t_train.ndim == 1 else cate_dataset.t_train
-    y_train = cate_dataset.y_train.reshape(-1, 1) if cate_dataset.y_train.ndim == 1 else cate_dataset.y_train
+    t_train_orig = cate_dataset.t_train.reshape(-1, 1) if cate_dataset.t_train.ndim == 1 else cate_dataset.t_train
+    y_train_orig = cate_dataset.y_train.reshape(-1, 1) if cate_dataset.y_train.ndim == 1 else cate_dataset.y_train
     X_test = cate_dataset.X_test
+    y_train = y_train_orig
+
+    # Print dataset info
+    n_train = X_train.shape[0]
+    n_test = X_test.shape[0]
+    n_features = X_train.shape[1]
+    print(f"[Dataset] Train samples: {n_train}, Test samples: {n_test}, Features: {n_features}")
+
+    # Target encoding for treatment: replace T with mean(Y|T)
+    t_flat = t_train_orig.flatten()
+    y_flat = y_train.flatten()
+    mean_y_t0 = y_flat[t_flat == 0].mean()
+    mean_y_t1 = y_flat[t_flat == 1].mean()
+    t_train = np.where(t_train_orig == 0, mean_y_t0, mean_y_t1).astype(np.float32)
     
+    # For intervention values, use the same target encoding
+    t_intv_0_encoded = mean_y_t0
+    t_intv_1_encoded = mean_y_t1
+    
+    print(f"[Target Encoding] T=0 -> {mean_y_t0:.4f}, T=1 -> {mean_y_t1:.4f}")
+     
     n_test = X_test.shape[0]
     n_features_orig = X_train.shape[1]
     model_n_features = model.model.num_features
@@ -42,16 +62,16 @@ def dofm_pipeline(model, cate_dataset):
     model.fit(X_train, t_train, y_train)
     
     # Build adjacency matrix with known causal structure (partial graph format)
-    # Shape: (model_n_features + 2, model_n_features + 2) for features + treatment + outcome
+    # Shape: (model_n_features + 2, model_n_features + 2) for treatment + outcome + features
     # Partial graph format uses three states:
     #   -1: No edge/ancestor relationship (known non-edge)
     #   0: Unknown whether edge/ancestor exists
     #   1: Edge/ancestor relationship exists (known edge)
     
-    # Position mapping:
-    # - Positions 0 to model_n_features-1: Feature variables
-    # - Position model_n_features: Treatment (T)
-    # - Position model_n_features+1: Outcome (Y)
+    # Position mapping (matching InterventionalDataset convention):
+    # - Position 0: Treatment (T)
+    # - Position 1: Outcome (Y)
+    # - Positions 2 to model_n_features+1: Feature variables
     
     # Number of real (non-padded) features
     n_real_features = min(n_features_orig, model_n_features)
@@ -59,33 +79,36 @@ def dofm_pipeline(model, cate_dataset):
     # Initialize all as unknown (0)
     adjacency_matrix = np.zeros((model_n_features + 2, model_n_features + 2), dtype=np.float32)
     
-    T_idx = model_n_features
-    Y_idx = model_n_features + 1
+    T_idx = 0
+    Y_idx = 1
+    feature_offset = 2  # Features start at position 2
     
     # 1. T -> Y (treatment causes outcome)
     adjacency_matrix[T_idx, Y_idx] = 1.0
     
     # 2. Real features -> T (features cause treatment)
     for i in range(n_real_features):
-        adjacency_matrix[i, T_idx] = 1.0
+        adjacency_matrix[feature_offset + i, T_idx] = 0.0
     
     # 3. Real features -> Y (features cause outcome)
     for i in range(n_real_features):
-        adjacency_matrix[i, Y_idx] = 1.0
+        adjacency_matrix[feature_offset + i, Y_idx] = 0.0
     
     # Note: Relationships between real features remain unknown (0)
     
     # 4. PADDED features: Set all edges to -1 (no edge) since they don't exist
     for i in range(n_real_features, model_n_features):
-        adjacency_matrix[i, :] = -1.0
-        adjacency_matrix[:, i] = -1.0
-        adjacency_matrix[i, i] = -1.0
+        feat_idx = feature_offset + i
+        adjacency_matrix[feat_idx, :] = -1.0
+        adjacency_matrix[:, feat_idx] = -1.0
+        adjacency_matrix[feat_idx, feat_idx] = -1.0
     
     # For CATE prediction, predict Y for both T=0 and T=1
     # CATE = E[Y|T=1,X] - E[Y|T=0,X]
+
     
-    # Predict Y for T=1
-    T_intv_1 = np.ones((n_test, 1), dtype=np.float32)
+    # Predict Y for T=1 (using target-encoded value)
+    T_intv_1 = np.full((n_test, 1), t_intv_1_encoded, dtype=np.float32)
     y_pred_1 = model.predict(
         X_obs=X_train,
         T_obs=t_train,
@@ -94,11 +117,11 @@ def dofm_pipeline(model, cate_dataset):
         T_intv=T_intv_1,
         adjacency_matrix=adjacency_matrix,
         prediction_type="mean",
-        inverse_transform=False,  # Don't inverse transform yet
+        inverse_transform=True,  # Don't inverse transform yet
     )
     
-    # Predict Y for T=0
-    T_intv_0 = np.zeros((n_test, 1), dtype=np.float32)
+    # Predict Y for T=0 (using target-encoded value)
+    T_intv_0 = np.full((n_test, 1), t_intv_0_encoded, dtype=np.float32)
     y_pred_0 = model.predict(
         X_obs=X_train,
         T_obs=t_train,
@@ -107,15 +130,13 @@ def dofm_pipeline(model, cate_dataset):
         T_intv=T_intv_0,
         adjacency_matrix=adjacency_matrix,
         prediction_type="mean",
-        inverse_transform=False,  # Don't inverse transform yet
+        inverse_transform=True,
     )
-    
-    # CATE in scaled space
-    cate_scaled = y_pred_1 - y_pred_0
-    
-    # Inverse transform CATE to original scale
-    # For CATE (difference), we only scale by range/2
-    cate_pred = model._inverse_transform_cate(cate_scaled)
+
+    # CATE = E[Y|do(T=1)] - E[Y|do(T=0)]
+    cate_pred = y_pred_1 - y_pred_0
+
+    print(f"CATE predictions: {cate_pred.flatten()[:20]}...")
     
     return cate_pred
 
@@ -131,8 +152,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Model paths
-    checkpoint_path = "path_to_the_checkpoint"
-    model_config_path = "path_to_the_model_config.yaml"
+    checkpoint_path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist.pt"
+    model_config_path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist_config.yaml"
     
     print(f"Loading model from: {checkpoint_path}")
     model = PreprocessingGraphConditionedPFN(

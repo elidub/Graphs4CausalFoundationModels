@@ -35,6 +35,7 @@ from __future__ import annotations
 from typing import Optional, Any, Literal, Dict, Tuple
 import numpy as np
 import yaml
+from sklearn.cluster import KMeans
 
 # Import base class
 try:
@@ -66,6 +67,8 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
         checkpoint_path (str): Path to model checkpoint
         device (str, optional): Device for inference ('cpu', 'cuda', etc.)
         verbose (bool): Print detailed information
+        use_clustering (bool): If True, use adaptive clustering when train samples exceed max_n_train
+        random_state (int, optional): Random seed for clustering reproducibility
     """
     
     def __init__(
@@ -74,6 +77,8 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
         checkpoint_path: Optional[str] = None,
         device: Optional[str] = None,
         verbose: bool = False,
+        use_clustering: bool = True,
+        random_state: Optional[int] = None,
     ):
         super().__init__(
             config_path=config_path,
@@ -86,6 +91,10 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
         self.preprocessing_config: Dict[str, Any] = {}
         self.dataset_config: Dict[str, Any] = {}
         
+        # Clustering parameters
+        self.use_clustering = use_clustering
+        self.random_state = random_state
+        
         # Fitted preprocessing parameters (computed from training data)
         self._fitted = False
         self._X_mean: Optional[np.ndarray] = None
@@ -96,6 +105,7 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
         self._y_max: float = 1.0
         self._y_range: float = 1.0
         self._n_original_features: int = 0
+        self._n_real_features: int = 0  # Number of real (non-padded) features
         
     def _get_config_value(self, config_dict: Dict, key: str, default: Any = None) -> Any:
         """Extract value from config entry that may be plain or dict with 'value' key."""
@@ -164,42 +174,66 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
         # Get model's expected number of features
         model_n_features = self.model.num_features
         
-        # Truncate or pad features to match model size
+        # Truncate features if needed (but DON'T pad yet - compute stats on real features only)
         if X.shape[1] > model_n_features:
             if self.verbose:
                 print(f"[PreprocessingGraphConditionedPFN] Truncating features from {X.shape[1]} to {model_n_features}")
             X = X[:, :model_n_features]
-        elif X.shape[1] < model_n_features:
-            if self.verbose:
-                print(f"[PreprocessingGraphConditionedPFN] Padding features from {X.shape[1]} to {model_n_features}")
-            X = np.hstack([X, np.zeros((X.shape[0], model_n_features - X.shape[1]), dtype=np.float32)])
+            n_real_features = model_n_features
+        else:
+            n_real_features = X.shape[1]
+            if self.verbose and X.shape[1] < model_n_features:
+                print(f"[PreprocessingGraphConditionedPFN] Will pad features from {X.shape[1]} to {model_n_features} after preprocessing")
         
-        # Compute outlier bounds
+        # Store number of real features for later use
+        self._n_real_features = n_real_features
+        
+        # Compute outlier bounds ONLY on real features (not padded zeros)
         remove_outliers = self._get_config_value(self.preprocessing_config, 'remove_outliers', True)
         outlier_quantile = self._get_config_value(self.preprocessing_config, 'outlier_quantile', 0.99)
         
         if remove_outliers:
             lower_quantile = 1.0 - outlier_quantile
             upper_quantile = outlier_quantile
-            self._lower_bounds = np.quantile(X, lower_quantile, axis=0)
-            self._upper_bounds = np.quantile(X, upper_quantile, axis=0)
+            # Compute bounds only on real features
+            lower_bounds_real = np.quantile(X, lower_quantile, axis=0)
+            upper_bounds_real = np.quantile(X, upper_quantile, axis=0)
+            
+            # Pad bounds to model size (padded features get bounds that won't affect zeros)
+            if n_real_features < model_n_features:
+                pad_size = model_n_features - n_real_features
+                self._lower_bounds = np.concatenate([lower_bounds_real, np.zeros(pad_size)])
+                self._upper_bounds = np.concatenate([upper_bounds_real, np.zeros(pad_size)])
+            else:
+                self._lower_bounds = lower_bounds_real
+                self._upper_bounds = upper_bounds_real
             
             # Apply outlier removal for computing standardization stats
-            X = np.clip(X, self._lower_bounds, self._upper_bounds)
+            X = np.clip(X, lower_bounds_real, upper_bounds_real)
             
             if self.verbose:
                 print(f"[PreprocessingGraphConditionedPFN] Computed outlier bounds at quantile {outlier_quantile}")
         
-        # Compute standardization stats
+        # Compute standardization stats ONLY on real features (not padded zeros)
         feature_standardize = self._get_config_value(self.preprocessing_config, 'feature_standardize', True)
         
         if feature_standardize:
-            self._X_mean = np.mean(X, axis=0, keepdims=True)
-            self._X_std = np.std(X, axis=0, keepdims=True)
-            self._X_std = np.where(self._X_std < 1e-8, 1.0, self._X_std)  # Avoid division by zero
+            # Compute stats only on real features
+            X_mean_real = np.mean(X, axis=0, keepdims=True)
+            X_std_real = np.std(X, axis=0, keepdims=True)
+            X_std_real = np.where(X_std_real < 1e-8, 1.0, X_std_real)  # Avoid division by zero
+            
+            # Pad stats to model size (padded features get mean=0, std=1 so they stay as zeros)
+            if n_real_features < model_n_features:
+                pad_size = model_n_features - n_real_features
+                self._X_mean = np.concatenate([X_mean_real, np.zeros((1, pad_size))], axis=1)
+                self._X_std = np.concatenate([X_std_real, np.ones((1, pad_size))], axis=1)
+            else:
+                self._X_mean = X_mean_real
+                self._X_std = X_std_real
             
             if self.verbose:
-                print(f"[PreprocessingGraphConditionedPFN] Computed standardization stats")
+                print(f"[PreprocessingGraphConditionedPFN] Computed standardization stats on {n_real_features} real features")
         
         # Compute target scaling stats
         if Y is not None:
@@ -222,6 +256,11 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
         """
         Apply feature preprocessing (truncation/padding, outlier removal, standardization).
         
+        The preprocessing stats (bounds, mean, std) were computed on real features only,
+        with padded positions getting bounds=0, mean=0, std=1. This ensures:
+        - Real features are properly preprocessed using their actual statistics
+        - Padded features (zeros) remain as zeros after preprocessing: (0 - 0) / 1 = 0
+        
         Args:
             X: Features, shape (N, L) or (B, N, L)
             fit_mode: If True, use the data itself for stats (for training data)
@@ -242,19 +281,23 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
         
         model_n_features = self.model.num_features
         
-        # Truncate or pad features
+        # Truncate or pad features to model size
+        # Note: The stored stats are already padded to model_n_features, so we can
+        # safely pad here and apply the stats - padded features will stay as zeros
         if L > model_n_features:
             X = X[:, :, :model_n_features]
         elif L < model_n_features:
             pad_width = model_n_features - L
             X = np.concatenate([X, np.zeros((B, N, pad_width), dtype=np.float32)], axis=2)
         
-        # Apply outlier removal
+        # Apply outlier removal using stored bounds
+        # Padded positions have bounds=0, so zeros stay as zeros
         remove_outliers = self._get_config_value(self.preprocessing_config, 'remove_outliers', True)
         if remove_outliers and self._lower_bounds is not None and self._upper_bounds is not None:
             X = np.clip(X, self._lower_bounds, self._upper_bounds)
         
-        # Apply standardization
+        # Apply standardization using stored stats
+        # Padded positions have mean=0, std=1, so zeros stay as zeros: (0 - 0) / 1 = 0
         feature_standardize = self._get_config_value(self.preprocessing_config, 'feature_standardize', True)
         if feature_standardize and self._X_mean is not None and self._X_std is not None:
             X = (X - self._X_mean) / self._X_std
@@ -358,8 +401,8 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
                     Y = Y[:max_samples] if Y.ndim == 1 else Y[:max_samples]
             n_samples = max_samples
         
-        # Pad if needed
-        if n_samples < max_samples:
+        # Pad test samples if needed (model can handle variable-length train data, no padding needed)
+        if not is_train and n_samples < max_samples:
             pad_size = max_samples - n_samples
             X = np.vstack([X, np.zeros((pad_size, X.shape[1]), dtype=np.float32)])
             T = np.vstack([T, np.zeros((pad_size, T.shape[1]), dtype=np.float32)])
@@ -381,6 +424,11 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
         - Real features -> Y (features cause outcome)
         - Padded features have no edges (-1)
         
+        Matrix ordering matches the dataset/model convention:
+        - Position 0: Treatment (T)
+        - Position 1: Outcome (Y)
+        - Positions 2 to L+1: Feature variables (X[:,0] to X[:,L-1])
+        
         Args:
             n_real_features: Number of real (non-padded) features
             
@@ -392,28 +440,250 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
         # Initialize all as unknown (0)
         adjacency_matrix = np.zeros((model_n_features + 2, model_n_features + 2), dtype=np.float32)
         
-        T_idx = model_n_features
-        Y_idx = model_n_features + 1
+        # Position mapping matching InterventionalDataset convention:
+        # - Position 0: Treatment (T)
+        # - Position 1: Outcome (Y)
+        # - Positions 2 to L+1: Features
+        T_idx = 0
+        Y_idx = 1
+        feature_offset = 2  # Features start at position 2
         
         # Known edges
-        # 1. T -> Y
+        # 1. T -> Y (treatment causes outcome)
         adjacency_matrix[T_idx, Y_idx] = 1.0
         
-        # 2. Real features -> T
+        # 2. Real features -> T (features cause treatment)
         for i in range(n_real_features):
-            adjacency_matrix[i, T_idx] = 1.0
+            adjacency_matrix[feature_offset + i, T_idx] = 1.0
         
-        # 3. Real features -> Y
+        # 3. Real features -> Y (features cause outcome)
         for i in range(n_real_features):
-            adjacency_matrix[i, Y_idx] = 1.0
+            adjacency_matrix[feature_offset + i, Y_idx] = 1.0
         
         # 4. Padded features have no edges (-1)
         for i in range(n_real_features, model_n_features):
-            adjacency_matrix[i, :] = -1.0
-            adjacency_matrix[:, i] = -1.0
-            adjacency_matrix[i, i] = -1.0
+            feat_idx = feature_offset + i
+            adjacency_matrix[feat_idx, :] = -1.0
+            adjacency_matrix[:, feat_idx] = -1.0
+            adjacency_matrix[feat_idx, feat_idx] = -1.0
         
         return adjacency_matrix
+    
+    def _hierarchical_cluster(
+        self,
+        X_train: np.ndarray,
+        T_train: np.ndarray,
+        Y_train: np.ndarray,
+        max_n_train: int,
+    ) -> np.ndarray:
+        """
+        Apply hierarchical clustering to keep cluster sizes <= max_n_train.
+        
+        Strategy:
+        1. Initial k-means with k = N // max_n_train + 1
+        2. For oversized clusters: split with k-means (k=2)
+        3. For still-oversized sub-clusters: random split into equal parts
+        
+        Args:
+            X_train: Training features (N, L)
+            T_train: Training treatment (N,) or (N, 1)
+            Y_train: Training targets (N,) or (N, 1)
+            max_n_train: Maximum cluster size
+            
+        Returns:
+            Cluster assignments for each training sample (N,)
+        """
+        N = X_train.shape[0]
+        k_initial = N // max_n_train + 1
+        
+        if self.verbose:
+            print(f"[PreprocessingGraphConditionedPFN] Clustering: Initial k-means with k={k_initial}")
+        
+        # Initial clustering
+        rng = np.random.RandomState(self.random_state)
+        kmeans = KMeans(n_clusters=k_initial, random_state=self.random_state, n_init=10)
+        initial_labels = kmeans.fit_predict(X_train)
+        
+        # Track final cluster assignments (will be renumbered)
+        cluster_assignments = np.copy(initial_labels)
+        next_cluster_id = k_initial
+        
+        # Check each initial cluster
+        for cluster_id in range(k_initial):
+            cluster_mask = initial_labels == cluster_id
+            cluster_size = np.sum(cluster_mask)
+            
+            if cluster_size <= max_n_train:
+                continue
+            
+            if self.verbose:
+                print(f"[PreprocessingGraphConditionedPFN]   Cluster {cluster_id} has {cluster_size} samples (> {max_n_train}), splitting...")
+            
+            # Extract cluster data
+            X_cluster = X_train[cluster_mask]
+            
+            # Try k-means split (k=2)
+            kmeans_split = KMeans(n_clusters=2, random_state=self.random_state, n_init=10)
+            sub_labels = kmeans_split.fit_predict(X_cluster)
+            
+            # Check sub-cluster sizes
+            sub_sizes = [np.sum(sub_labels == 0), np.sum(sub_labels == 1)]
+            
+            if max(sub_sizes) <= max_n_train:
+                # K-means split was successful
+                if self.verbose:
+                    print(f"[PreprocessingGraphConditionedPFN]     K-means split successful: {sub_sizes[0]} + {sub_sizes[1]} samples")
+                
+                # Relabel: keep first sub-cluster with original ID, assign new ID to second
+                cluster_indices = np.where(cluster_mask)[0]
+                sub_0_indices = cluster_indices[sub_labels == 0]
+                sub_1_indices = cluster_indices[sub_labels == 1]
+                
+                cluster_assignments[sub_0_indices] = cluster_id
+                cluster_assignments[sub_1_indices] = next_cluster_id
+                next_cluster_id += 1
+            else:
+                # K-means split failed, use random split
+                n_subclusters = (cluster_size + max_n_train - 1) // max_n_train  # Ceiling division
+                
+                if self.verbose:
+                    print(f"[PreprocessingGraphConditionedPFN]     K-means split failed, random splitting into {n_subclusters} sub-clusters")
+                
+                # Random permutation and split
+                cluster_indices = np.where(cluster_mask)[0]
+                shuffled_indices = rng.permutation(cluster_indices)
+                
+                # Assign to sub-clusters
+                for i, idx in enumerate(shuffled_indices):
+                    subcluster_id = cluster_id if i % n_subclusters == 0 else next_cluster_id + (i % n_subclusters) - 1
+                    cluster_assignments[idx] = subcluster_id
+                
+                next_cluster_id += n_subclusters - 1
+        
+        # Renumber clusters to be consecutive starting from 0
+        unique_labels = np.unique(cluster_assignments)
+        label_map = {old_label: new_label for new_label, old_label in enumerate(unique_labels)}
+        cluster_assignments = np.array([label_map[label] for label in cluster_assignments])
+        
+        return cluster_assignments
+    
+    def _assign_to_clusters(
+        self,
+        X_test: np.ndarray,
+        X_train: np.ndarray,
+        cluster_assignments: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Assign test samples to nearest training cluster centroid.
+        
+        Computes the centroid of each training cluster and assigns each test sample
+        to the cluster with the nearest centroid (using Euclidean distance).
+        
+        Args:
+            X_test: Test features (M, L)
+            X_train: Training features (N, L)
+            cluster_assignments: Cluster labels for training samples (N,)
+                Should be consecutive integers starting from 0
+            
+        Returns:
+            Cluster assignments for test samples (M,) with same label space as cluster_assignments
+        """
+        # Compute cluster centroids
+        unique_clusters = np.unique(cluster_assignments)
+        centroids = np.zeros((len(unique_clusters), X_train.shape[1]))
+        
+        for i, cluster_id in enumerate(unique_clusters):
+            cluster_mask = cluster_assignments == cluster_id
+            centroids[i] = X_train[cluster_mask].mean(axis=0)
+        
+        # Assign each test sample to nearest centroid
+        M = X_test.shape[0]
+        test_assignments = np.zeros(M, dtype=int)
+        
+        for i in range(M):
+            distances = np.linalg.norm(centroids - X_test[i], axis=1)
+            nearest_cluster_idx = np.argmin(distances)
+            test_assignments[i] = unique_clusters[nearest_cluster_idx]
+        
+        return test_assignments
+    
+    def _predict_single_cluster(
+        self,
+        X_obs: np.ndarray,
+        T_obs: np.ndarray,
+        Y_obs_scaled: np.ndarray,
+        X_intv: np.ndarray,
+        T_intv: np.ndarray,
+        n_real_features: int,
+        adjacency_matrix: Optional[np.ndarray],
+        prediction_type: str,
+        num_samples: int,
+        max_n_test: int,
+    ) -> np.ndarray:
+        """
+        Make predictions for a single cluster of data.
+        
+        Handles test batching internally if needed.
+        """
+        n_test_original = X_intv.shape[0]
+        
+        # Handle test samples in batches if needed
+        if n_test_original > max_n_test:
+            all_preds = []
+            for batch_start in range(0, n_test_original, max_n_test):
+                batch_end = min(batch_start + max_n_test, n_test_original)
+                batch_size = batch_end - batch_start
+                
+                X_intv_batch = X_intv[batch_start:batch_end]
+                T_intv_batch = T_intv[batch_start:batch_end]
+                
+                X_intv_batch, T_intv_batch, _, _ = self._pad_or_truncate_samples(
+                    X_intv_batch, T_intv_batch, None, max_n_test, is_train=False
+                )
+                
+                # Build adjacency matrix
+                adj_matrix = adjacency_matrix if adjacency_matrix is not None else self._build_adjacency_matrix(n_real_features)
+                
+                # Call parent predict
+                preds_batch = super().predict(
+                    X_obs=X_obs,
+                    T_obs=T_obs,
+                    Y_obs=Y_obs_scaled,
+                    X_intv=X_intv_batch,
+                    T_intv=T_intv_batch,
+                    adjacency_matrix=adj_matrix,
+                    prediction_type=prediction_type,
+                    num_samples=num_samples,
+                    batched=False,
+                )
+                
+                # Only keep non-padded predictions
+                all_preds.append(preds_batch[:batch_size])
+            
+            return np.concatenate(all_preds)
+        else:
+            X_intv_padded, T_intv_padded, _, n_test = self._pad_or_truncate_samples(
+                X_intv, T_intv, None, max_n_test, is_train=False
+            )
+            
+            # Build adjacency matrix
+            adj_matrix = adjacency_matrix if adjacency_matrix is not None else self._build_adjacency_matrix(n_real_features)
+            
+            # Call parent predict
+            preds = super().predict(
+                X_obs=X_obs,
+                T_obs=T_obs,
+                Y_obs=Y_obs_scaled,
+                X_intv=X_intv_padded,
+                T_intv=T_intv_padded,
+                adjacency_matrix=adj_matrix,
+                prediction_type=prediction_type,
+                num_samples=num_samples,
+                batched=False,
+            )
+            
+            # Only keep non-padded predictions
+            return preds[:n_test_original]
     
     def predict(
         self,
@@ -480,74 +750,85 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
         max_n_train = self._get_config_value(self.dataset_config, 'max_number_train_samples_per_dataset', X_obs.shape[0])
         max_n_test = self._get_config_value(self.dataset_config, 'max_number_test_samples_per_dataset', X_intv.shape[0])
         
-        # Pad/truncate samples
-        X_obs, T_obs, Y_obs_scaled, n_train = self._pad_or_truncate_samples(
-            X_obs, T_obs, Y_obs_scaled, max_n_train, is_train=True
-        )
-        
+        n_train_original = X_obs.shape[0]
         n_test_original = X_intv.shape[0]
         
-        # Handle test samples in batches if needed
-        if n_test_original > max_n_test:
+        # Check if we need clustering (train samples exceed max_n_train)
+        if self.use_clustering and n_train_original > max_n_train:
             if self.verbose:
-                print(f"[PreprocessingGraphConditionedPFN] Processing {n_test_original} test samples in batches of {max_n_test}")
+                print(f"[PreprocessingGraphConditionedPFN] Using clustering: {n_train_original} train samples > {max_n_train} max")
             
-            all_preds = []
-            for batch_start in range(0, n_test_original, max_n_test):
-                batch_end = min(batch_start + max_n_test, n_test_original)
-                batch_size = batch_end - batch_start
+            # Apply hierarchical clustering
+            cluster_assignments = self._hierarchical_cluster(X_obs, T_obs, Y_obs_scaled, max_n_train)
+            n_clusters = len(np.unique(cluster_assignments))
+            
+            if self.verbose:
+                unique_clusters, counts = np.unique(cluster_assignments, return_counts=True)
+                print(f"[PreprocessingGraphConditionedPFN] Created {n_clusters} clusters, sizes: min={counts.min()}, max={counts.max()}, mean={counts.mean():.1f}")
+            
+            # Assign test samples to clusters
+            test_cluster_assignments = self._assign_to_clusters(X_intv, X_obs, cluster_assignments)
+            
+            # Initialize predictions array
+            preds = np.zeros(n_test_original, dtype=np.float32)
+            
+            # Process each cluster
+            for cluster_id in np.unique(cluster_assignments):
+                # Get training indices for this cluster
+                train_mask = cluster_assignments == cluster_id
                 
-                X_intv_batch = X_intv[batch_start:batch_end]
-                T_intv_batch = T_intv[batch_start:batch_end]
+                # Get test indices for this cluster
+                test_mask = test_cluster_assignments == cluster_id
+                test_count = np.sum(test_mask)
                 
-                X_intv_batch, T_intv_batch, _, _ = self._pad_or_truncate_samples(
-                    X_intv_batch, T_intv_batch, None, max_n_test, is_train=False
-                )
+                if test_count == 0:
+                    continue
                 
-                # Build adjacency matrix
-                adj_matrix = adjacency_matrix if adjacency_matrix is not None else self._build_adjacency_matrix(n_real_features)
+                # Extract cluster data
+                X_obs_cluster = X_obs[train_mask]
+                T_obs_cluster = T_obs[train_mask]
+                Y_obs_cluster = Y_obs_scaled[train_mask]
+                X_intv_cluster = X_intv[test_mask]
+                T_intv_cluster = T_intv[test_mask]
                 
-                # Call parent predict
-                preds_batch = super().predict(
-                    X_obs=X_obs,
-                    T_obs=T_obs,
-                    Y_obs=Y_obs_scaled,
-                    X_intv=X_intv_batch,
-                    T_intv=T_intv_batch,
-                    adjacency_matrix=adj_matrix,
+                if self.verbose:
+                    print(f"[PreprocessingGraphConditionedPFN]   Cluster {cluster_id}: {np.sum(train_mask)} train, {test_count} test samples")
+                
+                # Make predictions for this cluster
+                cluster_preds = self._predict_single_cluster(
+                    X_obs=X_obs_cluster,
+                    T_obs=T_obs_cluster,
+                    Y_obs_scaled=Y_obs_cluster,
+                    X_intv=X_intv_cluster,
+                    T_intv=T_intv_cluster,
+                    n_real_features=n_real_features,
+                    adjacency_matrix=adjacency_matrix,
                     prediction_type=prediction_type,
                     num_samples=num_samples,
-                    batched=False,
+                    max_n_test=max_n_test,
                 )
                 
-                # Only keep non-padded predictions
-                all_preds.append(preds_batch[:batch_size])
-            
-            preds = np.concatenate(all_preds)
+                # Store predictions
+                preds[test_mask] = cluster_preds
         else:
-            X_intv, T_intv, _, n_test = self._pad_or_truncate_samples(
-                X_intv, T_intv, None, max_n_test, is_train=False
+            # No clustering needed - use original logic with random subsampling if needed
+            X_obs_proc, T_obs_proc, Y_obs_proc, n_train = self._pad_or_truncate_samples(
+                X_obs, T_obs, Y_obs_scaled, max_n_train, is_train=True
             )
             
-            # Build adjacency matrix
-            if adjacency_matrix is None:
-                adjacency_matrix = self._build_adjacency_matrix(n_real_features)
-            
-            # Call parent predict
-            preds = super().predict(
-                X_obs=X_obs,
-                T_obs=T_obs,
-                Y_obs=Y_obs_scaled,
+            # Make predictions using _predict_single_cluster (handles test batching)
+            preds = self._predict_single_cluster(
+                X_obs=X_obs_proc,
+                T_obs=T_obs_proc,
+                Y_obs_scaled=Y_obs_proc,
                 X_intv=X_intv,
                 T_intv=T_intv,
+                n_real_features=n_real_features,
                 adjacency_matrix=adjacency_matrix,
                 prediction_type=prediction_type,
                 num_samples=num_samples,
-                batched=False,
+                max_n_test=max_n_test,
             )
-            
-            # Only keep non-padded predictions
-            preds = preds[:n_test_original]
         
         # Inverse transform
         if inverse_transform:
