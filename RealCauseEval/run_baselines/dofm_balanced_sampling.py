@@ -1,15 +1,11 @@
 """
-DOFM Full Conditioning baseline using PreprocessingGraphConditionedPFN wrapper.
+DOFM Full Conditioning with balanced sampling for imbalanced datasets like PSID.
 
-This uses the full conditioning model (test_feature_mask_fraction=0.0)
-with the PreprocessingGraphConditionedPFN wrapper for automatic preprocessing.
+For imbalanced datasets (e.g., PSID has very few treated samples):
+- Uses ALL samples with T=1 (treated)
+- Uses only N randomly selected samples with T=0 (control)
 
-Supports different graph knowledge modes:
-- all_unknown: No graph knowledge (all edges unknown)
-- t_to_y_only: Only T->Y=1 known
-- x_to_t_only: X->T=1 and T->Y=1 known, X->Y unknown
-- x_to_y_only: X->Y=1 and T->Y=1 known, X->T unknown
-- full_graph: All edges known (X->T=1, X->Y=1, T->Y=1)
+This helps the model see enough treated samples in context.
 """
 
 import argparse
@@ -23,37 +19,26 @@ sys.path.insert(0, '/fast/arikreuter/DoPFN_v2/CausalPriorFitting/RealCauseEval')
 from src.models.PreprocessingGraphConditionedPFN import PreprocessingGraphConditionedPFN
 from run_baselines.eval import evaluate_pipeline
 
+# Configuration for balanced sampling
+MAX_CONTROL_SAMPLES = 500  # Maximum number of control samples to use
+
 
 def build_adjacency_matrix(model_n_features, n_real_features, graph_mode="full_graph"):
     """Build adjacency matrix based on graph knowledge mode."""
-    # Initialize all as unknown (0)
     adjacency_matrix = np.zeros((model_n_features + 2, model_n_features + 2), dtype=np.float32)
     
     T_idx = 0
     Y_idx = 1
-    feature_offset = 2  # Features start at position 2
+    feature_offset = 2
     
     if graph_mode == "all_unknown":
-        print(f"Graph knowledge: ALL UNKNOWN (no graph information provided)")
-    elif graph_mode == "t_to_y_only":
-        adjacency_matrix[T_idx, Y_idx] = 1.0
-        print(f"Graph knowledge: T->Y=1 only")
-    elif graph_mode == "x_to_t_only":
-        adjacency_matrix[T_idx, Y_idx] = 1.0
-        for i in range(n_real_features):
-            adjacency_matrix[feature_offset + i, T_idx] = 1.0
-        print(f"Graph knowledge: T->Y=1, X->T=1, X->Y=0")
-    elif graph_mode == "x_to_y_only":
-        adjacency_matrix[T_idx, Y_idx] = 1.0
-        for i in range(n_real_features):
-            adjacency_matrix[feature_offset + i, Y_idx] = 1.0
-        print(f"Graph knowledge: T->Y=1, X->T=0, X->Y=1")
+        print(f"Graph knowledge: ALL UNKNOWN")
     elif graph_mode == "full_graph":
         adjacency_matrix[T_idx, Y_idx] = 1.0
         for i in range(n_real_features):
             adjacency_matrix[feature_offset + i, T_idx] = 1.0
             adjacency_matrix[feature_offset + i, Y_idx] = 1.0
-        print(f"Graph knowledge: T->Y=1, X->T=1, X->Y=1 (full graph)")
+        print(f"Graph knowledge: FULL GRAPH (T->Y=1, X->T=1, X->Y=1)")
     else:
         raise ValueError(f"Unknown graph_mode: {graph_mode}")
     
@@ -67,26 +52,68 @@ def build_adjacency_matrix(model_n_features, n_real_features, graph_mode="full_g
     return adjacency_matrix
 
 
-def create_dofm_full_conditioning_pipeline(graph_mode="full_graph"):
-    """Factory function to create a pipeline with specific graph mode."""
-    def dofm_full_conditioning_pipeline(model, cate_dataset):
+def create_balanced_sampling_pipeline(graph_mode="full_graph", max_control_samples=500):
+    """Factory function to create a pipeline with balanced sampling."""
+    
+    def balanced_sampling_pipeline(model, cate_dataset):
         # Extract data from cate_dataset
-        X_train = cate_dataset.X_train
-        t_train_orig = cate_dataset.t_train.reshape(-1, 1) if cate_dataset.t_train.ndim == 1 else cate_dataset.t_train
-        y_train_orig = cate_dataset.y_train.reshape(-1, 1) if cate_dataset.y_train.ndim == 1 else cate_dataset.y_train
+        X_train_full = cate_dataset.X_train
+        t_train_full = cate_dataset.t_train.reshape(-1, 1) if cate_dataset.t_train.ndim == 1 else cate_dataset.t_train
+        y_train_full = cate_dataset.y_train.reshape(-1, 1) if cate_dataset.y_train.ndim == 1 else cate_dataset.y_train
         X_test = cate_dataset.X_test
-        y_train = y_train_orig
 
-        n_train = X_train.shape[0]
+        n_train_full = X_train_full.shape[0]
         n_test = X_test.shape[0]
-        n_features = X_train.shape[1]
-        print(f"[Dataset] Train samples: {n_train}, Test samples: {n_test}, Features: {n_features}")
+        n_features = X_train_full.shape[1]
+        
+        # Identify treated and control samples
+        t_flat = t_train_full.flatten()
+        treated_mask = (t_flat == 1)
+        control_mask = (t_flat == 0)
+        
+        n_treated = treated_mask.sum()
+        n_control = control_mask.sum()
+        
+        print(f"[Original Dataset] Train: {n_train_full}, Test: {n_test}, Features: {n_features}")
+        print(f"[Treatment Balance] Treated (T=1): {n_treated}, Control (T=0): {n_control}")
+        print(f"[Treatment Ratio] {n_treated/n_train_full*100:.1f}% treated")
+        
+        # Get all treated samples
+        X_treated = X_train_full[treated_mask]
+        t_treated = t_train_full[treated_mask]
+        y_treated = y_train_full[treated_mask]
+        
+        # Get control samples (subsample if needed)
+        X_control_full = X_train_full[control_mask]
+        t_control_full = t_train_full[control_mask]
+        y_control_full = y_train_full[control_mask]
+        
+        if n_control > max_control_samples:
+            print(f"[Balanced Sampling] Subsampling control from {n_control} to {max_control_samples}")
+            control_indices = np.random.choice(n_control, max_control_samples, replace=False)
+            X_control = X_control_full[control_indices]
+            t_control = t_control_full[control_indices]
+            y_control = y_control_full[control_indices]
+        else:
+            print(f"[Balanced Sampling] Using all {n_control} control samples")
+            X_control = X_control_full
+            t_control = t_control_full
+            y_control = y_control_full
+        
+        # Combine treated and subsampled control
+        X_train = np.vstack([X_treated, X_control])
+        t_train_orig = np.vstack([t_treated, t_control])
+        y_train = np.vstack([y_treated, y_control])
+        
+        n_train = X_train.shape[0]
+        print(f"[Balanced Dataset] Using {n_train} samples: {n_treated} treated + {X_control.shape[0]} control")
+        print(f"[New Treatment Ratio] {n_treated/n_train*100:.1f}% treated")
 
         # Target encoding for treatment: replace T with mean(Y|T)
-        t_flat = t_train_orig.flatten()
+        t_flat_new = t_train_orig.flatten()
         y_flat = y_train.flatten()
-        mean_y_t0 = y_flat[t_flat == 0].mean()
-        mean_y_t1 = y_flat[t_flat == 1].mean()
+        mean_y_t0 = y_flat[t_flat_new == 0].mean()
+        mean_y_t1 = y_flat[t_flat_new == 1].mean()
         t_train = np.where(t_train_orig == 0, mean_y_t0, mean_y_t1).astype(np.float32)
         
         t_intv_0_encoded = mean_y_t0
@@ -94,7 +121,6 @@ def create_dofm_full_conditioning_pipeline(graph_mode="full_graph"):
         
         print(f"[Target Encoding] T=0 -> {mean_y_t0:.4f}, T=1 -> {mean_y_t1:.4f}")
          
-        n_test = X_test.shape[0]
         n_features_orig = X_train.shape[1]
         model_n_features = model.model.num_features
         
@@ -126,35 +152,27 @@ def create_dofm_full_conditioning_pipeline(graph_mode="full_graph"):
         
         return cate_pred
     
-    return dofm_full_conditioning_pipeline
+    return balanced_sampling_pipeline
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run DOFM full conditioning baseline.")
+    parser = argparse.ArgumentParser(description="Run DOFM with balanced sampling for imbalanced datasets.")
 
     parser.add_argument("--dataset", type=str, required=True)
     parser.add_argument("--model", type=str, required=True)    
     parser.add_argument("--exp_name", type=str, required=True)
     parser.add_argument("--checkpoint_path", type=str, default=None)
     parser.add_argument("--config_path", type=str, default=None)
-    
-    parser.add_argument("--all_unknown", action="store_true")
-    parser.add_argument("--t_to_y_only", action="store_true")
-    parser.add_argument("--x_to_t_only", action="store_true")
-    parser.add_argument("--x_to_y_only", action="store_true")
+    parser.add_argument("--graph_mode", type=str, default="full_graph", 
+                        choices=["all_unknown", "full_graph"],
+                        help="Graph knowledge mode")
+    parser.add_argument("--max_control_samples", type=int, default=500,
+                        help="Maximum number of control samples to use")
 
     args = parser.parse_args()
 
-    if args.all_unknown:
-        graph_mode = "all_unknown"
-    elif args.t_to_y_only:
-        graph_mode = "t_to_y_only"
-    elif args.x_to_t_only:
-        graph_mode = "x_to_t_only"
-    elif args.x_to_y_only:
-        graph_mode = "x_to_y_only"
-    else:
-        graph_mode = "full_graph"
+    graph_mode = args.graph_mode
+    max_control_samples = args.max_control_samples
 
     if args.checkpoint_path is None:
         checkpoint_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist.pt"
@@ -168,15 +186,18 @@ if __name__ == "__main__":
     
     print(f"Loading full conditioning model from: {checkpoint_path}")
     print(f"Graph mode: {graph_mode}")
+    print(f"Max control samples: {max_control_samples}")
+    print(f"Clustering: DISABLED (using balanced dataset)")
     
     model = PreprocessingGraphConditionedPFN(
         config_path=model_config_path,
         checkpoint_path=checkpoint_path,
         verbose=True,
+        use_clustering=False,
     )
     model.load()
 
-    dofm_pipeline = create_dofm_full_conditioning_pipeline(graph_mode)
+    dofm_pipeline = create_balanced_sampling_pipeline(graph_mode, max_control_samples)
 
     ALL_DATASETS = ["IHDP", "ACIC", "CPS", "PSID"]
     if args.dataset.lower() == "all":
@@ -186,8 +207,9 @@ if __name__ == "__main__":
     
     for dataset in datasets_to_run:
         print(f"\n{'='*60}")
-        print(f"--- Starting Full Conditioning Experiment ---")
+        print(f"--- Starting Balanced Sampling Experiment ---")
         print(f"Dataset: {dataset}, Model: {args.model}, Graph: {graph_mode}")
+        print(f"Max control samples: {max_control_samples}")
         print(f"{'='*60}\n")
         
         dataset_args = argparse.Namespace(**vars(args))

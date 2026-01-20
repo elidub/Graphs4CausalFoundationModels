@@ -15,6 +15,39 @@ plt.rcParams['figure.figsize'] = (10, 6)
 plt.rcParams['font.size'] = 12
 
 
+def bootstrap_median_ci(data, n_bootstrap=10000, confidence=0.95):
+    """Calculate bootstrap confidence interval for the median.
+    
+    Args:
+        data: array of values
+        n_bootstrap: number of bootstrap samples
+        confidence: confidence level (default 0.95 for 95% CI)
+        
+    Returns:
+        tuple: (lower_bound, upper_bound) of confidence interval
+    """
+    if len(data) == 0:
+        return (np.nan, np.nan)
+    
+    medians = []
+    n = len(data)
+    
+    for _ in range(n_bootstrap):
+        # Resample with replacement
+        sample = np.random.choice(data, size=n, replace=True)
+        medians.append(np.median(sample))
+    
+    # Calculate percentiles for confidence interval
+    alpha = 1 - confidence
+    lower_percentile = (alpha / 2) * 100
+    upper_percentile = (1 - alpha / 2) * 100
+    
+    lower_bound = np.percentile(medians, lower_percentile)
+    upper_bound = np.percentile(medians, upper_percentile)
+    
+    return (lower_bound, upper_bound)
+
+
 def load_sample_sizes(data_cache_dir, cache_file=None, max_samples=None):
     """Load training sample sizes for each dataset index.
     
@@ -411,6 +444,189 @@ def create_binned_bar_plot(sample_sizes, results, metric='mse', output_path=None
     plt.close()
 
 
+def create_boxplot(sample_sizes, results, metric='mse', output_path=None, model_name="Model", n_bins=5):
+    """Create box plot with bootstrap CIs for median performance vs sample size.
+    
+    Similar to the style in plot_performance_difference.py.
+    Boxes represent synthetic data from CI, whiskers show 95% bootstrap CI for median.
+    
+    Args:
+        sample_sizes: dict mapping index to training sample size
+        results: dict mapping index to performance metrics
+        metric: metric to plot ('mse', 'r2', or 'nll')
+        output_path: path to save figure (optional)
+        model_name: name of model for title
+        n_bins: number of bins to create based on sample size quantiles
+    """
+    # Collect data points
+    sizes = []
+    values = []
+    
+    for idx in sorted(sample_sizes.keys()):
+        if idx in results:
+            size = sample_sizes[idx]
+            value = results[idx][metric]
+            
+            # Skip NaN values
+            if not np.isnan(value):
+                sizes.append(size)
+                values.append(value)
+    
+    if len(sizes) == 0:
+        print(f"No valid data points for metric: {metric}")
+        return
+    
+    sizes = np.array(sizes)
+    values = np.array(values)
+    
+    print(f"Creating box plot with bootstrap CIs using {len(sizes)} data points for {metric}")
+    
+    # Create bins based on quantiles
+    quantiles = np.linspace(0, 1, n_bins + 1)
+    bin_edges = np.quantile(sizes, quantiles)
+    # Ensure unique bin edges
+    bin_edges = np.unique(bin_edges)
+    actual_n_bins = len(bin_edges) - 1
+    
+    # Assign data to bins
+    bin_indices = np.digitize(sizes, bin_edges[1:-1])
+    
+    # Compute statistics for each bin
+    bin_medians = []
+    bin_ci_lower = []
+    bin_ci_upper = []
+    bin_counts = []
+    bin_labels = []
+    
+    print(f"Computing bootstrap confidence intervals (10,000 samples per bin)...")
+    for i in range(actual_n_bins):
+        mask = bin_indices == i
+        bin_values = values[mask]
+        bin_sizes = sizes[mask]
+        
+        if len(bin_values) > 0:
+            median = np.median(bin_values)
+            bin_medians.append(median)
+            
+            # Compute 95% bootstrap CI for median
+            ci_lower, ci_upper = bootstrap_median_ci(bin_values, n_bootstrap=10000, confidence=0.95)
+            bin_ci_lower.append(ci_lower)
+            bin_ci_upper.append(ci_upper)
+            
+            bin_counts.append(len(bin_values))
+            
+            # Create label with size range
+            size_min = int(bin_sizes.min())
+            size_max = int(bin_sizes.max())
+            bin_labels.append(f"{size_min}-{size_max}\n(n={len(bin_values)})")
+            
+            print(f"  Bin {i+1}: median={median:.4f}, 95% CI=[{ci_lower:.4f}, {ci_upper:.4f}]")
+        else:
+            bin_medians.append(0)
+            bin_ci_lower.append(0)
+            bin_ci_upper.append(0)
+            bin_counts.append(0)
+            bin_labels.append(f"Empty")
+    
+    # Create figure with style matching plot_performance_difference.py
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Prepare box plot data
+    box_data = []
+    positions = []
+    
+    for i in range(actual_n_bins):
+        if bin_counts[i] > 0:
+            median = bin_medians[i]
+            ci_lower = bin_ci_lower[i]
+            ci_upper = bin_ci_upper[i]
+            
+            # Create synthetic distribution for boxplot using CI bounds
+            if ci_lower != ci_upper:
+                synthetic_data = [
+                    ci_lower,
+                    median - (median - ci_lower) * 0.5,
+                    median,
+                    median + (ci_upper - median) * 0.5,
+                    ci_upper
+                ]
+            else:
+                synthetic_data = [median] * 5
+            
+            box_data.append(synthetic_data)
+            positions.append(i)
+    
+    if box_data and positions:
+        # Create box plot
+        bp = ax.boxplot(box_data, positions=positions, widths=0.6,
+                       patch_artist=True, showmeans=False,
+                       medianprops=dict(color='red', linewidth=2),
+                       boxprops=dict(linewidth=1.5),
+                       whiskerprops=dict(linewidth=1.5),
+                       capprops=dict(linewidth=1.5))
+        
+        # Color boxes using viridis colormap
+        colors = plt.cm.viridis(np.linspace(0.3, 0.9, len(bp['boxes'])))
+        for patch, color in zip(bp['boxes'], colors):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.7)
+        
+        # Set x-axis
+        ax.set_xticks(positions)
+        ax.set_xticklabels([bin_labels[p] for p in positions], rotation=0, fontsize=14)
+        ax.set_xlabel('Training Sample Size Range', fontsize=16, fontweight='bold')
+        
+        # Add value labels above boxes
+        for i, pos in enumerate(positions):
+            median_val = bin_medians[pos]
+            # Get the upper whisker position from boxplot
+            upper_whisker = bp['whiskers'][i*2 + 1].get_ydata()[1]
+            ax.text(pos, upper_whisker, f'{median_val:.4f}', 
+                   ha='center', va='bottom', fontsize=11, fontweight='bold')
+    
+    # Labels and title
+    metric_labels = {
+        'mse': 'Mean Squared Error (MSE)',
+        'r2': 'R² Score',
+        'nll': 'Negative Log-Likelihood (NLL)'
+    }
+    
+    ax.set_ylabel(metric_labels.get(metric, metric.upper()), fontsize=16, fontweight='bold')
+    ax.set_title(f'{model_name}: {metric_labels.get(metric, metric.upper())} by Training Sample Size\n(Whiskers = 95% Bootstrap CI for Median)',
+                fontsize=16, fontweight='bold')
+    
+    # Set tick label sizes
+    ax.tick_params(axis='y', labelsize=14)
+    
+    # Grid and spines
+    ax.grid(True, alpha=0.3, axis='y')
+    ax.set_axisbelow(True)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    # Stats text box
+    stats_text = f"Total samples: {len(sizes)}\n"
+    stats_text += f"Overall median: {np.median(values):.4f}\n"
+    stats_text += f"Overall mean: {np.mean(values):.4f}\n"
+    stats_text += f"Overall std: {np.std(values):.4f}"
+    
+    ax.text(0.98, 0.98, stats_text, transform=ax.transAxes,
+           verticalalignment='top', horizontalalignment='right',
+           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
+           fontsize=11)
+    
+    plt.tight_layout()
+    
+    # Save or show
+    if output_path:
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"Saved plot to: {output_path}")
+    else:
+        plt.show()
+    
+    plt.close()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Plot performance vs training sample size for ComplexMech2 benchmark",
@@ -512,6 +728,13 @@ def main():
         output_path = output_dir / f"performance_vs_sample_size_{metric}_binned.png"
         create_binned_bar_plot(sample_sizes, results, metric=metric, 
                              output_path=output_path, model_name=args.model_name, n_bins=5)
+    
+    print("\nGenerating box plots with bootstrap CIs...")
+    for metric in args.metrics:
+        print(f"\n--- Plotting {metric.upper()} (Box Plot with Bootstrap CIs) ---")
+        output_path = output_dir / f"performance_vs_sample_size_{metric}_boxplot.png"
+        create_boxplot(sample_sizes, results, metric=metric, 
+                      output_path=output_path, model_name=args.model_name, n_bins=5)
     
     print()
     print("="*80)

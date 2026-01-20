@@ -16,9 +16,17 @@ import numpy as np
 from scipy import stats
 
 # Configuration
-RESULTS_DIR = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/RealCauseEval/results"
+RESULTS_DIR = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/RealCauseEval/results"
 DATASETS = ["IHDP", "ACIC", "CPS", "PSID"]
 METRICS = ["pehe", "ate_rel_err"]
+
+# Dataset information (n_train, n_test, n_features, n_realizations)
+DATASET_INFO = {
+    "IHDP": {"n_train": 672, "n_test": 75, "n_features": 25, "n_realizations": 100},
+    "ACIC": {"n_train": 4321, "n_test": 481, "n_features": 58, "n_realizations": 10},
+    "CPS": {"n_train": 14559, "n_test": 1618, "n_features": 8, "n_realizations": 100},
+    "PSID": {"n_train": 2407, "n_test": 268, "n_features": 8, "n_realizations": 100},
+}
 
 # Folders to skip (not experiment results)
 SKIP_FOLDERS = {"test", "test_tlearner", "test_tlearner_v2"}
@@ -167,6 +175,41 @@ def aggregate_results():
                 else:
                     combined.loc[folder, dataset] = f"{mean:.4f} ± {stderr:.4f}"
         print(combined.to_string())
+        print()
+        
+        # Print CONCISE table grouped by dataset (no N/A clutter)
+        print(f"\n--- {metric.upper()}: CONCISE (Grouped by Dataset) ---")
+        for dataset in DATASETS:
+            # Get dataset info
+            ds_info = DATASET_INFO.get(dataset, {})
+            n_train = ds_info.get("n_train", "?")
+            n_test = ds_info.get("n_test", "?")
+            n_features = ds_info.get("n_features", "?")
+            
+            # Get experiments that have data for this dataset
+            valid_exps = []
+            for folder in exp_folders:
+                mean = mean_matrix.loc[folder, dataset]
+                if not pd.isna(mean):
+                    stderr = stderr_matrix.loc[folder, dataset]
+                    count = count_matrix.loc[folder, dataset]
+                    if pd.isna(stderr):
+                        val_str = f"{mean:.4f}"
+                    else:
+                        val_str = f"{mean:.4f} ± {stderr:.4f}"
+                    # Extract method name (remove dataset prefix if present)
+                    method_name = folder
+                    for ds in [d.lower() for d in DATASETS]:
+                        if folder.startswith(ds + "_"):
+                            method_name = folder[len(ds)+1:]
+                            break
+                    valid_exps.append((method_name, val_str, count))
+            
+            if valid_exps:
+                print(f"\n  {dataset} (n_train={n_train}, n_test={n_test}, n_features={n_features}):")
+                # Maintain original order (sorted alphabetically by folder name)
+                for method, val, count in valid_exps:
+                    print(f"    {method:45s} {val:20s} (n={count})")
         print()
     
     # Save aggregated DataFrame to CSV

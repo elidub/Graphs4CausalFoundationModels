@@ -1,14 +1,11 @@
 """
-DOFM Full Conditioning baseline using PreprocessingGraphConditionedPFN wrapper.
+DOFM Full Conditioning baseline with 1000 sample subsampling.
 
-This uses the full conditioning model (test_feature_mask_fraction=0.0)
-with the PreprocessingGraphConditionedPFN wrapper for automatic preprocessing.
+This subsamples to 1000 training points to avoid clustering,
+then runs with target encoding and the specified graph mode.
 
 Supports different graph knowledge modes:
 - all_unknown: No graph knowledge (all edges unknown)
-- t_to_y_only: Only T->Y=1 known
-- x_to_t_only: X->T=1 and T->Y=1 known, X->Y unknown
-- x_to_y_only: X->Y=1 and T->Y=1 known, X->T unknown
 - full_graph: All edges known (X->T=1, X->Y=1, T->Y=1)
 """
 
@@ -23,6 +20,8 @@ sys.path.insert(0, '/fast/arikreuter/DoPFN_v2/CausalPriorFitting/RealCauseEval')
 from src.models.PreprocessingGraphConditionedPFN import PreprocessingGraphConditionedPFN
 from run_baselines.eval import evaluate_pipeline
 
+MAX_TRAIN_SAMPLES = 1000
+
 
 def build_adjacency_matrix(model_n_features, n_real_features, graph_mode="full_graph"):
     """Build adjacency matrix based on graph knowledge mode."""
@@ -35,19 +34,6 @@ def build_adjacency_matrix(model_n_features, n_real_features, graph_mode="full_g
     
     if graph_mode == "all_unknown":
         print(f"Graph knowledge: ALL UNKNOWN (no graph information provided)")
-    elif graph_mode == "t_to_y_only":
-        adjacency_matrix[T_idx, Y_idx] = 1.0
-        print(f"Graph knowledge: T->Y=1 only")
-    elif graph_mode == "x_to_t_only":
-        adjacency_matrix[T_idx, Y_idx] = 1.0
-        for i in range(n_real_features):
-            adjacency_matrix[feature_offset + i, T_idx] = 1.0
-        print(f"Graph knowledge: T->Y=1, X->T=1, X->Y=0")
-    elif graph_mode == "x_to_y_only":
-        adjacency_matrix[T_idx, Y_idx] = 1.0
-        for i in range(n_real_features):
-            adjacency_matrix[feature_offset + i, Y_idx] = 1.0
-        print(f"Graph knowledge: T->Y=1, X->T=0, X->Y=1")
     elif graph_mode == "full_graph":
         adjacency_matrix[T_idx, Y_idx] = 1.0
         for i in range(n_real_features):
@@ -67,9 +53,9 @@ def build_adjacency_matrix(model_n_features, n_real_features, graph_mode="full_g
     return adjacency_matrix
 
 
-def create_dofm_full_conditioning_pipeline(graph_mode="full_graph"):
-    """Factory function to create a pipeline with specific graph mode."""
-    def dofm_full_conditioning_pipeline(model, cate_dataset):
+def create_dofm_subsampled_pipeline(graph_mode="full_graph"):
+    """Factory function to create a pipeline with specific graph mode and subsampling."""
+    def dofm_subsampled_pipeline(model, cate_dataset):
         # Extract data from cate_dataset
         X_train = cate_dataset.X_train
         t_train_orig = cate_dataset.t_train.reshape(-1, 1) if cate_dataset.t_train.ndim == 1 else cate_dataset.t_train
@@ -81,6 +67,17 @@ def create_dofm_full_conditioning_pipeline(graph_mode="full_graph"):
         n_test = X_test.shape[0]
         n_features = X_train.shape[1]
         print(f"[Dataset] Train samples: {n_train}, Test samples: {n_test}, Features: {n_features}")
+
+        # Subsample to MAX_TRAIN_SAMPLES if needed
+        if n_train > MAX_TRAIN_SAMPLES:
+            print(f"[Subsampling] Randomly selecting {MAX_TRAIN_SAMPLES} from {n_train} training samples")
+            indices = np.random.choice(n_train, MAX_TRAIN_SAMPLES, replace=False)
+            X_train = X_train[indices]
+            t_train_orig = t_train_orig[indices]
+            y_train_orig = y_train_orig[indices]
+            y_train = y_train_orig
+            n_train = MAX_TRAIN_SAMPLES
+            print(f"[Subsampling] New training size: {n_train}")
 
         # Target encoding for treatment: replace T with mean(Y|T)
         t_flat = t_train_orig.flatten()
@@ -126,35 +123,24 @@ def create_dofm_full_conditioning_pipeline(graph_mode="full_graph"):
         
         return cate_pred
     
-    return dofm_full_conditioning_pipeline
+    return dofm_subsampled_pipeline
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run DOFM full conditioning baseline.")
+    parser = argparse.ArgumentParser(description="Run DOFM full conditioning with 1000 sample subsampling.")
 
     parser.add_argument("--dataset", type=str, required=True)
     parser.add_argument("--model", type=str, required=True)    
     parser.add_argument("--exp_name", type=str, required=True)
     parser.add_argument("--checkpoint_path", type=str, default=None)
     parser.add_argument("--config_path", type=str, default=None)
-    
-    parser.add_argument("--all_unknown", action="store_true")
-    parser.add_argument("--t_to_y_only", action="store_true")
-    parser.add_argument("--x_to_t_only", action="store_true")
-    parser.add_argument("--x_to_y_only", action="store_true")
+    parser.add_argument("--graph_mode", type=str, default="full_graph", 
+                        choices=["all_unknown", "full_graph"],
+                        help="Graph knowledge mode")
 
     args = parser.parse_args()
 
-    if args.all_unknown:
-        graph_mode = "all_unknown"
-    elif args.t_to_y_only:
-        graph_mode = "t_to_y_only"
-    elif args.x_to_t_only:
-        graph_mode = "x_to_t_only"
-    elif args.x_to_y_only:
-        graph_mode = "x_to_y_only"
-    else:
-        graph_mode = "full_graph"
+    graph_mode = args.graph_mode
 
     if args.checkpoint_path is None:
         checkpoint_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist.pt"
@@ -168,6 +154,7 @@ if __name__ == "__main__":
     
     print(f"Loading full conditioning model from: {checkpoint_path}")
     print(f"Graph mode: {graph_mode}")
+    print(f"Max train samples: {MAX_TRAIN_SAMPLES}")
     
     model = PreprocessingGraphConditionedPFN(
         config_path=model_config_path,
@@ -176,7 +163,7 @@ if __name__ == "__main__":
     )
     model.load()
 
-    dofm_pipeline = create_dofm_full_conditioning_pipeline(graph_mode)
+    dofm_pipeline = create_dofm_subsampled_pipeline(graph_mode)
 
     ALL_DATASETS = ["IHDP", "ACIC", "CPS", "PSID"]
     if args.dataset.lower() == "all":
@@ -186,8 +173,9 @@ if __name__ == "__main__":
     
     for dataset in datasets_to_run:
         print(f"\n{'='*60}")
-        print(f"--- Starting Full Conditioning Experiment ---")
+        print(f"--- Starting Subsampled Full Conditioning Experiment ---")
         print(f"Dataset: {dataset}, Model: {args.model}, Graph: {graph_mode}")
+        print(f"Max train samples: {MAX_TRAIN_SAMPLES}")
         print(f"{'='*60}\n")
         
         dataset_args = argparse.Namespace(**vars(args))

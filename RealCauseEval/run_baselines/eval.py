@@ -1,5 +1,6 @@
     
-from sklearn.metrics import root_mean_squared_error
+from sklearn.metrics import mean_squared_error
+import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 import pickle as pkl
@@ -38,10 +39,10 @@ def evaluate_pipeline(exp_name, model_pipeline, model, args):
         cate_dataset = dataset[realization][0]
 
         cate_pred = model_pipeline(model, cate_dataset)
-        pehe = root_mean_squared_error(
+        pehe = np.sqrt(mean_squared_error(
             cate_dataset.true_cate, 
             cate_pred
-        )
+        ))
         ate_rel_err = relative_error(
             cate_dataset.true_cate.mean(), 
             cate_pred.mean()
@@ -66,7 +67,6 @@ def evaluate_pipeline(exp_name, model_pipeline, model, args):
             pkl.dump(result_dict, f)
     
     # Print summary statistics
-    import numpy as np
     print(f"\n{'='*40}")
     print(f"Summary for {args.dataset}:")
     print(f"  Average PEHE:         {np.mean(all_pehe):.4f} ± {np.std(all_pehe):.4f}")

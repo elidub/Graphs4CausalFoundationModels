@@ -95,6 +95,9 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
         self.use_clustering = use_clustering
         self.random_state = random_state
         
+        # Test feature masking (loaded from config, default 0.0 = no masking)
+        self.test_feature_mask_fraction: float = 0.0
+        
         # Fitted preprocessing parameters (computed from training data)
         self._fitted = False
         self._X_mean: Optional[np.ndarray] = None
@@ -135,11 +138,17 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
             self.preprocessing_config = config.get('preprocessing_config', {})
             self.dataset_config = config.get('dataset_config', {})
             
+            # Extract test feature mask fraction from dataset config
+            self.test_feature_mask_fraction = self._get_config_value(
+                self.dataset_config, 'test_feature_mask_fraction', 0.0
+            )
+            
             if self.verbose:
                 print(f"[PreprocessingGraphConditionedPFN] Loaded preprocessing config:")
                 print(f"  remove_outliers: {self._get_config_value(self.preprocessing_config, 'remove_outliers', True)}")
                 print(f"  outlier_quantile: {self._get_config_value(self.preprocessing_config, 'outlier_quantile', 0.99)}")
                 print(f"  feature_standardize: {self._get_config_value(self.preprocessing_config, 'feature_standardize', True)}")
+                print(f"  test_feature_mask_fraction: {self.test_feature_mask_fraction}")
         
         return self
     
@@ -325,6 +334,55 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
         # Scale to [-1, 1]: Y_scaled = 2.0 * (Y - ymin) / range - 1.0
         Y_scaled = 2.0 * (Y - self._y_min) / self._y_range - 1.0
         return Y_scaled
+    
+    def _apply_test_feature_masking(self, X_test: np.ndarray) -> np.ndarray:
+        """
+        Apply random feature masking to test features.
+        
+        This matches the training-time augmentation in BasicProcessing where a 
+        fraction of non-zero features in the test set are randomly masked (set to 0).
+        The model is trained to be robust to this distribution shift.
+        
+        Args:
+            X_test: Test features, shape (N, L) - should be preprocessed (standardized)
+            
+        Returns:
+            X_test with a fraction of features masked (set to 0)
+        """
+        if self.test_feature_mask_fraction <= 0.0:
+            return X_test
+        
+        X_test = X_test.copy()  # Don't modify original
+        
+        # Match BasicProcessing: identify non-zero columns (columns with at least one non-zero value)
+        # Use a small epsilon to account for numerical precision
+        eps = 1e-8
+        column_is_nonzero = np.abs(X_test).sum(axis=0) > eps
+        nonzero_cols = np.where(column_is_nonzero)[0].tolist()
+        
+        if len(nonzero_cols) == 0:
+            # All columns are zero, nothing to mask
+            return X_test
+        
+        # Calculate number of features to mask (matching BasicProcessing logic)
+        n_to_mask = int(len(nonzero_cols) * self.test_feature_mask_fraction)
+        
+        if n_to_mask == 0:
+            return X_test
+        
+        # Use random_state for reproducibility if set
+        rng = np.random.RandomState(self.random_state)
+        
+        # Randomly select features to mask from non-zero columns
+        cols_to_mask = rng.choice(nonzero_cols, size=n_to_mask, replace=False)
+        
+        # Mask the selected columns by setting them to zero
+        X_test[:, cols_to_mask] = 0.0
+        
+        if self.verbose:
+            print(f"[PreprocessingGraphConditionedPFN] Masked {n_to_mask}/{len(nonzero_cols)} non-zero features (fraction={self.test_feature_mask_fraction})")
+        
+        return X_test
     
     def _inverse_transform_predictions(self, Y_scaled: np.ndarray) -> np.ndarray:
         """
@@ -724,6 +782,8 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
         Returns:
             Predictions in original scale (if inverse_transform=True)
         """
+
+        
         if not self._fitted:
             raise RuntimeError("Preprocessing not fitted. Call fit() first.")
         
@@ -742,6 +802,10 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
         # Preprocess features
         X_obs = self._preprocess_features(X_obs)
         X_intv = self._preprocess_features(X_intv)
+        
+        # Apply test feature masking to interventional (test) features
+        # This matches the training-time augmentation
+        X_intv = self._apply_test_feature_masking(X_intv)
         
         # Scale targets
         Y_obs_scaled = self._preprocess_targets(Y_obs)
@@ -946,6 +1010,9 @@ class PreprocessingGraphConditionedPFN(GraphConditionedInterventionalPFNSklearn)
         # Preprocess features
         X_obs = self._preprocess_features(X_obs)
         X_intv = self._preprocess_features(X_intv)
+        
+        # Apply test feature masking to interventional (test) features
+        X_intv = self._apply_test_feature_masking(X_intv)
         
         # Scale targets
         Y_obs_scaled = self._preprocess_targets(Y_obs)

@@ -7,8 +7,8 @@ import os
 import yaml
 
 # Add paths
-sys.path.insert(0, '/Users/arikreuter/Documents/PhD/CausalPriorFitting')
-sys.path.insert(0, '/Users/arikreuter/Documents/PhD/CausalPriorFitting/RealCauseEval')
+sys.path.insert(0, '/fast/arikreuter/DoPFN_v2/CausalPriorFitting')
+sys.path.insert(0, '/fast/arikreuter/DoPFN_v2/CausalPriorFitting/RealCauseEval')
 
 from src.models.SimplePFN_sklearn import SimplePFNSklearn
 from src.priordata_processing.BasicProcessing import BasicProcessing
@@ -65,7 +65,7 @@ def tlearner_pipeline(model, cate_dataset):
     # Load preprocessing config if not already loaded
     if MODEL_CONFIG is None:
         preprocessing_config, dataset_config = load_preprocessing_config(
-            "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/basic_16691166.0.yaml"
+            "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/basic_16691166.0.yaml"
         )
         MODEL_CONFIG = {
             'preprocessing': preprocessing_config,
@@ -131,23 +131,6 @@ def tlearner_pipeline(model, cate_dataset):
     
     print(f"Training data split: {X_train_treated.shape[0]} treated, {X_train_control.shape[0]} control")
     
-    # Limit training samples to avoid memory issues (similar to DOFM)
-    MAX_TRAIN_SAMPLES = 1000
-    
-    if X_train_treated.shape[0] > MAX_TRAIN_SAMPLES:
-        print(f"Subsampling treated group from {X_train_treated.shape[0]} to {MAX_TRAIN_SAMPLES}")
-        indices = np.random.choice(X_train_treated.shape[0], MAX_TRAIN_SAMPLES, replace=False)
-        X_train_treated = X_train_treated[indices]
-        y_train_treated = y_train_treated[indices]
-    
-    if X_train_control.shape[0] > MAX_TRAIN_SAMPLES:
-        print(f"Subsampling control group from {X_train_control.shape[0]} to {MAX_TRAIN_SAMPLES}")
-        indices = np.random.choice(X_train_control.shape[0], MAX_TRAIN_SAMPLES, replace=False)
-        X_train_control = X_train_control[indices]
-        y_train_control = y_train_control[indices]
-    
-    print(f"After subsampling: {X_train_treated.shape[0]} treated, {X_train_control.shape[0]} control")
-    
     # Apply target scaling to [-1, 1] as done during model training
     # This is CRITICAL: the model was trained with scaled targets!
     y_train_all = y_train.flatten()
@@ -210,8 +193,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Hardcoded SimplePFN model initialization
-    checkpoint_path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/step_55000.pt"
-    model_config_path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/basic_16691166.0.yaml"
+    checkpoint_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/step_55000.pt"
+    model_config_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/basic_16691166.0.yaml"
     
     print(f"Loading SimplePFN model from: {checkpoint_path}")
     simple_pfn = SimplePFNSklearn(

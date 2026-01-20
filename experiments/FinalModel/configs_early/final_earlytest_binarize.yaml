@@ -420,7 +420,7 @@ training_config:
   weight_decay: # weight decay for optimizer, might not be needed
     value: 0.00001 
   max_steps:  #critial for determing training duration!
-    value: 50000
+    value: 200000
   max_epochs: # should always be 1
     value: 1
 
@@ -428,7 +428,7 @@ training_config:
   batch_size: # batch size
     value: 8
   accumulate_grad_batches:
-    value: 4
+    value: 1
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
     value: 50
 
@@ -476,7 +476,7 @@ training_config:
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 1000000
+    value: 100000000
   eval_batches: # number of batches to use for evaluation
     value: 100
   eval_dataset_size: # size of the evaluation dataset

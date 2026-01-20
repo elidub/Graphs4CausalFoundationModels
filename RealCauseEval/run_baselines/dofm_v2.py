@@ -10,8 +10,8 @@ import sys
 import numpy as np
 
 # Add paths
-sys.path.insert(0, '/Users/arikreuter/Documents/PhD/CausalPriorFitting')
-sys.path.insert(0, '/Users/arikreuter/Documents/PhD/CausalPriorFitting/RealCauseEval')
+sys.path.insert(0, '/fast/arikreuter/DoPFN_v2/CausalPriorFitting')
+sys.path.insert(0, '/fast/arikreuter/DoPFN_v2/CausalPriorFitting/RealCauseEval')
 
 from src.models.PreprocessingGraphConditionedPFN import PreprocessingGraphConditionedPFN
 from run_baselines.eval import evaluate_pipeline
@@ -84,7 +84,7 @@ def dofm_pipeline(model, cate_dataset):
     feature_offset = 2  # Features start at position 2
     
     # 1. T -> Y (treatment causes outcome)
-    adjacency_matrix[T_idx, Y_idx] = 1.0
+    adjacency_matrix[T_idx, Y_idx] = 0.0
     
     # 2. Real features -> T (features cause treatment)
     for i in range(n_real_features):
@@ -147,13 +147,24 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, required=True, 
                         help="Name of the dataset (IHDP, ACIC, CPS, PSID) or 'all' for all datasets")
     parser.add_argument("--model", type=str, required=True, help="Model name for logging")    
-    parser.add_argument("--exp_name", type=str, required=True, help="Experiment name")    
+    parser.add_argument("--exp_name", type=str, required=True, help="Experiment name")
+    parser.add_argument("--checkpoint_path", type=str, default=None, 
+                        help="Path to model checkpoint (default: final_earlytest_16773250.0)")
+    parser.add_argument("--config_path", type=str, default=None,
+                        help="Path to model config (default: final_earlytest_16773250.0)")
 
     args = parser.parse_args()
 
-    # Model paths
-    checkpoint_path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist.pt"
-    model_config_path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist_config.yaml"
+    # Model paths - use defaults if not provided
+    if args.checkpoint_path is None:
+        checkpoint_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist.pt"
+    else:
+        checkpoint_path = args.checkpoint_path
+        
+    if args.config_path is None:
+        model_config_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist_config.yaml"
+    else:
+        model_config_path = args.config_path
     
     print(f"Loading model from: {checkpoint_path}")
     model = PreprocessingGraphConditionedPFN(

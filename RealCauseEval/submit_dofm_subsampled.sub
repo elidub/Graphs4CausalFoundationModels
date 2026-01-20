@@ -1,0 +1,93 @@
+universe   = vanilla
+executable = /bin/bash
+arguments  = run_dofm_subsampled_cluster.sh
+output     = logs/dofm_sub_$(graph_mode)_$(dataset)_$(ClusterId).$(ProcId).out
+error      = logs/dofm_sub_$(graph_mode)_$(dataset)_$(ClusterId).$(ProcId).err
+log        = logs/dofm_sub_$(graph_mode)_$(dataset)_$(ClusterId).$(ProcId).log
+
+# Transfer all necessary files
+transfer_input_files = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/src, /fast/arikreuter/DoPFN_v2/venv.zip, run_dofm_subsampled_cluster.sh, run_baselines, CausalPFN, $(config_file), $(checkpoint_file)
+should_transfer_files = Yes
+when_to_transfer_output = ON_EXIT
+
+# Pass parameters via environment variables
+environment = "DATASET=$(dataset) MODEL_NAME=$(model_name) EXP_NAME=$(exp_name) GRAPH_MODE=$(graph_mode)"
+
+# Resource requests
+request_gpus   = 1
+request_memory = 64GB
+request_cpus   = 8
+request_disk   = 32GB
+
+# Require GPUs that are NOT B200 (compute capability < 10.0)
+require_gpus = (DriverVersion >= 11.0) && (Capability < 10.0)
+
+# Job priority bid
+JobBatchName = "dofm_sub1k_$(graph_mode)_$(dataset)"
++MaxRunningPrice = 100000
++RunningPriceExceededAction = "kill"
+
+# Create logs directory if it doesn't exist
+initialdir = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/RealCauseEval
+
+# Model configuration - Full conditioning model
+config_file = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist_config.yaml
+checkpoint_file = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist.pt
+
+# =====================================================
+# FULL GRAPH MODE - all_unknown
+# =====================================================
+graph_mode = all_unknown
+
+# ACIC dataset
+dataset = ACIC
+model_name = dofm_sub1k
+exp_name = dofm_sub1k_all_unknown
+queue 1
+
+# IHDP dataset
+dataset = IHDP
+model_name = dofm_sub1k
+exp_name = dofm_sub1k_all_unknown
+queue 1
+
+# CPS dataset
+dataset = CPS
+model_name = dofm_sub1k
+exp_name = dofm_sub1k_all_unknown
+queue 1
+
+# PSID dataset
+dataset = PSID
+model_name = dofm_sub1k
+exp_name = dofm_sub1k_all_unknown
+queue 1
+
+# =====================================================
+# FULL GRAPH MODE - full_graph
+# =====================================================
+graph_mode = full_graph
+
+# ACIC dataset
+dataset = ACIC
+model_name = dofm_sub1k
+exp_name = dofm_sub1k_full_graph
+queue 1
+
+# IHDP dataset
+dataset = IHDP
+model_name = dofm_sub1k
+exp_name = dofm_sub1k_full_graph
+queue 1
+
+# CPS dataset
+dataset = CPS
+model_name = dofm_sub1k
+exp_name = dofm_sub1k_full_graph
+queue 1
+
+# PSID dataset
+dataset = PSID
+model_name = dofm_sub1k
+exp_name = dofm_sub1k_full_graph
+queue 1
