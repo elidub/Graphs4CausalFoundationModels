@@ -4,17 +4,88 @@ import os
 import numpy as np
 import yaml
 from sklearn.preprocessing import LabelEncoder
+from pathlib import Path
+
+# Determine base paths - works locally and on cluster
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLANTSEVAL_DIR = SCRIPT_DIR.parent
+# Navigate up to CausalPriorFitting root (PlantEval/PlantsEval/run_plants -> ../../..)
+PROJECT_ROOT = PLANTSEVAL_DIR.parent.parent
 
 # Add paths for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, '/Users/arikreuter/Documents/PhD/CausalPriorFitting')
-sys.path.insert(0, '/Users/arikreuter/Documents/PhD/CausalPriorFitting/RealCauseEval')
+sys.path.insert(0, str(PLANTSEVAL_DIR))
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "RealCauseEval"))
 
 from run_plants.eval import evaluate_pipeline
 from src.models.GraphConditionedInterventionalPFN_sklearn import GraphConditionedInterventionalPFNSklearn
 
+# Model checkpoint path (relative to PROJECT_ROOT)
+MODEL_CHECKPOINT_DIR = PROJECT_ROOT / "experiments" / "FirstTests" / "checkpoints" / "final_earlytest_full_conditioning_16773252.0"
+
 # Global config for preprocessing
 MODEL_CONFIG = None
+
+# Plant data column names in order (from the dataset)
+# The treatment is Light_Intensity_umols, the outcome is Biomass_g
+PLANT_FEATURE_NAMES = [
+    "X",  # 0
+    "Y",  # 1  
+    "Position_in_Bed",  # 2
+    "Bed_Position",  # 3
+    "Unique_Identifier",  # 4
+    "Microgreen",  # 5
+    "Red_Light_Intensity_umols",  # 6
+    "Blue_Light_Intensity_umols",  # 7
+    "Far_Red_Light_Intensity_umols",  # 8
+]
+
+# Causal edges for the plant data
+# Treatment (T) is Light_Intensity_umols
+# Outcome (Y_out) is Biomass_g
+PLANT_CAUSAL_EDGES = [
+    # Everything has a causal impact on the outcome (Biomass_g)
+    ("X", "Biomass_g"),
+    ("Y", "Biomass_g"),
+    ("Position_in_Bed", "Biomass_g"),
+    ("Bed_Position", "Biomass_g"),
+    ("Unique_Identifier", "Biomass_g"),
+    ("Red_Light_Intensity_umols", "Biomass_g"),
+    ("Blue_Light_Intensity_umols", "Biomass_g"),
+    ("Far_Red_Light_Intensity_umols", "Biomass_g"),
+    ("Light_Intensity_umols", "Biomass_g"),  # T -> Y
+    ("Microgreen", "Biomass_g"),
+
+    # Light intensity is composed of its sources
+    ("Far_Red_Light_Intensity_umols", "Light_Intensity_umols"),
+    ("Blue_Light_Intensity_umols", "Light_Intensity_umols"),
+    ("Red_Light_Intensity_umols", "Light_Intensity_umols"),
+
+    # Positional information has a causal impact on light intensity (T)
+    ("X", "Light_Intensity_umols"),
+    ("Y", "Light_Intensity_umols"),
+    ("Position_in_Bed", "Light_Intensity_umols"),
+    ("Bed_Position", "Light_Intensity_umols"),
+    ("Unique_Identifier", "Light_Intensity_umols"),
+
+    ("X", "Red_Light_Intensity_umols"),
+    ("Y", "Red_Light_Intensity_umols"),
+    ("Position_in_Bed", "Red_Light_Intensity_umols"),
+    ("Bed_Position", "Red_Light_Intensity_umols"),
+    ("Unique_Identifier", "Red_Light_Intensity_umols"),
+
+    ("X", "Blue_Light_Intensity_umols"),
+    ("Y", "Blue_Light_Intensity_umols"),
+    ("Position_in_Bed", "Blue_Light_Intensity_umols"),
+    ("Bed_Position", "Blue_Light_Intensity_umols"),
+    ("Unique_Identifier", "Blue_Light_Intensity_umols"),
+
+    ("X", "Far_Red_Light_Intensity_umols"),
+    ("Y", "Far_Red_Light_Intensity_umols"),
+    ("Position_in_Bed", "Far_Red_Light_Intensity_umols"),
+    ("Bed_Position", "Far_Red_Light_Intensity_umols"),
+    ("Unique_Identifier", "Far_Red_Light_Intensity_umols"),
+]
 
 
 def encode_mixed_data(X_train, X_test):
@@ -103,9 +174,8 @@ def dofm_pipeline(model, cid_dataset):
     
     # Load preprocessing config if not already loaded
     if MODEL_CONFIG is None:
-        preprocessing_config, dataset_config = load_preprocessing_config(
-            "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist_config.yaml"
-        )
+        config_path = MODEL_CHECKPOINT_DIR / "final_model_with_bardist_config.yaml"
+        preprocessing_config, dataset_config = load_preprocessing_config(str(config_path))
         MODEL_CONFIG = {
             'preprocessing': preprocessing_config,
             'dataset': dataset_config
@@ -173,30 +243,84 @@ def dofm_pipeline(model, cid_dataset):
     # Number of real (non-padded) features
     n_real_features = min(n_features_orig, model_n_features)
     
-    # Create partial ancestral matrix with known causal structure
+    # Create partial ancestral matrix with known causal structure for PLANT DATA
+    # ANCESTOR MATRIX semantics: T[i,j] = 1 means i IS an ancestor of j
+    #                            T[i,j] = 0 means UNKNOWN
+    #                            T[i,j] = -1 means i is NOT an ancestor of j
     # Shape: (model_n_features + 2, model_n_features + 2)
     # Positions: 0 to model_n_features-1: Features, model_n_features: T, model_n_features+1: Y
-    T_idx = model_n_features
-    Y_idx = model_n_features + 1
+    T_idx = model_n_features  # Treatment: Light_Intensity_umols
+    Y_idx = model_n_features + 1  # Outcome: Biomass_g
     
-    # Initialize all as unknown (0)
-    adjacency_matrix = np.zeros((model_n_features + 2, model_n_features + 2), dtype=np.float32)
+    # Build name-to-index mapping for plant features
+    # Features in order: X(0), Y(1), Position_in_Bed(2), Bed_Position(3), Unique_Identifier(4),
+    #                    Microgreen(5), Red_Light(6), Blue_Light(7), Far_Red_Light(8)
+    name_to_idx = {name: i for i, name in enumerate(PLANT_FEATURE_NAMES)}
+    name_to_idx["Light_Intensity_umols"] = T_idx  # Treatment
+    name_to_idx["Biomass_g"] = Y_idx  # Outcome
     
-    # Add known causal edges:
-    # T -> Y
-    adjacency_matrix[T_idx, Y_idx] = 1.0
-    # X -> T (features cause treatment)
-    for i in range(n_real_features):
-        adjacency_matrix[i, T_idx] = 1.0
-    # X -> Y (features cause outcome)
-    for i in range(n_real_features):
-        adjacency_matrix[i, Y_idx] = 1.0
+    # Initialize ancestor matrix with zeros (unknown)
+    ancestor_matrix = np.zeros((model_n_features + 2, model_n_features + 2), dtype=np.float32)
     
-    # PADDED features: Set all edges to -1 (no edge)
+    # Mark diagonal as -1 (no self-ancestry)
+    for i in range(model_n_features + 2):
+        ancestor_matrix[i, i] = -1.0
+    
+    # Mark padded features as no-edge (-1) in all directions
     for i in range(n_real_features, model_n_features):
-        adjacency_matrix[i, :] = -1.0
-        adjacency_matrix[:, i] = -1.0
-        adjacency_matrix[i, i] = -1.0
+        ancestor_matrix[i, :] = -1.0
+        ancestor_matrix[:, i] = -1.0
+    
+    # Build adjacency matrix first (direct edges), then compute transitive closure
+    adj_matrix = np.zeros((model_n_features + 2, model_n_features + 2), dtype=np.float32)
+    
+    for source, target in PLANT_CAUSAL_EDGES:
+        src_idx = name_to_idx.get(source)
+        tgt_idx = name_to_idx.get(target)
+        if src_idx is not None and tgt_idx is not None:
+            if src_idx < model_n_features + 2 and tgt_idx < model_n_features + 2:
+                adj_matrix[src_idx, tgt_idx] = 1.0
+    
+    # Compute transitive closure (ancestor matrix) using Floyd-Warshall
+    # T[i,j] = 1 iff there's a path from i to j
+    reachability = adj_matrix.copy()
+    n_nodes = model_n_features + 2
+    for k in range(n_nodes):
+        for i in range(n_nodes):
+            for j in range(n_nodes):
+                if reachability[i, k] > 0 and reachability[k, j] > 0:
+                    reachability[i, j] = 1.0
+    
+    # Set known ancestors (1) in the ancestor matrix
+    for i in range(n_nodes):
+        for j in range(n_nodes):
+            if i != j and reachability[i, j] > 0:
+                # Only update if not a padded feature
+                if not (n_real_features <= i < model_n_features or n_real_features <= j < model_n_features):
+                    ancestor_matrix[i, j] = 1.0
+    
+    # Also mark known NON-ancestors as -1 based on the graph structure:
+    # If we know the complete causal structure, nodes that aren't ancestors should be -1
+    # For now, mark outcome Y and treatment T as not being ancestors of covariates
+    # (since Y and T are downstream of covariates in our causal model)
+    for i in range(n_real_features):
+        # Y is not an ancestor of any covariate
+        ancestor_matrix[Y_idx, i] = -1.0
+        # T is not an ancestor of most covariates (only the light components, but let's be conservative)
+        # Actually T (Light_Intensity) is composed of Red/Blue/Far_Red, so T is not an ancestor of X features
+        ancestor_matrix[T_idx, i] = -1.0
+    
+    # Covariates don't cause each other in this specific plant model (they're exogenous)
+    # X, Y_coord, Position_in_Bed, Bed_Position, Unique_Identifier, Microgreen are root nodes
+    root_features = [0, 1, 2, 3, 4, 5]  # X, Y_coord, Position_in_Bed, Bed_Position, Unique_Identifier, Microgreen
+    for i in root_features:
+        for j in root_features:
+            if i != j:
+                ancestor_matrix[i, j] = -1.0  # Root features don't cause each other
+    
+    n_known_ancestors = np.sum(ancestor_matrix == 1.0)
+    n_known_non_ancestors = np.sum(ancestor_matrix == -1.0)
+    print(f"Built plant ancestor matrix: {n_known_ancestors:.0f} known ancestors, {n_known_non_ancestors:.0f} known non-ancestors")
     
     # Truncate samples if needed
     if n_train > max_n_train_samples:
@@ -240,7 +364,7 @@ def dofm_pipeline(model, cid_dataset):
                 Y_obs=Y_train,
                 X_intv=X_test_batch,
                 T_intv=T_test_batch,
-                adjacency_matrix=adjacency_matrix,
+                adjacency_matrix=ancestor_matrix,
                 prediction_type="mean",
                 batched=False
             )
@@ -264,7 +388,7 @@ def dofm_pipeline(model, cid_dataset):
             Y_obs=Y_train,
             X_intv=X_test_padded,
             T_intv=T_test_padded,
-            adjacency_matrix=adjacency_matrix,
+            adjacency_matrix=ancestor_matrix,
             prediction_type="mean",
             batched=False
         )
