@@ -226,25 +226,6 @@ def create_difference_scatter_plot(sample_sizes, baseline_results, model_results
     # Grid
     ax.grid(True, alpha=0.3)
     
-    # Stats text box
-    stats_text = f"N = {len(sizes)}\n"
-    stats_text += f"Median diff: {np.median(differences):.4f}\n"
-    stats_text += f"Mean diff: {np.mean(differences):.4f}\n"
-    stats_text += f"Std diff: {np.std(differences):.4f}\n"
-    
-    # Count improvements
-    if metric in ['mse', 'nll']:
-        better_count = sum(1 for d in differences if d < 0)
-        stats_text += f"Model better: {better_count}/{len(differences)} ({100*better_count/len(differences):.1f}%)"
-    else:  # r2
-        better_count = sum(1 for d in differences if d > 0)
-        stats_text += f"Model better: {better_count}/{len(differences)} ({100*better_count/len(differences):.1f}%)"
-    
-    ax.text(0.98, 0.98, stats_text, transform=ax.transAxes,
-           verticalalignment='top', horizontalalignment='right',
-           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
-           fontsize=10)
-    
     plt.tight_layout()
     
     # Save or show
@@ -403,25 +384,6 @@ def create_difference_binned_bar_plot(sample_sizes, baseline_results, model_resu
                 y_pos = bin_q25[i]
             ax.text(i, y_pos, f'{median_val:.3f}', 
                    ha='center', va=va, fontsize=9, fontweight='bold')
-    
-    # Stats text box
-    stats_text = f"Total samples: {len(sizes)}\n"
-    stats_text += f"Overall median diff: {np.median(differences):.4f}\n"
-    stats_text += f"Overall mean diff: {np.mean(differences):.4f}\n"
-    stats_text += f"Overall std diff: {np.std(differences):.4f}\n"
-    
-    # Count improvements
-    if metric in ['mse', 'nll']:
-        better_count = sum(1 for d in differences if d < 0)
-        stats_text += f"Model better: {better_count}/{len(differences)} ({100*better_count/len(differences):.1f}%)"
-    else:  # r2
-        better_count = sum(1 for d in differences if d > 0)
-        stats_text += f"Model better: {better_count}/{len(differences)} ({100*better_count/len(differences):.1f}%)"
-    
-    ax.text(0.98, 0.98, stats_text, transform=ax.transAxes,
-           verticalalignment='top', horizontalalignment='right',
-           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
-           fontsize=10)
     
     plt.tight_layout()
     
@@ -619,25 +581,6 @@ def create_difference_boxplot(sample_sizes, baseline_results, model_results, met
     ax.set_axisbelow(True)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    
-    # Stats text box
-    stats_text = f"Total samples: {len(sizes)}\n"
-    stats_text += f"Overall median: {np.median(differences):.4f}\n"
-    stats_text += f"Overall mean: {np.mean(differences):.4f}\n"
-    stats_text += f"Overall std: {np.std(differences):.4f}\n"
-    
-    # Count improvements
-    if metric in ['mse', 'nll']:
-        better_count = sum(1 for d in differences if d < 0)
-        stats_text += f"Model better: {better_count}/{len(differences)} ({100*better_count/len(differences):.1f}%)"
-    else:  # r2
-        better_count = sum(1 for d in differences if d > 0)
-        stats_text += f"Model better: {better_count}/{len(differences)} ({100*better_count/len(differences):.1f}%)"
-    
-    ax.text(0.98, 0.98, stats_text, transform=ax.transAxes,
-           verticalalignment='top', horizontalalignment='right',
-           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
-           fontsize=11)
     
     plt.tight_layout()
     

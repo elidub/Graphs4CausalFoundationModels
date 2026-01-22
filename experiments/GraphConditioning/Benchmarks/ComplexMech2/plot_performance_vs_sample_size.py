@@ -283,17 +283,6 @@ def create_scatter_plot(sample_sizes, results, metric='mse', output_path=None, m
     # Grid
     ax.grid(True, alpha=0.3)
     
-    # Stats text box
-    stats_text = f"N = {len(sizes)}\n"
-    stats_text += f"Median {metric.upper()}: {np.median(values):.4f}\n"
-    stats_text += f"Mean {metric.upper()}: {np.mean(values):.4f}\n"
-    stats_text += f"Std {metric.upper()}: {np.std(values):.4f}"
-    
-    ax.text(0.98, 0.98, stats_text, transform=ax.transAxes,
-           verticalalignment='top', horizontalalignment='right',
-           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
-           fontsize=10)
-    
     plt.tight_layout()
     
     # Save or show
@@ -420,17 +409,6 @@ def create_binned_bar_plot(sample_sizes, results, metric='mse', output_path=None
         if count > 0:
             ax.text(i, bin_q75[i], f'{median_val:.3f}', 
                    ha='center', va='bottom', fontsize=9, fontweight='bold')
-    
-    # Stats text box
-    stats_text = f"Total samples: {len(sizes)}\n"
-    stats_text += f"Overall median: {np.median(values):.4f}\n"
-    stats_text += f"Overall mean: {np.mean(values):.4f}\n"
-    stats_text += f"Overall std: {np.std(values):.4f}"
-    
-    ax.text(0.98, 0.98, stats_text, transform=ax.transAxes,
-           verticalalignment='top', horizontalalignment='right',
-           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
-           fontsize=10)
     
     plt.tight_layout()
     
@@ -604,18 +582,7 @@ def create_boxplot(sample_sizes, results, metric='mse', output_path=None, model_
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     
-    # Stats text box
-    stats_text = f"Total samples: {len(sizes)}\n"
-    stats_text += f"Overall median: {np.median(values):.4f}\n"
-    stats_text += f"Overall mean: {np.mean(values):.4f}\n"
-    stats_text += f"Overall std: {np.std(values):.4f}"
-    
-    ax.text(0.98, 0.98, stats_text, transform=ax.transAxes,
-           verticalalignment='top', horizontalalignment='right',
-           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
-           fontsize=11)
-    
-    plt.tight_layout()
+    # Save or show
     
     # Save or show
     if output_path:

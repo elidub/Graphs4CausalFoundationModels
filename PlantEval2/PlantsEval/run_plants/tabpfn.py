@@ -1,22 +1,19 @@
 import argparse
+import torch
 import sys
 import os
 import numpy as np
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from run_plants.eval import evaluate_pipeline
 
-from catboost import CatBoostRegressor
+from tabpfn import TabPFNRegressor
 
+sys.path.append(os.path.abspath("/work/dlclarge2/robertsj-dofm"))
+from generate_plant_data import CID_Benchmark
 
-def catboost_pipeline(model, cid_dataset, categorical_indices=None):
+def tabpfn_pipeline(model, cid_dataset):
     t_X_train = np.concatenate([cid_dataset.t_train.reshape(-1, 1), cid_dataset.X_train], axis=1)
-    if categorical_indices is not None:
-        model.fit(t_X_train, cid_dataset.y_train, categorical_indices)
-    else:
-        model.fit(t_X_train, cid_dataset.y_train)
+    model.fit(t_X_train, cid_dataset.y_train)
     t_X_test = np.concatenate([cid_dataset.t_test.reshape(-1, 1), cid_dataset.X_test], axis=1)
     cid_pred = model.predict(t_X_test)
     return cid_pred
@@ -34,11 +31,11 @@ if __name__ == "__main__":
     print(f"Dataset: {args.dataset}")
     print(f"Model:   {args.model}")
         
-    model = CatBoostRegressor()
+    model = TabPFNRegressor()
 
     evaluate_pipeline(
         exp_name=args.exp_name,
-        model_pipeline=catboost_pipeline,
+        model_pipeline=tabpfn_pipeline,
         model=model,
         args=args)
     

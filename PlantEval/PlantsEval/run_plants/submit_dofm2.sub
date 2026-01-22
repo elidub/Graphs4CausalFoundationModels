@@ -1,0 +1,36 @@
+universe   = vanilla
+executable = /bin/bash
+arguments  = run_dofm2_cluster.sh
+
+output     = logs/dofm2_$(dataset)_$(graph_mode).$(ClusterId).$(ProcId).out
+error      = logs/dofm2_$(dataset)_$(graph_mode).$(ClusterId).$(ProcId).err
+log        = logs/dofm2_$(dataset)_$(graph_mode).$(ClusterId).$(ProcId).log
+
+# Transfer all necessary files
+transfer_input_files = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/src, /fast/arikreuter/DoPFN_v2/venv.zip, run_dofm2_cluster.sh, run_dofm2.py, eval.py, /fast/arikreuter/DoPFN_v2/CausalPriorFitting/PlantEval/PlantsEval/plant_data, /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist.pt, /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist_config.yaml
+should_transfer_files = Yes
+when_to_transfer_output = ON_EXIT
+
+# Pass parameters via environment variables
+environment = "DATASET=$(dataset) GRAPH_MODE=$(graph_mode)"
+
+# Resource requests
+request_gpus   = 1
+request_memory = 32GB
+request_cpus   = 4
+request_disk   = 16GB
+
+# Job priority bid
+JobBatchName = "dofm_plant_v2_label_$(graph_mode)"
++MaxRunningPrice = 100000
++RunningPriceExceededAction = "kill"
+
+# Working directory
+initialdir = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/PlantEval/PlantsEval/run_plants
+
+queue dataset,graph_mode from (
+    CID_10_ints_10_reals_normal, all_unknown
+    CID_10_ints_10_reals_normal, t_to_y_only
+    CID_10_ints_10_reals_normal, full_graph
+    CID_10_ints_10_reals_normal, true_graph
+)

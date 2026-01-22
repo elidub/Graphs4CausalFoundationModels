@@ -555,12 +555,14 @@ if __name__ == "__main__":
     use_onehot = args.onehot
 
     if args.checkpoint_path is None:
-        checkpoint_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist.pt"
+        # Non-conditioned model checkpoint
+        checkpoint_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist.pt"
     else:
         checkpoint_path = args.checkpoint_path
         
     if args.config_path is None:
-        model_config_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist_config.yaml"
+        # Non-conditioned model config
+        model_config_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist_config.yaml"
     else:
         model_config_path = args.config_path
     

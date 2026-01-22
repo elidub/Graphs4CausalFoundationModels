@@ -4,8 +4,9 @@ import pickle as pkl
 from sklearn.metrics import mean_squared_error
 import numpy as np
 
-# Get the base directory (PlantEval/PlantsEval)
-BASE_DIR = Path(__file__).parent.parent
+# Use absolute path for base directory (shared filesystem)
+# This ensures results go to the right place even when running on cluster nodes
+BASE_DIR = Path("/fast/arikreuter/DoPFN_v2/CausalPriorFitting/PlantEval2/PlantsEval")
 
 
 class SimpleRealization:
@@ -17,28 +18,40 @@ class SimpleRealization:
         self.X_test = data_dict['X_test']
         self.t_test = data_dict['t_test']
         self.true_cid = data_dict['true_cid']
+        # Include graph matrices if present
+        self.adjacency_matrix = data_dict.get('adjacency_matrix', None)
+        self.ancestor_matrix = data_dict.get('ancestor_matrix', None)
 
 
 def load_benchmark(filepath):
-    """Load benchmark, trying standard pickle first, then _std version."""
+    """Load benchmark, trying standard pickle first, then dill as fallback."""
     filepath = Path(filepath)
     
-    # If the file itself exists and is a _std.pkl file, load it directly
-    if filepath.exists() and '_std.pkl' in str(filepath):
-        with open(filepath, 'rb') as f:
-            data = pkl.load(f)
-        # Wrap dicts in SimpleRealization
-        realizations = [SimpleRealization(r) for r in data['realizations']]
-        return realizations
+    # First, try standard pickle (works with _std.pkl files)
+    if filepath.exists():
+        try:
+            with open(filepath, 'rb') as f:
+                data = pkl.load(f)
+            # Check if it's the _std format (dict with 'realizations' key)
+            if isinstance(data, dict) and 'realizations' in data:
+                realizations = [SimpleRealization(r) for r in data['realizations']]
+                return realizations
+            # Otherwise it might be a CIDBenchmark object
+            elif hasattr(data, 'realizations'):
+                return data.realizations
+        except Exception as e:
+            print(f"Standard pickle failed: {e}, trying dill...")
     
-    # Try to find _std version
+    # Try to find _std version as fallback
     std_path = Path(str(filepath).replace('.pkl', '_std.pkl'))
     if std_path.exists():
-        with open(std_path, 'rb') as f:
-            data = pkl.load(f)
-        # Wrap dicts in SimpleRealization
-        realizations = [SimpleRealization(r) for r in data['realizations']]
-        return realizations
+        try:
+            with open(std_path, 'rb') as f:
+                data = pkl.load(f)
+            realizations = [SimpleRealization(r) for r in data['realizations']]
+            return realizations
+        except Exception:
+            pass
     
     # Fall back to trying dill
     try:
@@ -60,11 +73,18 @@ def avg_mean_integrated_squared_error(t, y_true, y_pred):
     return 0
 
 def evaluate_pipeline(exp_name, model_pipeline, model, args):
+    # Results go to shared filesystem (absolute path)
     exp_dir = BASE_DIR / "results" / exp_name
     Path(exp_dir).mkdir(parents=True, exist_ok=True)
 
-    data_dir = BASE_DIR / "plant_data"
-    data_path = str(data_dir / Path(args.dataset)) + ".pkl"
+    # Data is in local directory (transferred by HTCondor)
+    # Use relative path from current working directory
+    data_dir = Path("plant_data")
+    # Check if dataset already ends with .pkl
+    dataset_name = args.dataset
+    if not dataset_name.endswith('.pkl'):
+        dataset_name = dataset_name + ".pkl"
+    data_path = str(data_dir / Path(dataset_name))
     realizations = load_benchmark(data_path)
 
     for dataset_index, cid_dataset in tqdm(enumerate(realizations)):

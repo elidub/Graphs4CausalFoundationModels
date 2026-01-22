@@ -73,3 +73,8 @@ bias_effects.png
 /PlantEval/PlantsEval/results
 
 *.tsv
+*.pkl
+
+/PlantEval2/PlantsEval/results
+
+/PlantEval/CID_10_ints_10_reals_four_std_uniform.pkl
