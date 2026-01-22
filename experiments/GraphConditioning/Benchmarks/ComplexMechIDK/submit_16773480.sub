@@ -1,0 +1,33 @@
+universe   = vanilla
+executable = /bin/bash
+arguments  = run_complexmech_idk_cluster.sh
+output     = logs/complexmech_idk_$(ClusterId).$(ProcId).out
+error      = logs/complexmech_idk_$(ClusterId).$(ProcId).err
+log        = logs/complexmech_idk_$(ClusterId).$(ProcId).log
+
+transfer_input_files = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/src, /fast/arikreuter/DoPFN_v2/venv.zip, run_complexmech_idk_cluster.sh, run_complexmech_idk.py, ComplexMechBenchmarkIDK.py, configs, data_cache_ComplexMechIDK.zip
+should_transfer_files = Yes
+when_to_transfer_output = ON_EXIT
+
+# Pass paths via environment variables
+environment = "CONFIG_PATH=$(config_path) CHECKPOINT_PATH=$(checkpoint_path) FIDELITY=$(fidelity) OUTPUT_DIR=$(output_dir)"
+
+request_gpus   = 1
+request_memory = 128GB
+request_cpus   = 16
+request_disk   = 64GB
+
+# Job priority bid
+JobBatchName = "complexmech_idk_16773480"
++MaxRunningPrice = 50000
++RunningPriceExceededAction = "kill"
+
+# Pin to H100 nodes
+requirements = (regexp("H100", GPUs_DeviceName) && CUDAGlobalMemoryMb >= 75000)
+
+# Model 16773480.0 - High fidelity
+config_path = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773480.0/final_model_with_bardist_config.yaml
+checkpoint_path = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773480.0/final_model_with_bardist.pt
+fidelity = high
+output_dir = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773480.0/complexmech_idk_high
+queue 1

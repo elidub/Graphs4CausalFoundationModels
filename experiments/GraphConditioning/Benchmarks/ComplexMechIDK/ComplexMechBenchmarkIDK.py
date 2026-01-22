@@ -270,8 +270,8 @@ class ComplexMechBenchmarkIDK:
         # Generate filename if not provided
         if filename is None:
             seed_str = f"_seed{dataset_seed}" if dataset_seed is not None else ""
-            variant_str = f"_{variant}" if variant != "base" else ""
-            filename = f"lingaus_{node_count}nodes{variant_str}_{num_samples}samples{seed_str}.pkl"
+            variant_str = f"_{variant}" if variant != "base" else "_base"
+            filename = f"complexmech_{node_count}nodes{variant_str}_{num_samples}samples{seed_str}.pkl"
         
         save_path = self.cache_dir / filename
         
@@ -1272,17 +1272,17 @@ class ComplexMechBenchmarkIDK:
                     # All files use base_seed (typically 42) regardless of variant
                     dataset_seed = base_seed
                     
-                    # Build variant string
+                    # Build variant string to match actual data filenames
                     if hide_frac is not None:
                         # Path variant with hide fraction
                         variant_str = f"_{variant}_hide{hide_frac}"
                         variant_display = f"{variant} (hide={hide_frac})"
                     else:
                         # Base variant
-                        variant_str = f"_{variant}"
+                        variant_str = "_base"
                         variant_display = variant
                     
-                    data_filename = f"lingaus_{node_count}nodes{variant_str}_{num_samples}samples_seed{dataset_seed}.pkl"
+                    data_filename = f"complexmech_{node_count}nodes{variant_str}_{num_samples}samples_seed{dataset_seed}.pkl"
                     
                     if self.verbose:
                         print(f"\n{'='*80}")

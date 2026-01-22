@@ -86,3 +86,6 @@ experiments/GraphConditioning/Benchmarks/ComplexMechNTest/data_cache.zip
 /PlantEval2/PlantsEval/results
 
 /PlantEval/CID_10_ints_10_reals_four_std_uniform.pkl
+/experiments/GraphConditioning/Benchmarks/ComplexMechIDK/data_cache_ComplexMechIDK.zip
+/PlantEval/CID_10_ints_10_reals_four_std_uniform.pkl
+PlantEval/CID_10_ints_10_reals_four_std_uniform.pkl
