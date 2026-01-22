@@ -73,6 +73,13 @@ bias_effects.png
 /PlantEval/PlantsEval/results
 
 *.tsv
+
+
+
+/experiments/GraphConditioning/Benchmarks/ComplexMechIDK/data_cache
+
+/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/data_cache
+experiments/GraphConditioning/Benchmarks/ComplexMechIDK/data_cache.zip
 *.pkl
 
 /PlantEval2/PlantsEval/results

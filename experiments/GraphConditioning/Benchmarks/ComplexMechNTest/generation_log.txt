@@ -1,0 +1,642 @@
+========================================
+ComplexMechNTest Batched Data Generation
+========================================
+Found 96 configs
+Data directory: /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/data_cache
+Batch size: 50
+
+
+========================================
+[1/96] Generating: complexmech_ntest_10nodes_base_1000samples_seed42
+Config: /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/configs/10node/base.yaml
+========================================
+Temp directory: /var/folders/ng/4_7_0hz56vnfj1yd8btkt5h80007z9/T/batch_gen_tbs8b4c_
+
+Batch 1: samples 0-49 (attempt 1/5)
+  Batch 1 completed successfully
+  Loaded 50 samples (total: 50)
+
+Batch 2: samples 50-99 (attempt 1/5)
+  Batch 2 completed successfully
+  Loaded 50 samples (total: 100)
+
+Batch 3: samples 100-149 (attempt 1/5)
+  Batch 3 completed successfully
+  Loaded 50 samples (total: 150)
+
+Batch 4: samples 150-199 (attempt 1/5)
+  Batch 4 completed successfully
+  Loaded 50 samples (total: 200)
+
+Batch 5: samples 200-249 (attempt 1/5)
+  Batch 5 completed successfully
+  Loaded 50 samples (total: 250)
+
+Batch 6: samples 250-299 (attempt 1/5)
+  Batch 6 completed successfully
+  Loaded 50 samples (total: 300)
+
+Batch 7: samples 300-349 (attempt 1/5)
+  Batch 7 completed successfully
+  Loaded 50 samples (total: 350)
+
+Batch 8: samples 350-399 (attempt 1/5)
+  Batch 8 completed successfully
+  Loaded 50 samples (total: 400)
+
+Batch 9: samples 400-449 (attempt 1/5)
+  Batch 9 completed successfully
+  Loaded 50 samples (total: 450)
+
+Batch 10: samples 450-499 (attempt 1/5)
+  Batch 10 completed successfully
+  Loaded 50 samples (total: 500)
+
+Batch 11: samples 500-549 (attempt 1/5)
+  Batch 11 completed successfully
+  Loaded 50 samples (total: 550)
+
+Batch 12: samples 550-599 (attempt 1/5)
+  Batch 12 completed successfully
+  Loaded 50 samples (total: 600)
+
+Batch 13: samples 600-649 (attempt 1/5)
+  Batch 13 completed successfully
+  Loaded 50 samples (total: 650)
+
+Batch 14: samples 650-699 (attempt 1/5)
+  Batch 14 completed successfully
+  Loaded 50 samples (total: 700)
+
+Batch 15: samples 700-749 (attempt 1/5)
+  Batch 15 completed successfully
+  Loaded 50 samples (total: 750)
+
+Batch 16: samples 750-799 (attempt 1/5)
+  Batch 16 completed successfully
+  Loaded 50 samples (total: 800)
+
+Batch 17: samples 800-849 (attempt 1/5)
+  Batch 17 completed successfully
+  Loaded 50 samples (total: 850)
+
+Batch 18: samples 850-899 (attempt 1/5)
+  Batch 18 completed successfully
+  Loaded 50 samples (total: 900)
+
+Batch 19: samples 900-949 (attempt 1/5)
+  Batch 19 completed successfully
+  Loaded 50 samples (total: 950)
+
+Batch 20: samples 950-999 (attempt 1/5)
+  Batch 20 completed successfully
+  Loaded 50 samples (total: 1000)
+
+Saving 1000 total samples to /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/data_cache/complexmech_ntest_10nodes_base_1000samples_seed42.pkl
+Done! Size: 408.96 MB
+SUCCESS: complexmech_ntest_10nodes_base_1000samples_seed42
+
+========================================
+[2/96] Generating: complexmech_10nodes_path_independent_TY_ntest100_1000samples_seed42
+Config: /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/configs/10node/path_independent_TY/ntest_100.yaml
+========================================
+Temp directory: /var/folders/ng/4_7_0hz56vnfj1yd8btkt5h80007z9/T/batch_gen_f3rx3esp
+
+Batch 1: samples 0-49 (attempt 1/5)
+  Batch 1 completed successfully
+  Loaded 50 samples (total: 50)
+
+Batch 2: samples 50-99 (attempt 1/5)
+  Batch 2 completed successfully
+  Loaded 50 samples (total: 100)
+
+Batch 3: samples 100-149 (attempt 1/5)
+  Batch 3 completed successfully
+  Loaded 50 samples (total: 150)
+
+Batch 4: samples 150-199 (attempt 1/5)
+  Batch 4 completed successfully
+  Loaded 50 samples (total: 200)
+
+Batch 5: samples 200-249 (attempt 1/5)
+  Batch 5 completed successfully
+  Loaded 50 samples (total: 250)
+
+Batch 6: samples 250-299 (attempt 1/5)
+  Batch 6 completed successfully
+  Loaded 50 samples (total: 300)
+
+Batch 7: samples 300-349 (attempt 1/5)
+  Batch 7 completed successfully
+  Loaded 50 samples (total: 350)
+
+Batch 8: samples 350-399 (attempt 1/5)
+  Batch 8 completed successfully
+  Loaded 50 samples (total: 400)
+
+Batch 9: samples 400-449 (attempt 1/5)
+  Batch 9 completed successfully
+  Loaded 50 samples (total: 450)
+
+Batch 10: samples 450-499 (attempt 1/5)
+  Batch 10 completed successfully
+  Loaded 50 samples (total: 500)
+
+Batch 11: samples 500-549 (attempt 1/5)
+  Batch 11 completed successfully
+  Loaded 50 samples (total: 550)
+
+Batch 12: samples 550-599 (attempt 1/5)
+  Batch 12 completed successfully
+  Loaded 50 samples (total: 600)
+
+Batch 13: samples 600-649 (attempt 1/5)
+  Batch 13 completed successfully
+  Loaded 50 samples (total: 650)
+
+Batch 14: samples 650-699 (attempt 1/5)
+  Batch 14 completed successfully
+  Loaded 50 samples (total: 700)
+
+Batch 15: samples 700-749 (attempt 1/5)
+  Batch 15 completed successfully
+  Loaded 50 samples (total: 750)
+
+Batch 16: samples 750-799 (attempt 1/5)
+  Batch 16 completed successfully
+  Loaded 50 samples (total: 800)
+
+Batch 17: samples 800-849 (attempt 1/5)
+  Batch 17 completed successfully
+  Loaded 50 samples (total: 850)
+
+Batch 18: samples 850-899 (attempt 1/5)
+  Batch 18 completed successfully
+  Loaded 50 samples (total: 900)
+
+Batch 19: samples 900-949 (attempt 1/5)
+  Batch 19 completed successfully
+  Loaded 50 samples (total: 950)
+
+Batch 20: samples 950-999 (attempt 1/5)
+  Batch 20 completed successfully
+  Loaded 50 samples (total: 1000)
+
+Saving 1000 total samples to /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/data_cache/complexmech_10nodes_path_independent_TY_ntest100_1000samples_seed42.pkl
+Done! Size: 408.96 MB
+SUCCESS: complexmech_10nodes_path_independent_TY_ntest100_1000samples_seed42
+
+========================================
+[3/96] Generating: complexmech_10nodes_path_independent_TY_ntest250_1000samples_seed42
+Config: /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/configs/10node/path_independent_TY/ntest_250.yaml
+========================================
+Temp directory: /var/folders/ng/4_7_0hz56vnfj1yd8btkt5h80007z9/T/batch_gen_eird971y
+
+Batch 1: samples 0-49 (attempt 1/5)
+  Batch 1 completed successfully
+  Loaded 50 samples (total: 50)
+
+Batch 2: samples 50-99 (attempt 1/5)
+  Batch 2 completed successfully
+  Loaded 50 samples (total: 100)
+
+Batch 3: samples 100-149 (attempt 1/5)
+  Batch 3 completed successfully
+  Loaded 50 samples (total: 150)
+
+Batch 4: samples 150-199 (attempt 1/5)
+  Batch 4 completed successfully
+  Loaded 50 samples (total: 200)
+
+Batch 5: samples 200-249 (attempt 1/5)
+  Batch 5 completed successfully
+  Loaded 50 samples (total: 250)
+
+Batch 6: samples 250-299 (attempt 1/5)
+  Batch 6 completed successfully
+  Loaded 50 samples (total: 300)
+
+Batch 7: samples 300-349 (attempt 1/5)
+  Batch 7 completed successfully
+  Loaded 50 samples (total: 350)
+
+Batch 8: samples 350-399 (attempt 1/5)
+  Batch 8 completed successfully
+  Loaded 50 samples (total: 400)
+
+Batch 9: samples 400-449 (attempt 1/5)
+  Batch 9 completed successfully
+  Loaded 50 samples (total: 450)
+
+Batch 10: samples 450-499 (attempt 1/5)
+  Batch 10 completed successfully
+  Loaded 50 samples (total: 500)
+
+Batch 11: samples 500-549 (attempt 1/5)
+  Batch 11 completed successfully
+  Loaded 50 samples (total: 550)
+
+Batch 12: samples 550-599 (attempt 1/5)
+  Batch 12 completed successfully
+  Loaded 50 samples (total: 600)
+
+Batch 13: samples 600-649 (attempt 1/5)
+  Batch 13 completed successfully
+  Loaded 50 samples (total: 650)
+
+Batch 14: samples 650-699 (attempt 1/5)
+  Batch 14 completed successfully
+  Loaded 50 samples (total: 700)
+
+Batch 15: samples 700-749 (attempt 1/5)
+  Batch 15 completed successfully
+  Loaded 50 samples (total: 750)
+
+Batch 16: samples 750-799 (attempt 1/5)
+  Batch 16 completed successfully
+  Loaded 50 samples (total: 800)
+
+Batch 17: samples 800-849 (attempt 1/5)
+  Batch 17 completed successfully
+  Loaded 50 samples (total: 850)
+
+Batch 18: samples 850-899 (attempt 1/5)
+  Batch 18 completed successfully
+  Loaded 50 samples (total: 900)
+
+Batch 19: samples 900-949 (attempt 1/5)
+  Batch 19 completed successfully
+  Loaded 50 samples (total: 950)
+
+Batch 20: samples 950-999 (attempt 1/5)
+  Batch 20 completed successfully
+  Loaded 50 samples (total: 1000)
+
+Saving 1000 total samples to /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/data_cache/complexmech_10nodes_path_independent_TY_ntest250_1000samples_seed42.pkl
+Done! Size: 408.96 MB
+SUCCESS: complexmech_10nodes_path_independent_TY_ntest250_1000samples_seed42
+
+========================================
+[4/96] Generating: complexmech_10nodes_path_independent_TY_ntest500_1000samples_seed42
+Config: /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/configs/10node/path_independent_TY/ntest_500.yaml
+========================================
+Temp directory: /var/folders/ng/4_7_0hz56vnfj1yd8btkt5h80007z9/T/batch_gen_t0x19inw
+
+Batch 1: samples 0-49 (attempt 1/5)
+  Batch 1 completed successfully
+  Loaded 50 samples (total: 50)
+
+Batch 2: samples 50-99 (attempt 1/5)
+  Batch 2 completed successfully
+  Loaded 50 samples (total: 100)
+
+Batch 3: samples 100-149 (attempt 1/5)
+  Batch 3 completed successfully
+  Loaded 50 samples (total: 150)
+
+Batch 4: samples 150-199 (attempt 1/5)
+  Batch 4 completed successfully
+  Loaded 50 samples (total: 200)
+
+Batch 5: samples 200-249 (attempt 1/5)
+  Batch 5 completed successfully
+  Loaded 50 samples (total: 250)
+
+Batch 6: samples 250-299 (attempt 1/5)
+  Batch 6 completed successfully
+  Loaded 50 samples (total: 300)
+
+Batch 7: samples 300-349 (attempt 1/5)
+  Batch 7 completed successfully
+  Loaded 50 samples (total: 350)
+
+Batch 8: samples 350-399 (attempt 1/5)
+  Batch 8 completed successfully
+  Loaded 50 samples (total: 400)
+
+Batch 9: samples 400-449 (attempt 1/5)
+  Batch 9 completed successfully
+  Loaded 50 samples (total: 450)
+
+Batch 10: samples 450-499 (attempt 1/5)
+  Batch 10 completed successfully
+  Loaded 50 samples (total: 500)
+
+Batch 11: samples 500-549 (attempt 1/5)
+  Batch 11 completed successfully
+  Loaded 50 samples (total: 550)
+
+Batch 12: samples 550-599 (attempt 1/5)
+  Batch 12 completed successfully
+  Loaded 50 samples (total: 600)
+
+Batch 13: samples 600-649 (attempt 1/5)
+  Batch 13 completed successfully
+  Loaded 50 samples (total: 650)
+
+Batch 14: samples 650-699 (attempt 1/5)
+  Batch 14 completed successfully
+  Loaded 50 samples (total: 700)
+
+Batch 15: samples 700-749 (attempt 1/5)
+  Batch 15 completed successfully
+  Loaded 50 samples (total: 750)
+
+Batch 16: samples 750-799 (attempt 1/5)
+  Batch 16 completed successfully
+  Loaded 50 samples (total: 800)
+
+Batch 17: samples 800-849 (attempt 1/5)
+  Batch 17 completed successfully
+  Loaded 50 samples (total: 850)
+
+Batch 18: samples 850-899 (attempt 1/5)
+  Batch 18 completed successfully
+  Loaded 50 samples (total: 900)
+
+Batch 19: samples 900-949 (attempt 1/5)
+  Batch 19 completed successfully
+  Loaded 50 samples (total: 950)
+
+Batch 20: samples 950-999 (attempt 1/5)
+  Batch 20 completed successfully
+  Loaded 50 samples (total: 1000)
+
+Saving 1000 total samples to /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/data_cache/complexmech_10nodes_path_independent_TY_ntest500_1000samples_seed42.pkl
+Done! Size: 408.96 MB
+SUCCESS: complexmech_10nodes_path_independent_TY_ntest500_1000samples_seed42
+
+========================================
+[5/96] Generating: complexmech_10nodes_path_independent_TY_ntest750_1000samples_seed42
+Config: /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/configs/10node/path_independent_TY/ntest_750.yaml
+========================================
+Temp directory: /var/folders/ng/4_7_0hz56vnfj1yd8btkt5h80007z9/T/batch_gen_oxww9lm4
+
+Batch 1: samples 0-49 (attempt 1/5)
+  Batch 1 completed successfully
+  Loaded 50 samples (total: 50)
+
+Batch 2: samples 50-99 (attempt 1/5)
+  Batch 2 completed successfully
+  Loaded 50 samples (total: 100)
+
+Batch 3: samples 100-149 (attempt 1/5)
+  Batch 3 completed successfully
+  Loaded 50 samples (total: 150)
+
+Batch 4: samples 150-199 (attempt 1/5)
+  Batch 4 completed successfully
+  Loaded 50 samples (total: 200)
+
+Batch 5: samples 200-249 (attempt 1/5)
+  Batch 5 completed successfully
+  Loaded 50 samples (total: 250)
+
+Batch 6: samples 250-299 (attempt 1/5)
+  Batch 6 completed successfully
+  Loaded 50 samples (total: 300)
+
+Batch 7: samples 300-349 (attempt 1/5)
+  Batch 7 completed successfully
+  Loaded 50 samples (total: 350)
+
+Batch 8: samples 350-399 (attempt 1/5)
+  Batch 8 completed successfully
+  Loaded 50 samples (total: 400)
+
+Batch 9: samples 400-449 (attempt 1/5)
+  Batch 9 completed successfully
+  Loaded 50 samples (total: 450)
+
+Batch 10: samples 450-499 (attempt 1/5)
+  Batch 10 completed successfully
+  Loaded 50 samples (total: 500)
+
+Batch 11: samples 500-549 (attempt 1/5)
+  Batch 11 completed successfully
+  Loaded 50 samples (total: 550)
+
+Batch 12: samples 550-599 (attempt 1/5)
+  Batch 12 completed successfully
+  Loaded 50 samples (total: 600)
+
+Batch 13: samples 600-649 (attempt 1/5)
+  Batch 13 completed successfully
+  Loaded 50 samples (total: 650)
+
+Batch 14: samples 650-699 (attempt 1/5)
+  Batch 14 completed successfully
+  Loaded 50 samples (total: 700)
+
+Batch 15: samples 700-749 (attempt 1/5)
+  Batch 15 completed successfully
+  Loaded 50 samples (total: 750)
+
+Batch 16: samples 750-799 (attempt 1/5)
+  Batch 16 completed successfully
+  Loaded 50 samples (total: 800)
+
+Batch 17: samples 800-849 (attempt 1/5)
+  Batch 17 completed successfully
+  Loaded 50 samples (total: 850)
+
+Batch 18: samples 850-899 (attempt 1/5)
+  Batch 18 completed successfully
+  Loaded 50 samples (total: 900)
+
+Batch 19: samples 900-949 (attempt 1/5)
+  Batch 19 completed successfully
+  Loaded 50 samples (total: 950)
+
+Batch 20: samples 950-999 (attempt 1/5)
+  Batch 20 completed successfully
+  Loaded 50 samples (total: 1000)
+
+Saving 1000 total samples to /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/data_cache/complexmech_10nodes_path_independent_TY_ntest750_1000samples_seed42.pkl
+Done! Size: 408.96 MB
+SUCCESS: complexmech_10nodes_path_independent_TY_ntest750_1000samples_seed42
+
+========================================
+[6/96] Generating: complexmech_10nodes_path_independent_TY_ntest900_1000samples_seed42
+Config: /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/configs/10node/path_independent_TY/ntest_900.yaml
+========================================
+Temp directory: /var/folders/ng/4_7_0hz56vnfj1yd8btkt5h80007z9/T/batch_gen_z48gdelz
+
+Batch 1: samples 0-49 (attempt 1/5)
+  Batch 1 completed successfully
+  Loaded 50 samples (total: 50)
+
+Batch 2: samples 50-99 (attempt 1/5)
+  Batch 2 completed successfully
+  Loaded 50 samples (total: 100)
+
+Batch 3: samples 100-149 (attempt 1/5)
+  Batch 3 completed successfully
+  Loaded 50 samples (total: 150)
+
+Batch 4: samples 150-199 (attempt 1/5)
+  Batch 4 completed successfully
+  Loaded 50 samples (total: 200)
+
+Batch 5: samples 200-249 (attempt 1/5)
+  Batch 5 completed successfully
+  Loaded 50 samples (total: 250)
+
+Batch 6: samples 250-299 (attempt 1/5)
+  Batch 6 completed successfully
+  Loaded 50 samples (total: 300)
+
+Batch 7: samples 300-349 (attempt 1/5)
+  Batch 7 completed successfully
+  Loaded 50 samples (total: 350)
+
+Batch 8: samples 350-399 (attempt 1/5)
+  Batch 8 completed successfully
+  Loaded 50 samples (total: 400)
+
+Batch 9: samples 400-449 (attempt 1/5)
+  Batch 9 completed successfully
+  Loaded 50 samples (total: 450)
+
+Batch 10: samples 450-499 (attempt 1/5)
+  Batch 10 completed successfully
+  Loaded 50 samples (total: 500)
+
+Batch 11: samples 500-549 (attempt 1/5)
+  Batch 11 completed successfully
+  Loaded 50 samples (total: 550)
+
+Batch 12: samples 550-599 (attempt 1/5)
+  Batch 12 completed successfully
+  Loaded 50 samples (total: 600)
+
+Batch 13: samples 600-649 (attempt 1/5)
+  Batch 13 completed successfully
+  Loaded 50 samples (total: 650)
+
+Batch 14: samples 650-699 (attempt 1/5)
+  Batch 14 completed successfully
+  Loaded 50 samples (total: 700)
+
+Batch 15: samples 700-749 (attempt 1/5)
+  Batch 15 completed successfully
+  Loaded 50 samples (total: 750)
+
+Batch 16: samples 750-799 (attempt 1/5)
+  Batch 16 completed successfully
+  Loaded 50 samples (total: 800)
+
+Batch 17: samples 800-849 (attempt 1/5)
+  Batch 17 completed successfully
+  Loaded 50 samples (total: 850)
+
+Batch 18: samples 850-899 (attempt 1/5)
+  Batch 18 completed successfully
+  Loaded 50 samples (total: 900)
+
+Batch 19: samples 900-949 (attempt 1/5)
+  Batch 19 completed successfully
+  Loaded 50 samples (total: 950)
+
+Batch 20: samples 950-999 (attempt 1/5)
+  Batch 20 completed successfully
+  Loaded 50 samples (total: 1000)
+
+Saving 1000 total samples to /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/data_cache/complexmech_10nodes_path_independent_TY_ntest900_1000samples_seed42.pkl
+Done! Size: 408.96 MB
+SUCCESS: complexmech_10nodes_path_independent_TY_ntest900_1000samples_seed42
+
+========================================
+[7/96] Generating: complexmech_10nodes_path_TY_ntest100_1000samples_seed42
+Config: /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/configs/10node/path_TY/ntest_100.yaml
+========================================
+Temp directory: /var/folders/ng/4_7_0hz56vnfj1yd8btkt5h80007z9/T/batch_gen_m2zp15vs
+
+Batch 1: samples 0-49 (attempt 1/5)
+  Batch 1 completed successfully
+  Loaded 50 samples (total: 50)
+
+Batch 2: samples 50-99 (attempt 1/5)
+  Batch 2 completed successfully
+  Loaded 50 samples (total: 100)
+
+Batch 3: samples 100-149 (attempt 1/5)
+  Batch 3 completed successfully
+  Loaded 50 samples (total: 150)
+
+Batch 4: samples 150-199 (attempt 1/5)
+  Batch 4 completed successfully
+  Loaded 50 samples (total: 200)
+
+Batch 5: samples 200-249 (attempt 1/5)
+  Batch 5 completed successfully
+  Loaded 50 samples (total: 250)
+
+Batch 6: samples 250-299 (attempt 1/5)
+  Batch 6 completed successfully
+  Loaded 50 samples (total: 300)
+
+Batch 7: samples 300-349 (attempt 1/5)
+  Batch 7 completed successfully
+  Loaded 50 samples (total: 350)
+
+Batch 8: samples 350-399 (attempt 1/5)
+  Batch 8 completed successfully
+  Loaded 50 samples (total: 400)
+
+Batch 9: samples 400-449 (attempt 1/5)
+  Batch 9 completed successfully
+  Loaded 50 samples (total: 450)
+
+Batch 10: samples 450-499 (attempt 1/5)
+  Batch 10 completed successfully
+  Loaded 50 samples (total: 500)
+
+Batch 11: samples 500-549 (attempt 1/5)
+  Batch 11 completed successfully
+  Loaded 50 samples (total: 550)
+
+Batch 12: samples 550-599 (attempt 1/5)
+  Batch 12 completed successfully
+  Loaded 50 samples (total: 600)
+
+Batch 13: samples 600-649 (attempt 1/5)
+  Batch 13 completed successfully
+  Loaded 50 samples (total: 650)
+
+Batch 14: samples 650-699 (attempt 1/5)
+  Batch 14 completed successfully
+  Loaded 50 samples (total: 700)
+
+Batch 15: samples 700-749 (attempt 1/5)
+  Batch 15 completed successfully
+  Loaded 50 samples (total: 750)
+
+Batch 16: samples 750-799 (attempt 1/5)
+  Batch 16 completed successfully
+  Loaded 50 samples (total: 800)
+
+Batch 17: samples 800-849 (attempt 1/5)
+  Batch 17 completed successfully
+  Loaded 50 samples (total: 850)
+
+Batch 18: samples 850-899 (attempt 1/5)
+  Batch 18 completed successfully
+  Loaded 50 samples (total: 900)
+
+Batch 19: samples 900-949 (attempt 1/5)
+  Batch 19 completed successfully
+  Loaded 50 samples (total: 950)
+
+Batch 20: samples 950-999 (attempt 1/5)
+  Batch 20 completed successfully
+  Loaded 50 samples (total: 1000)
+
+Saving 1000 total samples to /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/data_cache/complexmech_10nodes_path_TY_ntest100_1000samples_seed42.pkl
+Done! Size: 408.96 MB
+SUCCESS: complexmech_10nodes_path_TY_ntest100_1000samples_seed42
+
+========================================
+[8/96] Generating: complexmech_10nodes_path_TY_ntest250_1000samples_seed42
+Config: /Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/configs/10node/path_TY/ntest_250.yaml
+========================================
