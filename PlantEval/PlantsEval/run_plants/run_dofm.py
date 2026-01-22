@@ -9,8 +9,18 @@ import sys
 import os
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
+from pathlib import Path
+
+# Determine base paths - works locally and on cluster
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLANTSEVAL_DIR = SCRIPT_DIR.parent
+# Navigate up to CausalPriorFitting root (PlantEval/PlantsEval/run_plants -> ../../..)
+PROJECT_ROOT = PLANTSEVAL_DIR.parent.parent
 
 # Add paths for imports
+sys.path.insert(0, str(PLANTSEVAL_DIR))
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "RealCauseEval"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, '/fast/arikreuter/DoPFN_v2/CausalPriorFitting')
 sys.path.insert(0, '/fast/arikreuter/DoPFN_v2/CausalPriorFitting/PlantEval/PlantsEval')
