@@ -551,7 +551,7 @@ class GraphConditionedInterventionalPFNSklearn:
             adjacency_matrix_t = adjacency_matrix_t.float()
         
         # propagate_ancestor_knowledge already handles both (N,N) and (B,N,N) shapes
-        res =  propagate_ancestor_knowledge(adjacency_matrix_t)
+        res = propagate_ancestor_knowledge(adjacency_matrix_t)
 
         return res
     

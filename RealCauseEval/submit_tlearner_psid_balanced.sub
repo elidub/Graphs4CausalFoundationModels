@@ -1,0 +1,43 @@
+universe   = vanilla
+executable = /bin/bash
+arguments  = run_tlearner_psid_balanced_cluster.sh
+output     = logs/tlearner_psid_balanced_$(dataset)_$(ClusterId).$(ProcId).out
+error      = logs/tlearner_psid_balanced_$(dataset)_$(ClusterId).$(ProcId).err
+log        = logs/tlearner_psid_balanced_$(dataset)_$(ClusterId).$(ProcId).log
+
+# Transfer all necessary files
+transfer_input_files = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/src, /fast/arikreuter/DoPFN_v2/venv.zip, run_tlearner_psid_balanced_cluster.sh, run_baselines, CausalPFN, $(config_file), $(checkpoint_file)
+should_transfer_files = Yes
+when_to_transfer_output = ON_EXIT
+
+# Pass parameters via environment variables
+environment = "DATASET=$(dataset) MODEL_NAME=$(model_name) EXP_NAME=$(exp_name) CONFIG_FILENAME=$(config_filename) CHECKPOINT_FILENAME=$(checkpoint_filename)"
+
+# Resource requests - increased memory for larger training sets
+request_gpus   = 1
+request_memory = 96GB
+request_cpus   = 8
+request_disk   = 32GB
+
+# Require GPUs that are NOT B200 (compute capability < 10.0)
+require_gpus = (DriverVersion >= 11.0) && (Capability < 10.0)
+
+# Job priority bid
+JobBatchName = "tlearner_psid_balanced_$(dataset)"
++MaxRunningPrice = 100000
++RunningPriceExceededAction = "kill"
+
+# Create logs directory if it doesn't exist
+initialdir = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/RealCauseEval
+
+# Model configuration - SimplePFN model for T-learner
+config_file = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/basic_16691166.0.yaml
+checkpoint_file = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/step_55000.pt
+config_filename = basic_16691166.0.yaml
+checkpoint_filename = step_55000.pt
+
+# PSID dataset with balanced sampling
+dataset = PSID
+model_name = tlearner_psid_balanced
+exp_name = tlearner_psid_balanced
+queue 1
