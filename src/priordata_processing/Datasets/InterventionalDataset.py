@@ -639,6 +639,11 @@ class InterventionalDataset(Dataset):
             scm.sample_endogenous(num_samples=number_train_samples)
 
             obs0_raw = scm.propagate(num_samples=number_train_samples)
+            # CRITICAL: Create deep copies of all arrays to prevent XGBoost threading issues
+            # XGBoost models in SCM mechanisms may return numpy array views that cause
+            # memory corruption in multiprocess dataloading with many workers
+            obs0_raw = {k: v.clone().detach() if torch.is_tensor(v) else torch.tensor(v, dtype=torch.float32) 
+                       for k, v in obs0_raw.items()}
             # Reshape from (N,) to (N,1) for BasicProcessing compatibility
             obs0 = {k: v.reshape(-1, 1) if v.dim() == 1 else v for k, v in obs0_raw.items()}
 
@@ -657,7 +662,8 @@ class InterventionalDataset(Dataset):
             
             if should_binarize:
                 # Get observational treatment values for quantile-based sampling
-                treatment_values = obs0_raw[intervention_node]
+                # CRITICAL: Clone tensor to prevent XGBoost threading issues
+                treatment_values = obs0_raw[intervention_node].clone().detach()
                 
                 # Try to wrap the treatment node's mechanism with BinarizingMechanism
                 # using the factory method that samples threshold, t0, t1 from quantiles.
@@ -675,6 +681,9 @@ class InterventionalDataset(Dataset):
                     scm.sample_exogenous(num_samples=number_train_samples)
                     scm.sample_endogenous(num_samples=number_train_samples)
                     obs0_raw = scm.propagate(num_samples=number_train_samples)
+                    # CRITICAL: Create deep copies to prevent XGBoost threading issues
+                    obs0_raw = {k: v.clone().detach() if torch.is_tensor(v) else torch.tensor(v, dtype=torch.float32) 
+                               for k, v in obs0_raw.items()}
                     obs0 = {k: v.reshape(-1, 1) if v.dim() == 1 else v for k, v in obs0_raw.items()}
                     
                     # Also update org_scm if we're returning matrices
@@ -742,9 +751,12 @@ class InterventionalDataset(Dataset):
             scm.sample_endogenous(num_samples=number_test_samples) #sample observational data again. 
 
             obs1_raw = scm.propagate(num_samples=number_test_samples)  # fresh observational batch (test-size)
+            # CRITICAL: Create deep copies to prevent XGBoost threading issues
+            obs1_raw = {k: v.clone().detach() if torch.is_tensor(v) else torch.tensor(v, dtype=torch.float32) 
+                       for k, v in obs1_raw.items()}
 
             # Collect observational samples for the chosen intervention node (marginal)
-            intervention_samples = obs1_raw[intervention_node]
+            intervention_samples = obs1_raw[intervention_node].clone().detach()
 
             # Determine distribution type and rescaling based on preprocessing parameters
             dist_type = preprocessing_params.get("interventional_distribution_type", "resampling")
@@ -786,6 +798,9 @@ class InterventionalDataset(Dataset):
             scm.sample_endogenous(num_samples=number_test_samples)
 
             interv1_raw = scm.propagate(num_samples=number_test_samples)  # interventional data (post-intervention)
+            # CRITICAL: Create deep copies to prevent XGBoost threading issues
+            interv1_raw = {k: v.clone().detach() if torch.is_tensor(v) else torch.tensor(v, dtype=torch.float32) 
+                          for k, v in interv1_raw.items()}
             # Reshape from (N,) to (N,1) for BasicProcessing compatibility
             interv1 = {k: v.reshape(-1, 1) if v.dim() == 1 else v for k, v in interv1_raw.items()}
             

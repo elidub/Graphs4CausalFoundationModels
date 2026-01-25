@@ -83,10 +83,13 @@ class XGBoostLayer(torch.nn.Module):
         y_pred = self.model.predict(x_np)
         
         # Convert back to tensor
+        # CRITICAL: Use .copy() to prevent XGBoost threading issues
+        # torch.from_numpy() creates a view that shares memory with the numpy array,
+        # which causes memory corruption with multiprocess data loading
         if self._is_multioutput:
-            y_pred = torch.from_numpy(y_pred).float().to(x.device)
+            y_pred = torch.from_numpy(y_pred.copy()).float().to(x.device)
         else:
-            y_pred = torch.from_numpy(y_pred).float().to(x.device).unsqueeze(-1)
+            y_pred = torch.from_numpy(y_pred.copy()).float().to(x.device).unsqueeze(-1)
         
         return y_pred
 

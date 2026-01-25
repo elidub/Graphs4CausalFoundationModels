@@ -10,10 +10,10 @@ import seaborn as sns
 from tqdm import tqdm
 from scipy import stats
 
-# Set style
+# Set style with very large default font
 sns.set_style("whitegrid")
-plt.rcParams['figure.figsize'] = (10, 6)
-plt.rcParams['font.size'] = 12
+plt.rcParams['figure.figsize'] = (20, 12)
+plt.rcParams['font.size'] = 40
 
 
 def bootstrap_median_ci(data, n_bootstrap=10000, confidence=0.95):
@@ -197,7 +197,7 @@ def create_difference_scatter_plot(sample_sizes, baseline_results, model_results
         ax.plot(moving_sizes, moving_avg, 'b-', linewidth=2, alpha=0.8, label=f'Moving Average (window={window_size})')
         ax.legend()
     
-    # Labels and title
+    # Labels and title - simplified
     ax.set_xlabel('Training Sample Size', fontsize=14, fontweight='bold')
     
     metric_labels = {
@@ -205,22 +205,16 @@ def create_difference_scatter_plot(sample_sizes, baseline_results, model_results
         'r2': 'R² Difference',
         'nll': 'NLL Difference'
     }
-    metric_full = {
-        'mse': 'Mean Squared Error',
-        'r2': 'R² Score',
-        'nll': 'Negative Log-Likelihood'
+    metric_titles = {
+        'mse': 'Improvement over Baseline (MSE)',
+        'r2': 'Improvement over Baseline (R²)',
+        'nll': 'Improvement over Baseline (NLL)'
     }
     
-    # Determine interpretation text
-    if metric in ['mse', 'nll']:
-        better_text = "Green = Model better (lower), Red = Baseline better"
-    else:  # r2
-        better_text = "Green = Model better (higher), Red = Baseline better"
-    
-    ax.set_ylabel(f'{metric_labels.get(metric, metric.upper())} ({model_name} - {baseline_name})', 
+    ax.set_ylabel(metric_labels.get(metric, metric.upper()), 
                   fontsize=14, fontweight='bold')
     
-    ax.set_title(f'{metric_full.get(metric, metric.upper())} Difference: {model_name} vs {baseline_name}\n{better_text}',
+    ax.set_title(metric_titles.get(metric, f'Improvement over Baseline ({metric.upper()})'),
                 fontsize=16, fontweight='bold')
     
     # Grid
@@ -276,15 +270,13 @@ def create_difference_binned_bar_plot(sample_sizes, baseline_results, model_resu
     
     print(f"Creating binned bar plot with {len(sizes)} data points for {metric} difference")
     
-    # Create bins based on quantiles
-    quantiles = np.linspace(0, 1, n_bins + 1)
-    bin_edges = np.quantile(sizes, quantiles)
-    # Ensure unique bin edges
-    bin_edges = np.unique(bin_edges)
+    # Create fixed bins: 1-100, 101-200, 201-300, 301-500
+    bin_edges = [1, 101, 201, 301, 501]
+    bin_labels_fixed = ["1-100", "101-200", "201-300", "301-500"]
     actual_n_bins = len(bin_edges) - 1
     
     # Assign data to bins
-    bin_indices = np.digitize(sizes, bin_edges[1:-1])
+    bin_indices = np.digitize(sizes, bin_edges) - 1  # 0-indexed
     
     # Compute statistics for each bin
     bin_medians = []
@@ -296,94 +288,72 @@ def create_difference_binned_bar_plot(sample_sizes, baseline_results, model_resu
     for i in range(actual_n_bins):
         mask = bin_indices == i
         bin_diffs = differences[mask]
-        bin_sizes = sizes[mask]
         
         if len(bin_diffs) > 0:
             bin_medians.append(np.median(bin_diffs))
             bin_q25.append(np.percentile(bin_diffs, 25))
             bin_q75.append(np.percentile(bin_diffs, 75))
             bin_counts.append(len(bin_diffs))
-            
-            # Create label with size range
-            size_min = int(bin_sizes.min())
-            size_max = int(bin_sizes.max())
-            bin_labels.append(f"{size_min}-{size_max}\n(n={len(bin_diffs)})")
+            bin_labels.append(bin_labels_fixed[i])
         else:
             bin_medians.append(0)
             bin_q25.append(0)
             bin_q75.append(0)
             bin_counts.append(0)
-            bin_labels.append(f"Empty")
+            bin_labels.append(bin_labels_fixed[i])
     
-    # Create figure
-    fig, ax = plt.subplots(figsize=(10, 6))
+    # Create figure - large size for paper
+    fig, ax = plt.subplots(figsize=(16, 10))
     
     # Create bar plot with interquartile range as error bars
     x_pos = np.arange(len(bin_labels))
     # Error bars show IQR: from Q1 to Q3
     yerr_lower = [bin_medians[i] - bin_q25[i] for i in range(len(bin_medians))]
     yerr_upper = [bin_q75[i] - bin_medians[i] for i in range(len(bin_medians))]
-    bars = ax.bar(x_pos, bin_medians, yerr=[yerr_lower, yerr_upper], capsize=5, alpha=0.7, 
-                   edgecolor='black', linewidth=1.5)
+    bars = ax.bar(x_pos, bin_medians, yerr=[yerr_lower, yerr_upper], capsize=14, alpha=0.7, 
+                   edgecolor='black', linewidth=4)
     
     # Color bars by sign (green if model is better, red if baseline is better)
     for i, (bar, median) in enumerate(zip(bars, bin_medians)):
         if metric in ['mse', 'nll']:
-            # Lower is better
-            color = 'green' if median < 0 else 'red'
+            # Lower is better - green means improvement
+            color = '#35b779' if median < 0 else '#cc4778'
         else:  # r2
-            # Higher is better
-            color = 'green' if median > 0 else 'red'
+            # Higher is better - green means improvement
+            color = '#35b779' if median > 0 else '#cc4778'
         bar.set_color(color)
     
     # Add horizontal line at y=0
-    ax.axhline(y=0, color='black', linestyle='--', linewidth=1.5, alpha=0.7)
+    ax.axhline(y=0, color='black', linestyle='--', linewidth=4, alpha=0.7)
     
-    # Labels and title
-    ax.set_xlabel('Training Sample Size Range', fontsize=14, fontweight='bold')
+    # Labels and title - DOUBLED font sizes for paper
+    ax.set_xlabel('Training Sample Size', fontsize=56, fontweight='bold')
     
     metric_labels = {
         'mse': 'MSE Difference',
         'r2': 'R² Difference',
         'nll': 'NLL Difference'
     }
-    metric_full = {
-        'mse': 'Mean Squared Error',
-        'r2': 'R² Score',
-        'nll': 'Negative Log-Likelihood'
+    metric_titles = {
+        'mse': 'Improvement over Baseline (MSE)',
+        'r2': 'Improvement over Baseline (R²)',
+        'nll': 'Improvement over Baseline (NLL)'
     }
     
-    ax.set_ylabel(f'{metric_labels.get(metric, metric.upper())} ({model_name} - {baseline_name})', 
-                  fontsize=14, fontweight='bold')
+    ax.set_ylabel(metric_labels.get(metric, metric.upper()), 
+                  fontsize=56, fontweight='bold')
     
-    # Determine interpretation text
-    if metric in ['mse', 'nll']:
-        better_text = "Green = Model better (lower), Red = Baseline better"
-    else:  # r2
-        better_text = "Green = Model better (higher), Red = Baseline better"
-    
-    ax.set_title(f'{metric_full.get(metric, metric.upper())} Difference by Training Sample Size\n{model_name} vs {baseline_name} (Median per Bin, Error Bars = IQR)',
-                fontsize=16, fontweight='bold')
+    ax.set_title(metric_titles.get(metric, f'Improvement over Baseline ({metric.upper()})'),
+                fontsize=64, fontweight='bold')
     
     ax.set_xticks(x_pos)
-    ax.set_xticklabels(bin_labels, fontsize=10)
+    ax.set_xticklabels(bin_labels, fontsize=48)
+    ax.tick_params(axis='y', labelsize=48)
     
-    # Grid
-    ax.grid(True, alpha=0.3, axis='y')
-    ax.set_axisbelow(True)
-    
-    # Add value labels on bars
-    for i, (median_val, count) in enumerate(zip(bin_medians, bin_counts)):
-        if count > 0:
-            # Position label above or below bar depending on sign
-            if median_val >= 0:
-                va = 'bottom'
-                y_pos = bin_q75[i]
-            else:
-                va = 'top'
-                y_pos = bin_q25[i]
-            ax.text(i, y_pos, f'{median_val:.3f}', 
-                   ha='center', va=va, fontsize=9, fontweight='bold')
+    # Grid and spines
+    ax.grid(axis='y', alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     
     plt.tight_layout()
     
@@ -438,15 +408,13 @@ def create_difference_boxplot(sample_sizes, baseline_results, model_results, met
     
     print(f"Creating box plot with bootstrap CIs using {len(sizes)} data points for {metric} difference")
     
-    # Create bins based on quantiles
-    quantiles = np.linspace(0, 1, n_bins + 1)
-    bin_edges = np.quantile(sizes, quantiles)
-    # Ensure unique bin edges
-    bin_edges = np.unique(bin_edges)
+    # Create fixed bins: 1-100, 101-200, 201-300, 301-500
+    bin_edges = [1, 101, 201, 301, 501]
+    bin_labels_fixed = ["1-100", "101-200", "201-300", "301-500"]
     actual_n_bins = len(bin_edges) - 1
     
     # Assign data to bins
-    bin_indices = np.digitize(sizes, bin_edges[1:-1])
+    bin_indices = np.digitize(sizes, bin_edges) - 1  # 0-indexed
     
     # Compute statistics for each bin
     bin_medians = []
@@ -459,7 +427,6 @@ def create_difference_boxplot(sample_sizes, baseline_results, model_results, met
     for i in range(actual_n_bins):
         mask = bin_indices == i
         bin_diffs = differences[mask]
-        bin_sizes = sizes[mask]
         
         if len(bin_diffs) > 0:
             median = np.median(bin_diffs)
@@ -471,11 +438,7 @@ def create_difference_boxplot(sample_sizes, baseline_results, model_results, met
             bin_ci_upper.append(ci_upper)
             
             bin_counts.append(len(bin_diffs))
-            
-            # Create label with size range
-            size_min = int(bin_sizes.min())
-            size_max = int(bin_sizes.max())
-            bin_labels.append(f"{size_min}-{size_max}\n(n={len(bin_diffs)})")
+            bin_labels.append(bin_labels_fixed[i])
             
             print(f"  Bin {i+1}: median={median:.4f}, 95% CI=[{ci_lower:.4f}, {ci_upper:.4f}]")
         else:
@@ -483,10 +446,10 @@ def create_difference_boxplot(sample_sizes, baseline_results, model_results, met
             bin_ci_lower.append(0)
             bin_ci_upper.append(0)
             bin_counts.append(0)
-            bin_labels.append(f"Empty")
+            bin_labels.append(bin_labels_fixed[i])
     
-    # Create figure with style matching generate_plots.py
-    fig, ax = plt.subplots(figsize=(10, 6))
+    # Create figure - size for paper
+    fig, ax = plt.subplots(figsize=(12, 8))
     
     # Prepare box plot data
     box_data = []
@@ -517,68 +480,66 @@ def create_difference_boxplot(sample_sizes, baseline_results, model_results, met
             
             # Color based on whether model is better
             if metric in ['mse', 'nll']:
-                # Lower is better
-                color = '#35b779' if median < 0 else '#cc4778'  # Green if model better, red if baseline better
+                # Lower is better - green means improvement (negative difference)
+                color = '#35b779' if median < 0 else '#cc4778'
             else:  # r2
-                # Higher is better
+                # Higher is better - green means improvement (positive difference)
                 color = '#35b779' if median > 0 else '#cc4778'
             colors.append(color)
     
     if box_data and positions:
-        # Create box plot matching generate_plots.py style
+        # Create box plot with thicker lines
         bp = ax.boxplot(box_data, positions=positions, widths=0.6,
                        patch_artist=True, showmeans=False,
                        medianprops=dict(color='red', linewidth=2),
-                       boxprops=dict(linewidth=1.5),
-                       whiskerprops=dict(linewidth=1.5),
-                       capprops=dict(linewidth=1.5))
+                       boxprops=dict(linewidth=2),
+                       whiskerprops=dict(linewidth=2),
+                       capprops=dict(linewidth=2))
         
         # Apply colors to boxes
         for patch, color in zip(bp['boxes'], colors):
             patch.set_facecolor(color)
             patch.set_alpha(0.7)
         
-        # Set x-axis
+        # Set x-axis labels
         ax.set_xticks(positions)
-        ax.set_xticklabels([bin_labels[p] for p in positions], rotation=0, fontsize=14)
-        ax.set_xlabel('Training Sample Size Range', fontsize=16, fontweight='bold')
-        
-        # Add value labels above boxes (matching generate_plots.py style)
-        for i, pos in enumerate(positions):
-            median_val = bin_medians[pos]
-            # Get the upper whisker position from boxplot
-            upper_whisker = bp['whiskers'][i*2 + 1].get_ydata()[1]
-            ax.text(pos, upper_whisker, f'{median_val:.4f}', 
-                   ha='center', va='bottom', fontsize=11, fontweight='bold')
+        ax.set_xticklabels([bin_labels[p] for p in positions], fontsize=25)
     
     # Add horizontal line at y=0
-    ax.axhline(y=0, color='black', linestyle='--', linewidth=1.5, alpha=0.7)
+    ax.axhline(y=0, color='black', linestyle='--', linewidth=2, alpha=0.7)
     
-    # Labels and title
+    # Labels and title - 25pt font sizes
+    ax.set_xlabel('Training Sample Size', fontsize=25, fontweight='bold')
+    
     metric_labels = {
         'mse': 'MSE Difference',
         'r2': 'R² Difference',
         'nll': 'NLL Difference'
     }
-    metric_full = {
-        'mse': 'Mean Squared Error',
-        'r2': 'R² Score',
-        'nll': 'Negative Log-Likelihood'
+    metric_titles = {
+        'mse': 'Improvement over Baseline (MSE)',
+        'r2': 'Improvement over Baseline (R²)',
+        'nll': 'Improvement over Baseline (NLL)'
     }
     
-    ax.set_ylabel(f'{metric_labels.get(metric, metric.upper())}\n({model_name} - {baseline_name})', 
-                  fontsize=16, fontweight='bold')
+    ax.set_ylabel(metric_labels.get(metric, metric.upper()), 
+                  fontsize=25, fontweight='bold')
     
-    # Title - simplified to match generate_plots.py style
-    ax.set_title(f'{metric_full.get(metric, metric.upper())} Difference: {model_name} vs {baseline_name}\n(Whiskers = 95% Bootstrap CI for Median)',
-                fontsize=16, fontweight='bold')
+    # Title
+    ax.set_title(metric_titles.get(metric, f'Improvement over Baseline ({metric.upper()})'),
+                fontsize=25, fontweight='bold')
     
-    # Set tick label sizes
-    ax.tick_params(axis='y', labelsize=14)
+    # Set tick label sizes - 25pt
+    ax.tick_params(axis='both', labelsize=25)
+
+    # Disable scientific notation for y-axis
+    from matplotlib.ticker import ScalarFormatter
+    ax.yaxis.set_major_formatter(ScalarFormatter(useMathText=False))
+    ax.ticklabel_format(style='plain', axis='y')
+    ax.get_yaxis().get_offset_text().set_visible(False)
     
     # Grid and spines
-    ax.grid(True, alpha=0.3, axis='y')
-    ax.set_axisbelow(True)
+    ax.grid(axis='y', alpha=0.3)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     

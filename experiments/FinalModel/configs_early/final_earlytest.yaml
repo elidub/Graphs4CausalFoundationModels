@@ -35,13 +35,13 @@ scm_config:
       choices:
       - 0.0
       - 0.1
-      - 0.2
-      - 0.3
+      #- 0.2
+      #- 0.3
       probabilities:
       - 0.9
       - 0.1
-      - 0.01
-      - 0.001
+      #- 0.01
+      #- 0.001
         #- 0.8
         #- 0.1
         #- 0.1
@@ -361,7 +361,7 @@ model_config:
   use_graph_conditioning:  # whether to condition on causal graph structure
     value: true
   graph_conditioning_mode:  # how to apply graph conditioning
-    value: "partial_gcn_and_soft_attention"
+    value: "partial_soft_attention"
     # Options:
     # - "hard_attention_only": GraphConditionedInterventionalPFN with hard attention masking
     # - "flat_append": FlatGraphConditionedInterventionalPFN (flatten adjacency and append)
@@ -413,17 +413,17 @@ training_config:
   weight_decay: # weight decay for optimizer, might not be needed
     value: 0.00001 
   max_steps:  #critial for determing training duration!
-    value: 200000
+    value: 50000
   max_epochs: # should always be 1
     value: 1
 
   # Data Loading Parameters
   batch_size: # batch size
-    value: 4
+    value: 8
   accumulate_grad_batches:
-    value: 1
+    value: 4
   num_workers: # number of workers for data loading. You might need a lot because sampling is not super fast.
-    value: 50
+    value: 120
 
 
   # Training Control
@@ -469,7 +469,7 @@ training_config:
   eval_enabled: # whether to run evaluation during training
     value: true
   eval_every: # how often to run evaluation (i.e. every n training steps)
-    value: 20000
+    value: 1000000000
   eval_batches: # number of batches to use for evaluation
     value: 2
   eval_dataset_size: # size of the evaluation dataset
@@ -522,8 +522,8 @@ training_config:
 
   # ComplexMech Benchmark Integration (evaluates on complex mechanism SCMs)
   complexmech_benchmark_eval_fidelity: # run ComplexMech benchmark at each evaluation step
-    value: "low" # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
+    value: null # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
   complexmech_benchmark_final_fidelity: # run ComplexMech benchmark at end of training
-    value: "high"  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
+    value: null  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
   complexmech_benchmark_dir: # directory containing ComplexMech benchmark configs and data
     value: "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints"  # Results saved to <this_dir>/benchmark_res/

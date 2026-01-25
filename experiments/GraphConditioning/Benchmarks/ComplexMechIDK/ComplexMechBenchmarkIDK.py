@@ -463,13 +463,31 @@ class ComplexMechBenchmarkIDK:
         with open(load_path, 'rb') as f:
             save_data = pickle.load(f)
         
-        data = save_data['data']
-        metadata = save_data.get('metadata', {})
+        # Handle both new format (dict with 'data' key) and old format (direct list)
+        if isinstance(save_data, dict) and 'data' in save_data:
+            # New format: {'data': [...], 'metadata': {...}}
+            data = save_data['data']
+            metadata = save_data.get('metadata', {})
+        elif isinstance(save_data, list):
+            # Old format: save_data is the data list directly
+            data = save_data
+            metadata = {}
+            if self.verbose:
+                print(f"  Loaded old format (list directly)")
+            
+            # Try to extract node_count from filename
+            # Patterns: complexmech_2nodes_... or complexmech_ntest_2nodes_...
+            import re
+            match = re.search(r'_?(\d+)nodes?_', filename)
+            if match:
+                metadata['node_count'] = int(match.group(1))
+        else:
+            raise ValueError(f"Unknown data format in {load_path}. Expected dict with 'data' key or list.")
         
-        # Handle both tuple and dict formats
-        # Tuple format: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
+        # Handle both tuple/list and dict formats
+        # Tuple/list format: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
         # Dict format: {'X_obs': ..., 'T_obs': ..., etc.}
-        if len(data) > 0 and isinstance(data[0], tuple):
+        if len(data) > 0 and isinstance(data[0], (tuple, list)):
             if self.verbose:
                 print(f"  Converting tuple format to dict format...")
             # Convert tuples to dicts
@@ -1115,8 +1133,17 @@ class ComplexMechBenchmarkIDK:
             else:
                 variant = 'base'
         
+        # Extract hide_fraction from metadata or data_filename
+        hide_fraction = metadata.get('hide_fraction', None)
+        if hide_fraction is None:
+            # Try to parse from data_filename (e.g., "complexmech_2nodes_path_TY_hide1.0_1000samples_seed42.pkl")
+            import re
+            match = re.search(r'hide([0-9.]+)', data_filename)
+            if match:
+                hide_fraction = float(match.group(1))
+        
         if self.verbose:
-            print(f"\nRunning benchmark on {node_count}-node dataset (variant: {variant})...")
+            print(f"\nRunning benchmark on {node_count}-node dataset (variant: {variant}, hide_fraction: {hide_fraction})...")
             print(f"  Number of samples: {len(data)}")
         
         # Evaluate
@@ -1132,6 +1159,7 @@ class ComplexMechBenchmarkIDK:
         aggregated['metadata'] = {
             'node_count': node_count,
             'variant': variant,
+            'hide_fraction': hide_fraction,
             'n_samples': len(results),
             'data_filename': data_filename,
             'model_name': model_name,
@@ -1154,9 +1182,10 @@ class ComplexMechBenchmarkIDK:
         
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Generate filenames including variant information
+        # Generate filenames including variant and hide_fraction information
         variant_str = f"_{variant}" if variant != "base" else ""
-        aggregated_filename = f"aggregated_{node_count}nodes{variant_str}.json"
+        hide_str = f"_hide{hide_fraction}" if hide_fraction is not None else ""
+        aggregated_filename = f"aggregated_{node_count}nodes{variant_str}{hide_str}.json"
         
         aggregated_path = output_dir / aggregated_filename
         with open(aggregated_path, 'w') as f:
@@ -1167,7 +1196,7 @@ class ComplexMechBenchmarkIDK:
         
         # Save individual results if requested
         if save_individual_results:
-            individual_filename = f"individual_{node_count}nodes{variant_str}.json"
+            individual_filename = f"individual_{node_count}nodes{variant_str}{hide_str}.json"
             individual_path = output_dir / individual_filename
             
             with open(individual_path, 'w') as f:
@@ -1342,6 +1371,9 @@ class ComplexMechBenchmarkIDK:
         checkpoint_path: str,
         config_path: Optional[str] = None,
         output_dir: Optional[str] = None,
+        node_counts: Optional[List[int]] = None,
+        variants: Optional[List[str]] = None,
+        hide_fractions: Optional[List[float]] = None,
     ) -> Dict[Tuple[int, str], Dict[str, Any]]:
         """
         Run ComplexMech benchmark with specified fidelity level on all variants.
@@ -1358,6 +1390,9 @@ class ComplexMechBenchmarkIDK:
             checkpoint_path: Path to the model checkpoint .pt file
             config_path: Path to the model config YAML file (uses self._current_config_path if None)
             output_dir: Directory to save results (default: benchmark_dir/benchmark_res/model_name)
+            node_counts: List of node counts to evaluate (default: [2, 5, 10, 20, 35, 50])
+            variants: List of variants to evaluate (default: all variants)
+            hide_fractions: List of hide fractions to use (default: self.HIDE_FRACTIONS)
             
         Returns:
             Dictionary mapping (node_count, variant) -> aggregated_results
@@ -1415,10 +1450,20 @@ class ComplexMechBenchmarkIDK:
         original_max_samples = self.max_samples
         self.max_samples = max_samples
         
+        # Store original hide_fractions and override if provided
+        original_hide_fractions = self.HIDE_FRACTIONS
+        if hide_fractions is not None:
+            self.HIDE_FRACTIONS = hide_fractions
+        
+        # Default node_counts if not provided
+        if node_counts is None:
+            node_counts = [2, 5, 10, 20, 35, 50]
+        
         try:
             # Run full benchmark
             results = self.run_full_benchmark(
-                node_counts=[2, 5, 10, 20, 35, 50],
+                node_counts=node_counts,
+                variants=variants,
                 model=self.model,
                 config_path=config_path,
                 output_dir=output_dir,
@@ -1432,6 +1477,8 @@ class ComplexMechBenchmarkIDK:
         finally:
             # Restore original max_samples
             self.max_samples = original_max_samples
+            # Restore original hide_fractions
+            self.HIDE_FRACTIONS = original_hide_fractions
     
     def quick_benchmark(
         self,

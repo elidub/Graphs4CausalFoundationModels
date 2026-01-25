@@ -28,15 +28,23 @@ DATASET_NAME_MAP = {
     "four_std_with_graph.pkl": "four_std",
     "normal_with_graph": "normal",
     "four_std_with_graph": "four_std",
+    # New datasets with constant noise
+    "CID_10_ints_10_reals_normal_noise_constant_with_graph_std.pkl": "normal_noise_constant",
+    "CID_10_ints_10_reals_normal_noise_constant_no_standardization_with_graph_std.pkl": "normal_noise_constant_no_std",
+    # Handle any other variations
+    "normal": "normal",
+    "four_std": "four_std",
 }
 
-DATASETS = ["normal", "four_std"]
+DATASETS = ["normal", "four_std", "normal_noise_constant", "normal_noise_constant_no_std"]
 METRICS = ["mise", "amise"]
 
 # Dataset information
 DATASET_INFO = {
     "normal": {"n_train": 256, "n_test": 2560, "n_features": 6, "n_realizations": 10},
     "four_std": {"n_train": 256, "n_test": 2560, "n_features": 6, "n_realizations": 10},
+    "normal_noise_constant": {"n_train": 256, "n_test": 2560, "n_features": 6, "n_realizations": 10},
+    "normal_noise_constant_no_std": {"n_train": 256, "n_test": 2560, "n_features": 6, "n_realizations": 10},
 }
 
 # Folders to skip (not experiment results)
@@ -47,6 +55,14 @@ SKIP_FILES = {"eval_df.csv"}
 def load_results_from_folder(folder_path):
     """Load all result pickle files from a folder."""
     results = []
+    
+    # Custom unpickler to handle missing eval module
+    class CustomUnpickler(pickle.Unpickler):
+        def find_class(self, module, name):
+            if module == 'eval':
+                # Return a dummy class for eval module
+                return type(name, (), {})
+            return super().find_class(module, name)
     
     for item in os.listdir(folder_path):
         item_path = os.path.join(folder_path, item)
@@ -61,7 +77,7 @@ def load_results_from_folder(folder_path):
             
         try:
             with open(item_path, 'rb') as f:
-                data = pickle.load(f)
+                data = CustomUnpickler(f).load()
                 # Remove cate_preds to save memory
                 if 'cate_preds' in data:
                     data.pop('cate_preds')

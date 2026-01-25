@@ -1,11 +1,11 @@
 universe   = vanilla
 executable = /bin/bash
-arguments  = run_complexmech_idk_cluster.sh
-output     = logs/complexmech_idk_$(ClusterId).$(ProcId).out
-error      = logs/complexmech_idk_$(ClusterId).$(ProcId).err
-log        = logs/complexmech_idk_$(ClusterId).$(ProcId).log
+arguments  = run_complexmech_ntest_cluster.sh
+output     = logs/complexmech_ntest_$(ClusterId).$(ProcId).out
+error      = logs/complexmech_ntest_$(ClusterId).$(ProcId).err
+log        = logs/complexmech_ntest_$(ClusterId).$(ProcId).log
 
-transfer_input_files = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/src, /fast/arikreuter/DoPFN_v2/venv.zip, run_complexmech_idk_cluster.sh, run_complexmech_idk.py, ComplexMechBenchmarkIDK.py, configs, data_cache_ComplexMechIDK.zip
+transfer_input_files = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/src, /fast/arikreuter/DoPFN_v2/venv.zip, run_complexmech_ntest_cluster.sh, run_complexmech_ntest.py, ComplexMechBenchmarkNTest.py, configs, data_cache_ComplexMechNTest.zip
 should_transfer_files = Yes
 when_to_transfer_output = ON_EXIT
 
@@ -18,7 +18,7 @@ request_cpus   = 16
 request_disk   = 64GB
 
 # Job priority bid
-JobBatchName = "complexmech_idk_16773480"
+JobBatchName = "complexmech_ntest_16773480"
 +RunningPrice = 100
 +MaxRunningPrice = 50000
 +RunningPriceExceededAction = "kill"
@@ -30,5 +30,5 @@ requirements = (regexp("H100", GPUs_DeviceName) && CUDAGlobalMemoryMb >= 75000)
 config_path = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773480.0/final_model_with_bardist_config.yaml
 checkpoint_path = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773480.0/final_model_with_bardist.pt
 fidelity = high
-output_dir = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773480.0/complexmech_idk_high
+output_dir = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773480.0/complexmech_ntest_high
 queue 1

@@ -12,7 +12,6 @@ import argparse
 import sys
 import os
 import numpy as np
-import torch
 
 # Add paths for imports - use relative path first for local eval.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # Current directory first
@@ -22,7 +21,6 @@ sys.path.insert(0, '/fast/arikreuter/DoPFN_v2/CausalPriorFitting/PlantEval2/Plan
 
 from eval import evaluate_pipeline
 from src.models.PreprocessingGraphConditionedPFN import PreprocessingGraphConditionedPFN
-from src.utils.graph_utils import adjacency_to_ancestor_matrix
 
 
 # PlantEval2 feature names (6 features)
@@ -38,7 +36,7 @@ FEATURE_NAMES = [
 ]
 
 
-def prepare_adjacency_matrix_for_model(dataset_adjacency, model_n_features, n_real_features, graph_mode="full_graph"):
+def prepare_adjacency_matrix_for_model(dataset_adjacency, dataset_ancestor, model_n_features, n_real_features, graph_mode="full_graph"):
     """
     Prepare adjacency matrix from dataset for the model.
     
@@ -47,9 +45,10 @@ def prepare_adjacency_matrix_for_model(dataset_adjacency, model_n_features, n_re
     
     Args:
         dataset_adjacency: Adjacency matrix from dataset (8x8)
+        dataset_ancestor: Ancestor matrix from dataset (8x8) - already computed transitive closure
         model_n_features: Number of features the model expects
         n_real_features: Actual number of features in data (6)
-        graph_mode: How to use the graph ("full_graph", "all_unknown", "t_to_y_only")
+        graph_mode: How to use the graph ("full_graph", "all_unknown", "t_to_y_only", "full_graph_no_t_to_y", "all_zeros")
     
     Returns:
         Adjacency matrix in model's expected format
@@ -70,6 +69,15 @@ def prepare_adjacency_matrix_for_model(dataset_adjacency, model_n_features, n_re
         print(f"  Real features: {n_real_features}, Padded features: {model_n_features - n_real_features}")
         return adjacency_matrix
     
+    elif graph_mode == "all_zeros":
+        # Entire matrix is zeros (unknown), no -1 padding
+        adjacency_matrix = np.zeros((model_n_features + 2, model_n_features + 2), dtype=np.float32)
+        
+        print(f"Graph knowledge: ALL ZEROS (entire matrix is unknown, including padding)")
+        print(f"  Real features: {n_real_features}, Padded features: {model_n_features - n_real_features}")
+        print(f"  All entries set to 0 (unknown), including padded features")
+        return adjacency_matrix
+    
     elif graph_mode == "t_to_y_only":
         # Only T -> Y edge, rest unknown for real features
         adjacency_matrix = np.zeros((model_n_features + 2, model_n_features + 2), dtype=np.float32)
@@ -81,21 +89,22 @@ def prepare_adjacency_matrix_for_model(dataset_adjacency, model_n_features, n_re
                 feat_idx_pad = 2 + i
                 adjacency_matrix[feat_idx_pad, :] = -1.0
                 adjacency_matrix[:, feat_idx_pad] = -1.0
+                adjacency_matrix[feat_idx_pad, feat_idx_pad] = -1.0
         
         print(f"Graph knowledge: T->Y ONLY (ignoring dataset graph)")
         print(f"  Real features: {n_real_features}, Padded features: {model_n_features - n_real_features}")
         return adjacency_matrix
     
     elif graph_mode == "full_graph":
-        # Use the dataset adjacency matrix
-        if dataset_adjacency is None:
-            raise ValueError("graph_mode='full_graph' requires dataset to have adjacency_matrix attribute")
+        # Use the dataset ancestor matrix directly (already computed transitive closure)
+        if dataset_ancestor is None:
+            raise ValueError("graph_mode='full_graph' requires dataset to have ancestor_matrix attribute")
         
-        print(f"Using adjacency matrix from dataset")
-        print(f"  Dataset adjacency shape: {dataset_adjacency.shape}")
-        print(f"  Edges in dataset adjacency: {(dataset_adjacency == 1).sum()}")
+        print(f"Using ancestor matrix from dataset")
+        print(f"  Dataset ancestor shape: {dataset_ancestor.shape}")
+        print(f"  Ancestor relationships in dataset: {(dataset_ancestor == 1).sum()}")
         
-        n_dataset_vars = dataset_adjacency.shape[0]
+        n_dataset_vars = dataset_ancestor.shape[0]
         
         # Dataset order: features (0-5), treatment (6), outcome (7)
         # Model order: treatment (0), outcome (1), features (2-7)
@@ -105,23 +114,17 @@ def prepare_adjacency_matrix_for_model(dataset_adjacency, model_n_features, n_re
         for i in range(6):  # features: dataset idx 0-5 -> model idx 2-7
             dataset_to_model[i] = 2 + i
         
-        # Create model adjacency matrix with padding
+        # Create model ancestor matrix with padding
         model_adjacency = np.zeros((model_n_features + 2, model_n_features + 2), dtype=np.float32)
         
-        # Copy edges from dataset adjacency to model adjacency with reordering
+        # Copy ancestor relationships from dataset to model with reordering
         for i in range(n_dataset_vars):
             for j in range(n_dataset_vars):
                 model_i = dataset_to_model[i]
                 model_j = dataset_to_model[j]
-                model_adjacency[model_i, model_j] = dataset_adjacency[i, j]
-
-        # Convert adjacency matrix to ancestor matrix (transitive closure)
-        model_adjacency_tensor = torch.tensor(model_adjacency, dtype=torch.float32)
-        ancestor_matrix = adjacency_to_ancestor_matrix(model_adjacency_tensor, assume_dag=True)
-        model_adjacency = ancestor_matrix.numpy()
+                model_adjacency[model_i, model_j] = dataset_ancestor[i, j]
         
-        print(f"  Converted adjacency to ancestor matrix")
-        print(f"  Ancestor relationships: {(model_adjacency == 1).sum()}")
+        print(f"  Ancestor relationships after reordering: {(model_adjacency == 1).sum()}")
         
         # Pad non-existent features with -1 (no edge) since they don't exist
         # These padded features are not real variables, so they have no edges
@@ -130,16 +133,63 @@ def prepare_adjacency_matrix_for_model(dataset_adjacency, model_n_features, n_re
                 feat_idx_pad = 2 + i
                 model_adjacency[feat_idx_pad, :] = -1.0
                 model_adjacency[:, feat_idx_pad] = -1.0
+                model_adjacency[feat_idx_pad, feat_idx_pad] = -1.0
         
         print(f"  Model adjacency shape: {model_adjacency.shape}")
         print(f"  Edges in model adjacency: {(model_adjacency == 1).sum()}")
 
-        # con
+        return model_adjacency
+    
+    elif graph_mode == "full_graph_no_t_to_y":
+        # Use the full graph but set T->Y edge to unknown (0)
+        if dataset_ancestor is None:
+            raise ValueError("graph_mode='full_graph_no_t_to_y' requires dataset to have ancestor_matrix attribute")
         
+        print(f"Using ancestor matrix from dataset (WITH T->Y SET TO UNKNOWN)")
+        print(f"  Dataset ancestor shape: {dataset_ancestor.shape}")
+        print(f"  Ancestor relationships in dataset: {(dataset_ancestor == 1).sum()}")
+        
+        n_dataset_vars = dataset_ancestor.shape[0]
+        
+        # Dataset order: features (0-5), treatment (6), outcome (7)
+        # Model order: treatment (0), outcome (1), features (2-7)
+        dataset_to_model = np.zeros(n_dataset_vars, dtype=int)
+        dataset_to_model[6] = 0  # treatment: dataset idx 6 -> model idx 0
+        dataset_to_model[7] = 1  # outcome: dataset idx 7 -> model idx 1
+        for i in range(6):  # features: dataset idx 0-5 -> model idx 2-7
+            dataset_to_model[i] = 2 + i
+        
+        # Create model ancestor matrix with padding
+        model_adjacency = np.zeros((model_n_features + 2, model_n_features + 2), dtype=np.float32)
+        
+        # Copy ancestor relationships from dataset to model with reordering
+        for i in range(n_dataset_vars):
+            for j in range(n_dataset_vars):
+                model_i = dataset_to_model[i]
+                model_j = dataset_to_model[j]
+                model_adjacency[model_i, model_j] = dataset_ancestor[i, j]
+        
+        # Set T->Y to unknown (0) instead of the dataset value
+        model_adjacency[0, 1] = 0.0  # T (idx 0) -> Y (idx 1) = unknown
+        
+        print(f"  Ancestor relationships after reordering: {(model_adjacency == 1).sum()}")
+        print(f"  T->Y edge set to: UNKNOWN (0)")
+        
+        # Pad non-existent features with -1 (no edge) since they don't exist
+        if model_n_features > n_real_features:
+            for i in range(n_real_features, model_n_features):
+                feat_idx_pad = 2 + i
+                model_adjacency[feat_idx_pad, :] = -1.0
+                model_adjacency[:, feat_idx_pad] = -1.0
+                model_adjacency[feat_idx_pad, feat_idx_pad] = -1.0
+        
+        print(f"  Model adjacency shape: {model_adjacency.shape}")
+        print(f"  Edges in model adjacency: {(model_adjacency == 1).sum()}")
+
         return model_adjacency
     
     else:
-        raise ValueError(f"Unknown graph_mode: {graph_mode}. Use 'all_unknown', 't_to_y_only', or 'full_graph'")
+        raise ValueError(f"Unknown graph_mode: {graph_mode}. Use 'all_unknown', 'all_zeros', 't_to_y_only', 'full_graph', or 'full_graph_no_t_to_y'")
 
 
 
@@ -178,17 +228,39 @@ def create_dofm_plant_pipeline(graph_mode="full_graph"):
             dataset_adjacency = cid_dataset.adjacency_matrix
             print(f"[Graph] Found adjacency matrix in dataset: {dataset_adjacency.shape}")
         
-        if graph_mode == "full_graph" and dataset_adjacency is None:
-            raise ValueError("graph_mode='full_graph' requires dataset to have adjacency_matrix attribute")
+        # Try to get ancestor matrix from dataset
+        dataset_ancestor = None
+        if hasattr(cid_dataset, 'ancestor_matrix') and cid_dataset.ancestor_matrix is not None:
+            dataset_ancestor = cid_dataset.ancestor_matrix
+            print(f"[Graph] Found ancestor matrix in dataset: {dataset_ancestor.shape}")
+        
+        if graph_mode == "full_graph" and dataset_ancestor is None:
+            raise ValueError("graph_mode='full_graph' requires dataset to have ancestor_matrix attribute")
         
         # Prepare adjacency matrix for the model
         # This will be automatically converted to ancestor matrix if needed by PreprocessingGraphConditionedPFN
         n_real_features = min(n_features_orig, model_n_features)
         adjacency_matrix = prepare_adjacency_matrix_for_model(
-            dataset_adjacency, model_n_features, n_real_features, graph_mode)
+            dataset_adjacency, dataset_ancestor, model_n_features, n_real_features, graph_mode)
+        
+        # Display the full adjacency matrix before passing to model
+        print(f"\n[Graph] Full adjacency matrix being passed to model:")
+        print(f"  Shape: {adjacency_matrix.shape}")
+        # Print the non-padded portion (first 8x8 for T, Y, and 6 features)
+        print(f"  Core 8x8 matrix (T, Y, 6 features):")
+        np.set_printoptions(linewidth=200, suppress=True)
+        print(adjacency_matrix[:8, :8])
+        print(f"  Legend: -1=no edge, 0=unknown, 1=edge")
+        print(f"  Row/Col order: [T(0), Y(1), X(2), Y_pos(3), Bed(4), Red(5), Blue(6), Far_Red(7)]")
         
         # Predict Y for each test sample at its intervention value t_test
         # The model will automatically convert adjacency -> ancestor matrix if needed
+
+        #standardize_t_test and t_train again
+
+        t_test = (t_test - t_test.mean()) / t_test.std()
+        t_train = (t_train - t_train.mean()) / t_train.std()
+
         cid_pred = model.predict(
             X_obs=X_train,
             T_obs=t_train,
@@ -214,7 +286,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_path", type=str, default=None)
     parser.add_argument("--config_path", type=str, default=None)
     parser.add_argument("--graph_mode", type=str, default="full_graph",
-                        choices=["all_unknown", "t_to_y_only", "full_graph", "true_graph"])
+                        choices=["all_unknown", "all_zeros", "t_to_y_only", "full_graph", "full_graph_no_t_to_y"])
 
     args = parser.parse_args()
     

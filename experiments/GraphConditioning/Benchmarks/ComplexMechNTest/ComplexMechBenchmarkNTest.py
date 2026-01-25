@@ -88,8 +88,12 @@ class ComplexMechBenchmarkNTest:
     # All variants including base
     VARIANTS = ["base"] + PATH_VARIANTS
     
-    # Hide fractions for path variants
-    HIDE_FRACTIONS = [0.0, 0.25, 0.5, 0.75, 1.0]
+    # NTest sample counts for path variants (instead of hide fractions in IDK)
+    NTEST_SAMPLES = [100, 250, 500, 750, 900]
+    
+    # Keep HIDE_FRACTIONS for backward compatibility with run() interface
+    # but map to NTEST_SAMPLES internally
+    HIDE_FRACTIONS = [0.0, 0.25, 0.5, 0.75, 1.0]  # Will be mapped to NTEST_SAMPLES
     
     def __init__(
         self,
@@ -463,16 +467,34 @@ class ComplexMechBenchmarkNTest:
         with open(load_path, 'rb') as f:
             save_data = pickle.load(f)
         
-        data = save_data['data']
-        metadata = save_data.get('metadata', {})
+        # Handle both old format (list) and new format (dict with 'data' and 'metadata')
+        if isinstance(save_data, dict):
+            data = save_data['data']
+            metadata = save_data.get('metadata', {})
+        elif isinstance(save_data, list):
+            # Old format: save_data is the data list directly
+            data = save_data
+            metadata = {}
+            if self.verbose:
+                print(f"  Loaded old format (list directly)")
+            
+            # Try to extract node_count from filename
+            # Patterns: complexmech_2nodes_... or complexmech_ntest_2nodes_...
+            import re
+            match = re.search(r'_?(\d+)nodes?_', filename)
+            if match:
+                metadata['node_count'] = int(match.group(1))
+        else:
+            raise ValueError(f"Unexpected save_data type: {type(save_data)}")
         
         # Handle both tuple and dict formats
         # Tuple format: (X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv)
         # Dict format: {'X_obs': ..., 'T_obs': ..., etc.}
-        if len(data) > 0 and isinstance(data[0], tuple):
+        # List format: [X_obs, T_obs, Y_obs, X_intv, T_intv, Y_intv]
+        if len(data) > 0 and (isinstance(data[0], (tuple, list))):
             if self.verbose:
-                print(f"  Converting tuple format to dict format...")
-            # Convert tuples to dicts
+                print(f"  Converting tuple/list format to dict format...")
+            # Convert tuples/lists to dicts
             converted_data = []
             for item in data:
                 if len(item) == 6:
@@ -1128,10 +1150,17 @@ class ComplexMechBenchmarkNTest:
         # Aggregate
         aggregated = self.aggregate_results(results, n_bootstrap=n_bootstrap)
         
+        # Extract ntest value from data_filename if present
+        # Format: complexmech_{N}nodes_{variant}_ntest{val}_...
+        import re
+        ntest_match = re.search(r'ntest(\d+)', data_filename)
+        ntest_value = int(ntest_match.group(1)) if ntest_match else None
+        
         # Add metadata
         aggregated['metadata'] = {
             'node_count': node_count,
             'variant': variant,
+            'ntest': ntest_value,
             'n_samples': len(results),
             'data_filename': data_filename,
             'model_name': model_name,
@@ -1154,9 +1183,10 @@ class ComplexMechBenchmarkNTest:
         
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Generate filenames including variant information
+        # Generate filenames including variant and ntest information
         variant_str = f"_{variant}" if variant != "base" else ""
-        aggregated_filename = f"aggregated_{node_count}nodes{variant_str}.json"
+        ntest_str = f"_ntest{ntest_value}" if ntest_value is not None else ""
+        aggregated_filename = f"aggregated_{node_count}nodes{variant_str}{ntest_str}.json"
         
         aggregated_path = output_dir / aggregated_filename
         with open(aggregated_path, 'w') as f:
@@ -1167,7 +1197,7 @@ class ComplexMechBenchmarkNTest:
         
         # Save individual results if requested
         if save_individual_results:
-            individual_filename = f"individual_{node_count}nodes{variant_str}.json"
+            individual_filename = f"individual_{node_count}nodes{variant_str}{ntest_str}.json"
             individual_path = output_dir / individual_filename
             
             with open(individual_path, 'w') as f:
@@ -1251,38 +1281,40 @@ class ComplexMechBenchmarkNTest:
         # NOTE: All variants use the SAME seed (base_seed) per the generate_all_variants_data.py script
         all_results = {}
         
-        # Calculate total configs: base variants + (path variants * hide fractions)
+        # Calculate total configs: base variants + (path variants * ntest sample counts)
         config_idx = 0
         base_count = len([v for v in variants if v == "base"])
         path_count = len([v for v in variants if v != "base"])
-        total_configs = len(node_counts) * (base_count + path_count * len(self.HIDE_FRACTIONS))
+        total_configs = len(node_counts) * (base_count + path_count * len(self.NTEST_SAMPLES))
         
         for node_count in node_counts:
             for variant in variants:
-                # For path variants, loop through all hide fractions
+                # For path variants, loop through all ntest sample counts
                 if variant in self.PATH_VARIANTS:
-                    hide_fractions_to_test = self.HIDE_FRACTIONS
+                    ntest_values_to_test = self.NTEST_SAMPLES
                 else:
-                    # For base variant, no hide fraction suffix needed
-                    hide_fractions_to_test = [None]
+                    # For base variant, no ntest suffix needed
+                    ntest_values_to_test = [None]
                 
-                for hide_frac in hide_fractions_to_test:
+                for ntest_val in ntest_values_to_test:
                     config_idx += 1
                     # Generate expected filename with correct seed
                     # All files use base_seed (typically 42) regardless of variant
                     dataset_seed = base_seed
                     
-                    # Build variant string
-                    if hide_frac is not None:
-                        # Path variant with hide fraction
-                        variant_str = f"_{variant}_hide{hide_frac}"
-                        variant_display = f"{variant} (hide={hide_frac})"
+                    # Build variant string and filename
+                    # NOTE: Base files have format: complexmech_ntest_{N}nodes_base_...
+                    # Path variant files have format: complexmech_{N}nodes_{variant}_ntest{val}_...
+                    if ntest_val is not None:
+                        # Path variant with ntest sample count
+                        variant_str = f"_{variant}_ntest{ntest_val}"
+                        variant_display = f"{variant} (ntest={ntest_val})"
+                        data_filename = f"complexmech_{node_count}nodes{variant_str}_{num_samples}samples_seed{dataset_seed}.pkl"
                     else:
-                        # Base variant
+                        # Base variant has different naming convention
                         variant_str = f"_{variant}"
                         variant_display = variant
-                    
-                    data_filename = f"lingaus_{node_count}nodes{variant_str}_{num_samples}samples_seed{dataset_seed}.pkl"
+                        data_filename = f"complexmech_ntest_{node_count}nodes{variant_str}_{num_samples}samples_seed{dataset_seed}.pkl"
                     
                     if self.verbose:
                         print(f"\n{'='*80}")
@@ -1298,8 +1330,8 @@ class ComplexMechBenchmarkNTest:
                             n_bootstrap=n_bootstrap,
                         )
                         # Use string key for JSON serialization
-                        if hide_frac is not None:
-                            key = f"{node_count}nodes_{variant}_hide{hide_frac}"
+                        if ntest_val is not None:
+                            key = f"{node_count}nodes_{variant}_ntest{ntest_val}"
                         else:
                             key = f"{node_count}nodes_{variant}"
                         all_results[key] = results
@@ -1342,6 +1374,9 @@ class ComplexMechBenchmarkNTest:
         checkpoint_path: str,
         config_path: Optional[str] = None,
         output_dir: Optional[str] = None,
+        node_counts: Optional[List[int]] = None,
+        variants: Optional[List[str]] = None,
+        hide_fractions: Optional[List[float]] = None,
     ) -> Dict[Tuple[int, str], Dict[str, Any]]:
         """
         Run ComplexMech benchmark with specified fidelity level on all variants.
@@ -1358,6 +1393,9 @@ class ComplexMechBenchmarkNTest:
             checkpoint_path: Path to the model checkpoint .pt file
             config_path: Path to the model config YAML file (uses self._current_config_path if None)
             output_dir: Directory to save results (default: benchmark_dir/benchmark_res/model_name)
+            node_counts: List of node counts to evaluate (default: [2, 5, 10, 20, 35, 50])
+            variants: List of variants to evaluate (default: all variants)
+            hide_fractions: List of hide fractions to use (default: self.HIDE_FRACTIONS)
             
         Returns:
             Dictionary mapping (node_count, variant) -> aggregated_results
@@ -1415,10 +1453,20 @@ class ComplexMechBenchmarkNTest:
         original_max_samples = self.max_samples
         self.max_samples = max_samples
         
+        # Store original hide_fractions and override if provided
+        original_hide_fractions = self.HIDE_FRACTIONS
+        if hide_fractions is not None:
+            self.HIDE_FRACTIONS = hide_fractions
+        
+        # Default node_counts if not provided
+        if node_counts is None:
+            node_counts = [2, 5, 10, 20, 35, 50]
+        
         try:
             # Run full benchmark
             results = self.run_full_benchmark(
-                node_counts=[2, 5, 10, 20, 35, 50],
+                node_counts=node_counts,
+                variants=variants,
                 model=self.model,
                 config_path=config_path,
                 output_dir=output_dir,
@@ -1432,6 +1480,8 @@ class ComplexMechBenchmarkNTest:
         finally:
             # Restore original max_samples
             self.max_samples = original_max_samples
+            # Restore original hide_fractions
+            self.HIDE_FRACTIONS = original_hide_fractions
     
     def quick_benchmark(
         self,

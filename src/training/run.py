@@ -778,11 +778,11 @@ def main():
             dataset,
             batch_size=batch_size,
             shuffle=False,
-            prefetch_factor=prefetch_factor,
+            #prefetch_factor=prefetch_factor,
             num_workers=num_workers,
             collate_fn=collator,
-            persistent_workers=num_workers > 0,  # Only use persistent workers when num_workers > 0
-            pin_memory=False,  # Disable pin_memory to avoid CUDA context issues
+            persistent_workers=False,  # DISABLED: persistent workers cause memory leaks with XGBoost SCM mechanisms
+            #pin_memory=False,  # Disable pin_memory to avoid CUDA context issues
             drop_last=False,   # Keep all samples
             timeout=120 if num_workers > 0 else 0,  # 2-minute timeout for worker processes
         )

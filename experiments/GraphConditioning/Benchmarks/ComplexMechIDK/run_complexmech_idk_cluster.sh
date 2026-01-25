@@ -38,10 +38,21 @@ echo "Exported COMPLEXMECH_IDK_BENCHMARK_DIR=${COMPLEXMECH_IDK_BENCHMARK_DIR}"
 
 # Run the benchmark
 echo "Running ComplexMechIDK benchmark..."
-python3 run_complexmech_idk.py \
-    --config "${CONFIG_PATH}" \
-    --checkpoint "${CHECKPOINT_PATH}" \
-    --fidelity "${FIDELITY:-high}" \
-    --output_dir "${OUTPUT_DIR}"
+
+# Build command with optional hide_fractions
+CMD="python3 run_complexmech_idk.py \
+    --config \"${CONFIG_PATH}\" \
+    --checkpoint \"${CHECKPOINT_PATH}\" \
+    --fidelity \"${FIDELITY:-high}\" \
+    --output_dir \"${OUTPUT_DIR}\""
+
+# Add hide_fractions if specified
+if [ -n "${HIDE_FRACTIONS}" ]; then
+    echo "Using hide fractions: ${HIDE_FRACTIONS}"
+    CMD="${CMD} --hide_fractions ${HIDE_FRACTIONS}"
+fi
+
+# Execute the command
+eval ${CMD}
 
 echo "Benchmark complete!"

@@ -474,8 +474,26 @@ class ComplexMechBenchmark:
         with open(load_path, 'rb') as f:
             save_data = pickle.load(f)
         
-        data = save_data['data']
-        metadata = save_data.get('metadata', {})
+        # Handle both new format (dict with 'data' key) and old format (direct list)
+        if isinstance(save_data, dict) and 'data' in save_data:
+            # New format: {'data': [...], 'metadata': {...}}
+            data = save_data['data']
+            metadata = save_data.get('metadata', {})
+        elif isinstance(save_data, list):
+            # Old format: save_data is the data list directly
+            data = save_data
+            metadata = {}
+            if self.verbose:
+                print(f"  Loaded old format (list directly)")
+            
+            # Try to extract node_count from filename
+            # Patterns: complexmech_2nodes_... or complexmech_ntest_2nodes_...
+            import re
+            match = re.search(r'_?(\d+)nodes?_', filename)
+            if match:
+                metadata['node_count'] = int(match.group(1))
+        else:
+            raise ValueError(f"Unknown data format in {load_path}. Expected dict with 'data' key or list.")
         
         if self.verbose:
             print(f"Loaded {len(data)} samples")

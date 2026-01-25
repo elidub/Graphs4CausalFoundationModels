@@ -141,15 +141,16 @@ def xlearner_psid_balanced_pipeline(model, cate_dataset):
     y_train_control = y_train_full[control_mask]
     
     # If PSID, subsample controls: keep all treated and up to 500 controls
+    control_subsample_indices = None  # Track which controls we keep
     if DATASET_NAME is not None and DATASET_NAME.upper() == 'PSID':
         n_control = X_train_control.shape[0]
         n_keep_control = min(500, n_control)
         
         if n_control > n_keep_control:
             np.random.seed(42)
-            indices = np.random.choice(n_control, n_keep_control, replace=False)
-            X_train_control = X_train_control[indices]
-            y_train_control = y_train_control[indices]
+            control_subsample_indices = np.random.choice(n_control, n_keep_control, replace=False)
+            X_train_control = X_train_control[control_subsample_indices]
+            y_train_control = y_train_control[control_subsample_indices]
             print(f"PSID sampling: kept all {X_train_treated.shape[0]} treated, sampled {n_keep_control} / {n_control} controls")
         else:
             print(f"PSID sampling: kept all {X_train_treated.shape[0]} treated and all {n_control} controls (<=500)")
@@ -222,6 +223,10 @@ def xlearner_psid_balanced_pipeline(model, cate_dataset):
     
     # For control units: D₀ = μ₁(X) - Y (imputed treated - observed)
     D0_scaled = mu1_train_scaled[control_mask] - y_train_scaled[control_mask]
+    
+    # If we subsampled controls, also subsample D0_scaled to match
+    if control_subsample_indices is not None:
+        D0_scaled = D0_scaled[control_subsample_indices]
     
     print(f"Imputed effects - D₁: mean={np.mean(D1_scaled):.4f}, std={np.std(D1_scaled):.4f}")
     print(f"Imputed effects - D₀: mean={np.mean(D0_scaled):.4f}, std={np.std(D0_scaled):.4f}")

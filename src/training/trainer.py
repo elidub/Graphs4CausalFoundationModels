@@ -1511,6 +1511,13 @@ class Trainer:
                     eff_bs = X_train.shape[0] * self.accumulate_grad_batches
                     print(f"   Step {self.global_step:4d}/{self.max_steps} | Loss: {avg_loss:.6f} | Time: {batch_times[-1]:.3f}s | Eff. batch size: {eff_bs} {lr_info} {wandb_status}")
 
+                # Periodic memory cleanup to prevent memory leaks (every 100 steps)
+                if self.global_step % 100 == 0:
+                    import gc
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+
                 # Save model checkpoint if requested
                 if self.run_save_dir and self.save_every > 0 and self.global_step % self.save_every == 0:
                     self.save_model()

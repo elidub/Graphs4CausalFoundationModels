@@ -5,7 +5,7 @@ output     = logs/xlearner_psid_balanced_$(ClusterId).$(ProcId).out
 error      = logs/xlearner_psid_balanced_$(ClusterId).$(ProcId).err
 log        = logs/xlearner_psid_balanced_$(ClusterId).$(ProcId).log
 
-transfer_input_files = /fast/arikreuter/DoPFN_v2/venv.zip, run_xlearner_psid_balanced_cluster.sh, run_baselines, src, cate_benchmark_configs, data, experiments, /fast/arikreuter/DoPFN_v2/CausalPriorFitting/src
+transfer_input_files = /fast/arikreuter/DoPFN_v2/CausalPriorFitting/src, /fast/arikreuter/DoPFN_v2/venv.zip, run_xlearner_psid_balanced_cluster.sh, run_baselines, CausalPFN, /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/basic_16691166.0.yaml, /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/step_55000.pt
 should_transfer_files = Yes
 when_to_transfer_output = ON_EXIT
 
