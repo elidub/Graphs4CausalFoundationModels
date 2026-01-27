@@ -20,7 +20,7 @@ This repository contains the code for training and evaluating causal foundation 
 
 ```bash
 # Clone the repository
-git clone https://github.com/ArikReuter/CausalPriorFitting.git
+git clone <REPO_URL>
 cd CausalPriorFitting
 
 # Install dependencies
