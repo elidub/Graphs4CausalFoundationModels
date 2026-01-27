@@ -1,6 +1,6 @@
 # Causal Foundation Models with Partial Graphs
 
-> **ICML 2026 Paper:** *"Use What You Know: Causal Foundation Models with Partial Graphs"*
+> **ICML 2026 Submission:** *"Use What You Know: Causal Foundation Models with Partial Graphs"*
 
 This repository contains the code for training and evaluating causal foundation models that leverage partial graph knowledge for causal effect estimation.
 
@@ -20,7 +20,7 @@ This repository contains the code for training and evaluating causal foundation 
 
 ```bash
 # Clone the repository
-git clone <REPO_URL>
+git clone https://anonymous.4open.science/r/Graphs4CFMs-D608
 cd CausalPriorFitting
 
 # Install dependencies
