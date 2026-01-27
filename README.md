@@ -12,9 +12,7 @@ This repository contains the code for training and evaluating causal foundation 
 - [Quick Start](#quick-start)
 - [Project Structure](#project-structure)
 - [Experiments](#experiments)
-  - [Linear-Gaussian Experiments](#linear-gaussian-experiments)
-  - [Complex Mechanism Experiments](#complex-mechanism-experiments)
-  - [Predictive Model](#predictive-model)
+- [Benchmarks](#benchmarks)
 
 ---
 
@@ -95,5 +93,19 @@ Train and evaluate a predictive model:
 ```bash
 python3 run.py --config experiments/Predictive/configs/predictive.yaml
 ```
+
+---
+
+## Benchmarks
+
+The repository includes three benchmarks for evaluating causal inference models, located in `experiments/GraphConditioning/Benchmarks/`:
+
+| Benchmark | Description | Mechanisms | Edge States |
+|-----------|-------------|------------|-------------|
+| [LinGaus](experiments/GraphConditioning/Benchmarks/LinGaus/) | Full graph knowledge | Linear | {0, 1} |
+| [ComplexMechIDK](experiments/GraphConditioning/Benchmarks/ComplexMechIDK/) | Partial graph knowledge | MLP/XGBoost | {-1, 0, 1} |
+| [ComplexMech](experiments/GraphConditioning/Benchmarks/ComplexMech/) | Sample size experiments | MLP/XGBoost | {0, 1} |
+
+See the README in each benchmark directory for detailed usage instructions.
 
 ---

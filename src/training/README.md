@@ -1,14 +1,29 @@
-This folder contains the code to actually train a model. 
+# Training Module
 
-In run.py the actual main runner file is defined. It loads a config file, sets up logging, initializes the dataset, dataloader, bar-distribution, torch model and the trainer. 
+This folder contains the code to train models.
 
-Please note that to avoid issues with multiprocessing on some servers the dataloader is initialized very early in simple_run.py. 
+## Files
 
-The trainer is implemented in trainer.py.
+| File | Description |
+|------|-------------|
+| `run.py` | Main runner that loads config, sets up logging, initializes dataset, dataloader, model, and trainer |
+| `trainer.py` | Training loop implementation |
+| `training_utils.py` | Training utilities |
+| `load_utils.py` | Model and checkpoint loading utilities |
 
-There are potentially very useful checks implemented in the checks folder:
+## Usage
 
-- inspect_dataloader_samples.py: Visualizes samples from the dataloader together with a bunch of statistics. You might want to change the CONFIG_PATH argument to point to your config file. The results are saved in the checks/ResultsDataloaderSamples folder in a specific run folder. 
+```bash
+python run.py --config path/to/config.yaml
+```
 
+## Checks
 
-- test_run.py: Runs the entire trainig pipeline for a few iterations on CPU to check that everything works. You might want to change the CONFIG_PATH argument to point to your config file. You might want to carefully check the output on the console to see if training worked, i.e. the loss decreases a little bit.
+The `checks/` folder contains useful debugging tools:
+
+| Script | Description |
+|--------|-------------|
+| `inspect_dataloader_samples.py` | Visualizes samples from the dataloader with statistics |
+| `inspect_dataloader_sampels_curriculum.py` | Curriculum learning inspection |
+| `inspect_real_world_samples.py` | Real-world data sample inspection |
+| `test_run.py` | Runs training for a few iterations on CPU to verify setup |

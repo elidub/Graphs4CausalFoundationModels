@@ -1,9 +1,35 @@
-This folder contains code to set up a dataset that sampels from the SCM. 
+# Prior Data Processing
 
-The core functionality is in Datasets/ObservationalDataset.py
+This folder contains code to set up datasets that sample from structural causal models (SCMs).
 
-An ObservationalDataset is a class that takes as input an SCM config, a Preprocessing config and a dataset config. 
+## Datasets
 
-- The SCM config determines hyperparameter distributions for the SCM. 
-- The dataset config determines how the datasets are generated from the SCM, i.e. how many samples to draw, with what probability to drop features and how to select the target. 
-- The preprocessing config specifies standard preprocessing things for tabular data. 
+| Dataset | Description |
+|---------|-------------|
+| `ObservationalDataset.py` | Samples observational data from SCMs |
+| `InterventionalDataset.py` | Samples interventional data with do-calculus |
+| `InterpolatedObservationalDataset.py` | Interpolated observational sampling |
+| `Collator.py` | Batch collation utilities |
+
+## Configuration
+
+Each dataset takes three types of configs:
+
+- **SCM config**: Determines hyperparameter distributions for the SCM
+- **Dataset config**: Determines how datasets are generated (sample count, feature dropping, target selection)
+- **Preprocessing config**: Standard preprocessing for tabular data
+
+## Usage
+
+```python
+from priordata_processing.Datasets.InterventionalDataset import InterventionalDataset
+
+dataset = InterventionalDataset(
+    scm_config=scm_config,
+    dataset_config=dataset_config,
+    preprocessing_config=preprocessing_config
+)
+
+# Sample a batch
+batch = dataset[0]
+``` 

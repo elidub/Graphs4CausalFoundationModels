@@ -1,3 +1,20 @@
-This folder contains the implementation of the loss functions arising from the parametrization of the posterior predictive for DoPFN. For now, this includes the histogram-loss from TabPFN.
+# Losses
 
-The class PosteriorPredictive contains an interface for all parametrizations of the posterior predictive distribution (PPD). The BarDistribution implements the concrete histogram-parametrization of the PPD from TabPFN.
+This folder contains loss function implementations for the posterior predictive distribution.
+
+## Files
+
+| File | Description |
+|------|-------------|
+| `PosteriorPredictive.py` | Interface for parametrizations of the posterior predictive distribution (PPD) |
+| `BarDistribution.py` | Histogram-based parametrization of the PPD (from TabPFN) |
+| `test_BarDistribution.py` | Unit tests for BarDistribution |
+
+## Usage
+
+```python
+from Losses.BarDistribution import BarDistribution
+
+bar_dist = BarDistribution(num_bars=100, min_val=-10, max_val=10)
+loss = bar_dist.compute_loss(predictions, targets)
+```
