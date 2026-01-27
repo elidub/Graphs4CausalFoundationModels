@@ -84,7 +84,7 @@ def run_single_config(node_count, variant, sample_size, args, max_retries=25):
     print("=" * 80)
     
     # Retry loop for this specific config
-    python_executable = "/Users/arikreuter/miniforge/envs/fastpy/bin/python"
+    python_executable = "python"
     script_name = "generate_all_variants_data.py"
     
     for retry in range(1, max_retries + 1):

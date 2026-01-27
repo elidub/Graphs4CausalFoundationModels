@@ -2,14 +2,14 @@
 """Test the fixed load_data method."""
 
 import sys
-sys.path.insert(0, '/fast/arikreuter/DoPFN_v2/CausalPriorFitting')
+sys.path.insert(0, '<REPO_ROOT>')
 
 from experiments.GraphConditioning.Benchmarks.ComplexMechNTest.ComplexMechBenchmarkNTest import ComplexMechBenchmarkNTest
 
 # Initialize benchmark
 benchmark = ComplexMechBenchmarkNTest(
-    benchmark_dir="/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest",
-    cache_dir="/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/data_cache/data_cache",
+    benchmark_dir="<REPO_ROOT>/experiments/GraphConditioning/Benchmarks/ComplexMechNTest",
+    cache_dir="<REPO_ROOT>/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/data_cache/data_cache",
     verbose=True
 )
 

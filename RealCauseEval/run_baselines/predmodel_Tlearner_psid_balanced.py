@@ -17,8 +17,8 @@ import torch
 import yaml
 
 # Add paths
-sys.path.insert(0, '/fast/arikreuter/DoPFN_v2/CausalPriorFitting')
-sys.path.insert(0, '/fast/arikreuter/DoPFN_v2/CausalPriorFitting/RealCauseEval')
+sys.path.insert(0, '<REPO_ROOT>')
+sys.path.insert(0, '<REPO_ROOT>/RealCauseEval')
 
 from src.models.SimplePFN_sklearn import SimplePFNSklearn
 from run_baselines.eval import evaluate_pipeline
@@ -72,7 +72,7 @@ def tlearner_psid_balanced_pipeline(model, cate_dataset):
     # Load preprocessing config if not already loaded
     if MODEL_CONFIG is None:
         preprocessing_config, dataset_config = load_preprocessing_config(
-            "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/basic_16691166.0.yaml"
+            "<REPO_ROOT>/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/basic_16691166.0.yaml"
         )
         MODEL_CONFIG = {
             'preprocessing': preprocessing_config,
@@ -204,8 +204,8 @@ if __name__ == '__main__':
 
     print(f"Starting T-learner PSID-balanced: dataset={DATASET_NAME}")
 
-    checkpoint_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/step_55000.pt"
-    model_config_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/basic_16691166.0.yaml"
+    checkpoint_path = "<REPO_ROOT>/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/step_55000.pt"
+    model_config_path = "<REPO_ROOT>/experiments/FirstTests/checkpoints/simple_pfn_16691166.0_tabpfn_benchmark/basic_16691166.0.yaml"
 
     simple_pfn = SimplePFNSklearn(
         config_path=model_config_path,

@@ -97,7 +97,7 @@ class ComplexMechBenchmarkNTest:
     
     def __init__(
         self,
-        benchmark_dir: str = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest",
+        benchmark_dir: str = "<REPO_ROOT>/experiments/GraphConditioning/Benchmarks/ComplexMechNTest",
         cache_dir: Optional[str] = None,
         verbose: bool = True,
         max_samples: Optional[int] = None,
@@ -1694,8 +1694,8 @@ if __name__ == "__main__":
     print(f"  Max samples per dataset: {MAX_SAMPLES}")
     print("="*80)
     
-    config_path_gc = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/lingaus_50node_benchmarked_baseline_16694707.0/best_model_config.yaml"
-    checkpoint_path_gc = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/lingaus_50node_benchmarked_baseline_16694707.0/best_model.pt"
+    config_path_gc = "<REPO_ROOT>/experiments/FirstTests/checkpoints/lingaus_50node_benchmarked_baseline_16694707.0/best_model_config.yaml"
+    checkpoint_path_gc = "<REPO_ROOT>/experiments/FirstTests/checkpoints/lingaus_50node_benchmarked_baseline_16694707.0/best_model.pt"
     
     try:
         # Load model first

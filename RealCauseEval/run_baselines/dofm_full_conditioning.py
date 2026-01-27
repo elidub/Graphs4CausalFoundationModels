@@ -17,8 +17,8 @@ import sys
 import numpy as np
 
 # Add paths
-sys.path.insert(0, '/fast/arikreuter/DoPFN_v2/CausalPriorFitting')
-sys.path.insert(0, '/fast/arikreuter/DoPFN_v2/CausalPriorFitting/RealCauseEval')
+sys.path.insert(0, '<REPO_ROOT>')
+sys.path.insert(0, '<REPO_ROOT>/RealCauseEval')
 
 from src.models.PreprocessingGraphConditionedPFN import PreprocessingGraphConditionedPFN
 from run_baselines.eval import evaluate_pipeline
@@ -157,12 +157,12 @@ if __name__ == "__main__":
         graph_mode = "full_graph"
 
     if args.checkpoint_path is None:
-        checkpoint_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist.pt"
+        checkpoint_path = "<REPO_ROOT>/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist.pt"
     else:
         checkpoint_path = args.checkpoint_path
         
     if args.config_path is None:
-        model_config_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist_config.yaml"
+        model_config_path = "<REPO_ROOT>/experiments/FirstTests/checkpoints/final_earlytest_full_conditioning_16773252.0/final_model_with_bardist_config.yaml"
     else:
         model_config_path = args.config_path
     

@@ -1274,8 +1274,8 @@ if __name__ == "__main__":
     print("="*80)
     
     # Create dummy config and checkpoint paths (adjust to your actual paths)
-    cfg_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/configs/early_test.yaml"
-    ckpt_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/early_test1_32bs/step_100000.pt"
+    cfg_path = "<REPO_ROOT>/experiments/FirstTests/configs/early_test.yaml"
+    ckpt_path = "<REPO_ROOT>/experiments/FirstTests/checkpoints/early_test1_32bs/step_100000.pt"
     
     # Create wrapper
     wrapper = InterventionalPFNSklearn(

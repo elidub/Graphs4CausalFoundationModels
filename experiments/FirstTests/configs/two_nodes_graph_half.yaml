@@ -432,7 +432,7 @@ training_config:
 
   # Checkpointing
   checkpoint_dir:
-    value: "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints"
+    value: "<REPO_ROOT>/experiments/FirstTests/checkpoints"
   save_every: # save a checkpoint every n steps
     value: 1000
 

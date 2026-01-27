@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 # Test loading one of the data files that FAILED (ntest500)
-data_file = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/data_cache/data_cache/complexmech_2nodes_path_TY_ntest500_1000samples_seed42.pkl"
+data_file = "<REPO_ROOT>/experiments/GraphConditioning/Benchmarks/ComplexMechNTest/data_cache/data_cache/complexmech_2nodes_path_TY_ntest500_1000samples_seed42.pkl"
 
 print(f"Loading: {data_file}")
 print("=" * 80)

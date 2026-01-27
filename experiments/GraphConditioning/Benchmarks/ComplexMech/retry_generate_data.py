@@ -15,7 +15,7 @@ def run_with_retry(script_args, max_attempts=25):
     """Run the data generation script with automatic retries."""
     
     script_name = "generate_all_variants_data.py"
-    python_executable = "/Users/arikreuter/miniforge/envs/fastpy/bin/python"
+    python_executable = "python"
     
     print("=" * 60)
     print("Auto-Retry Wrapper for ComplexMech Data Generation")

@@ -1091,8 +1091,8 @@ if __name__ == "__main__":
     print("="*80)
     
     # Example usage (requires actual config and checkpoint)
-    config_path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist_config.yaml"
-    checkpoint_path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist.pt"
+    config_path = "<REPO_ROOT>/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist_config.yaml"
+    checkpoint_path = "<REPO_ROOT>/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist.pt"
     
     import os
     if os.path.exists(config_path) and os.path.exists(checkpoint_path):

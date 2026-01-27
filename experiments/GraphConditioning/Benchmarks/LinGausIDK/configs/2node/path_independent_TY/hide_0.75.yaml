@@ -344,7 +344,7 @@ training_config:
   min_lr_ratio:
     value: 0.1
   checkpoint_dir:
-    value: /fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/LinGausIDK/checkpoints
+    value: <REPO_ROOT>/experiments/GraphConditioning/Benchmarks/LinGausIDK/checkpoints
   save_every:
     value: 1000
   device:

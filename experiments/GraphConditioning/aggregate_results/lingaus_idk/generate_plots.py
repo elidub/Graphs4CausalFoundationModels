@@ -18,7 +18,7 @@ from datetime import datetime
 from scipy import stats
 
 # Configuration
-checkpoint_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints"
+checkpoint_path = "<REPO_ROOT>/experiments/FirstTests/checkpoints"
 checkpoint_base = Path(checkpoint_path)
 
 # Create timestamped output directory

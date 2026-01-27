@@ -7,8 +7,8 @@ import os
 import yaml
 
 # Add paths
-sys.path.insert(0, '/Users/arikreuter/Documents/PhD/CausalPriorFitting')
-sys.path.insert(0, '/Users/arikreuter/Documents/PhD/CausalPriorFitting/RealCauseEval')
+sys.path.insert(0, '<REPO_ROOT>')
+sys.path.insert(0, '<REPO_ROOT>/RealCauseEval')
 
 from src.models.GraphConditionedInterventionalPFN_sklearn import GraphConditionedInterventionalPFNSklearn
 from run_baselines.eval import evaluate_pipeline
@@ -65,7 +65,7 @@ def dofm_variable_conditioning_pipeline(model, cate_dataset):
     # Load preprocessing config if not already loaded
     if MODEL_CONFIG is None:
         preprocessing_config, dataset_config = load_preprocessing_config(
-            "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_variable_conditioning_16773251.0/final_model_with_bardist_config.yaml"
+            "<REPO_ROOT>/experiments/FirstTests/checkpoints/final_earlytest_variable_conditioning_16773251.0/final_model_with_bardist_config.yaml"
         )
         MODEL_CONFIG = {
             'preprocessing': preprocessing_config,
@@ -326,8 +326,8 @@ if __name__ == "__main__":
     MASK_TEST_FEATURES = args.mask_test_features
 
     # Variable conditioning model checkpoint (trained with test_feature_mask_fraction ~ Uniform(0,1))
-    checkpoint_path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_variable_conditioning_16773251.0/final_model_with_bardist.pt"
-    model_config_path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_variable_conditioning_16773251.0/final_model_with_bardist_config.yaml"
+    checkpoint_path = "<REPO_ROOT>/experiments/FirstTests/checkpoints/final_earlytest_variable_conditioning_16773251.0/final_model_with_bardist.pt"
+    model_config_path = "<REPO_ROOT>/experiments/FirstTests/checkpoints/final_earlytest_variable_conditioning_16773251.0/final_model_with_bardist_config.yaml"
     
     mode_str = "MASKED (no conditioning)" if MASK_TEST_FEATURES else "VISIBLE (full conditioning)"
     print(f"Loading variable conditioning model from: {checkpoint_path}")

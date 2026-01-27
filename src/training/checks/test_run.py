@@ -55,12 +55,12 @@ def load_and_modify_existing_config(config_path):
     # Configure LinGaus benchmark (disabled for quick test)
     config['training_config']['lingaus_benchmark_eval_fidelity'] = {'value': None}
     config['training_config']['lingaus_benchmark_final_fidelity'] = {'value': None}
-    config['training_config']['lingaus_benchmark_dir'] = {'value': "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/LinGausIDK/"}
+    config['training_config']['lingaus_benchmark_dir'] = {'value': "<REPO_ROOT>/experiments/GraphConditioning/Benchmarks/LinGausIDK/"}
     
     # Configure ComplexMech benchmark (enabled for testing)
     config['training_config']['complexmech_benchmark_eval_fidelity'] = {'value': "minimal"}
     config['training_config']['complexmech_benchmark_final_fidelity'] = {'value': "minimal"}
-    config['training_config']['complexmech_benchmark_dir'] = {'value': "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMech/"}
+    config['training_config']['complexmech_benchmark_dir'] = {'value': "<REPO_ROOT>/experiments/GraphConditioning/Benchmarks/ComplexMech/"}
     
     # Reduce dataset size for speed
     #if 'dataset_config' in config:
@@ -128,7 +128,7 @@ def run_simple_run_test(config_path):
 
 def main():
     
-    path = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMech2/config/config.yaml"
+    path = "<REPO_ROOT>/experiments/GraphConditioning/Benchmarks/ComplexMech2/config/config.yaml"
     CONFIG_PATH = Path(path)
     
     """Main test function."""

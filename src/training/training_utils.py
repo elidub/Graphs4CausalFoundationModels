@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 # Default config path
-DEFAULT_CONFIG_PATH = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/configs/early_test.yaml"
+DEFAULT_CONFIG_PATH = "<REPO_ROOT>/experiments/FirstTests/configs/early_test.yaml"
 
 
 def load_yaml_config(config_path: str = None):

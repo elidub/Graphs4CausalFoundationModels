@@ -440,7 +440,7 @@ training_config:
 
   # Checkpointing
   checkpoint_dir:
-    value: "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints"
+    value: "<REPO_ROOT>/experiments/FirstTests/checkpoints"
   save_every: # save a checkpoint every n steps
     value: 5000
 
@@ -518,4 +518,4 @@ training_config:
   lingaus_benchmark_final_fidelity: # run LinGaus benchmark at end of training
     value: "high"  # Options: null (disabled), "low" (100 samples), "high" (1000 samples)
   lingaus_benchmark_dir: # directory containing LinGaus benchmark configs and data
-    value: "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints"  # Results saved to <this_dir>/benchmark_res/
+    value: "<REPO_ROOT>/experiments/FirstTests/checkpoints"  # Results saved to <this_dir>/benchmark_res/

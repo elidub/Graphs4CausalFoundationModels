@@ -12,7 +12,7 @@ This directory contains scripts for running the DOFM baseline evaluation on HTCo
 
 ### Submit all datasets (ACIC, IHDP, CPS, PSID)
 ```bash
-cd /fast/arikreuter/DoPFN_v2/CausalPriorFitting/RealCauseEval
+cd <REPO_ROOT>/RealCauseEval
 condor_submit submit_dofm.sub
 ```
 
@@ -39,7 +39,7 @@ Logs are saved in the `logs/` directory with format:
 ### Check results
 Results are saved in:
 ```
-/fast/arikreuter/DoPFN_v2/CausalPriorFitting/RealCauseEval/results/<exp_name>/
+<REPO_ROOT>/RealCauseEval/results/<exp_name>/
 ```
 
 Each result file contains:
@@ -56,7 +56,7 @@ The submission file uses:
 - Model: `final_earlytest_16773250.0` (DOFM model)
 - Checkpoint: `final_model_with_bardist.pt`
 - Resources: 1 GPU, 64GB RAM, 8 CPUs, 32GB disk
-- Virtual environment: `/fast/arikreuter/DoPFN_v2/venv.zip`
+- Virtual environment: `<VENV_PATH>`
 
 ## Notes
 

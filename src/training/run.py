@@ -1439,12 +1439,12 @@ def main():
             if use_partial_graph_format:
                 lingaus_benchmark_dir = training_config.get(
                     "lingaus_benchmark_dir",
-                    "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/LinGausIDK"
+                    "<REPO_ROOT>/experiments/GraphConditioning/Benchmarks/LinGausIDK"
                 )
             else:
                 lingaus_benchmark_dir = training_config.get(
                     "lingaus_benchmark_dir",
-                    "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/LinGaus"
+                    "<REPO_ROOT>/experiments/GraphConditioning/Benchmarks/LinGaus"
                 )
             
             # Check if LINGAUS_BENCHMARK_DIR is set in environment (for cluster jobs)
@@ -1542,7 +1542,7 @@ def main():
             # Get benchmark directory from config or environment variable
             complexmech_benchmark_dir = training_config.get(
                 "complexmech_benchmark_dir",
-                "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/GraphConditioning/Benchmarks/ComplexMech"
+                "<REPO_ROOT>/experiments/GraphConditioning/Benchmarks/ComplexMech"
             )
             
             # Check if COMPLEXMECH_BENCHMARK_DIR is set in environment (for cluster jobs)

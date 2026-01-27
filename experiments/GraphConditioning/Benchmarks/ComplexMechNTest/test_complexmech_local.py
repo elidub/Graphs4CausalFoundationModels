@@ -9,7 +9,7 @@ import os
 
 # Add paths
 benchmark_dir = os.path.dirname(os.path.abspath(__file__))
-causal_prior_dir = '/fast/arikreuter/DoPFN_v2/CausalPriorFitting'
+causal_prior_dir = '<REPO_ROOT>'
 
 sys.path.insert(0, benchmark_dir)
 sys.path.insert(0, causal_prior_dir)

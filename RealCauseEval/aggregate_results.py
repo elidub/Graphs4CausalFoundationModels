@@ -16,7 +16,7 @@ import numpy as np
 from scipy import stats
 
 # Configuration
-RESULTS_DIR = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/RealCauseEval/results"
+RESULTS_DIR = "<REPO_ROOT>/RealCauseEval/results"
 DATASETS = ["IHDP", "ACIC", "CPS", "PSID"]
 METRICS = ["pehe", "ate_rel_err"]
 

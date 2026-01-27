@@ -23,13 +23,13 @@ parser = argparse.ArgumentParser(
 parser.add_argument(
     "--config_path",
     type=str,
-    default="/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist_config.yaml",
+    default="<REPO_ROOT>/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist_config.yaml",
     help="Path to model configuration YAML file"
 )
 parser.add_argument(
     "--checkpoint_path",
     type=str,
-    default="/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist.pt",
+    default="<REPO_ROOT>/experiments/FirstTests/checkpoints/final_earlytest_16773250.0/final_model_with_bardist.pt",
     help="Path to model checkpoint file"
 )
 parser.add_argument(

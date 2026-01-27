@@ -180,9 +180,9 @@ if __name__ == "__main__":
     MAX_TASKS = 20
     DATA_DIR = str(repo_root / "data_cache")  # Use absolute path to data_cache
     CONFIG = str(repo_root / "experiments/FirstTests/configs/basic.yaml")
-    CHECKPOINT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/experiments/FirstTests/checkpoints/simple_pfn_16661592.0/step_15000_obs.pt"  # Leave empty to auto-detect or skip PFN
+    CHECKPOINT = "<REPO_ROOT>/experiments/FirstTests/checkpoints/simple_pfn_16661592.0/step_15000_obs.pt"  # Leave empty to auto-detect or skip PFN
     DEVICE = "cpu"
-    OUTPUT = "/Users/arikreuter/Documents/PhD/CausalPriorFitting/src/benchmarking/results/benchmark_results.csv"  # Process ID will be automatically added: benchmark_results_pid12345.csv
+    OUTPUT = "<REPO_ROOT>/src/benchmarking/results/benchmark_results.csv"  # Process ID will be automatically added: benchmark_results_pid12345.csv
     NO_TARGET_ENCODING = True
     QUIET = False
 

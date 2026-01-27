@@ -1788,10 +1788,10 @@ class SimplePFNSklearn:
 if __name__ == "__main__":
     # Run a small end-to-end inference test using the project config and checkpoint
     import sys
-    sys.path.append("/fast/arikreuter/DoPFN_v2/CausalPriorFitting")
+    sys.path.append("<REPO_ROOT>")
 
-    cfg_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/configs/early_test.yaml"
-    ckpt_path = "/fast/arikreuter/DoPFN_v2/CausalPriorFitting/experiments/FirstTests/checkpoints/early_test1_32bs/step_100000.pt"
+    cfg_path = "<REPO_ROOT>/experiments/FirstTests/configs/early_test.yaml"
+    ckpt_path = "<REPO_ROOT>/experiments/FirstTests/checkpoints/early_test1_32bs/step_100000.pt"
 
     print("\n" + "="*80)
     print("TEST 1: Single Model (no ensemble)")
