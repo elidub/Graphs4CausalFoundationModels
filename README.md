@@ -1,16 +1,99 @@
-Welcome to the repository for our ICML paper "Use what you know: Causal Foundation Models with Partial Graphs"
+# Causal Foundation Models with Partial Graphs
 
-In general, experiments with corresponding configs can be run via: 
+> **ICML 2026 Paper:** *"Use What You Know: Causal Foundation Models with Partial Graphs"*
 
-python3 run.py --config "path/to/config"
+This repository contains the code for training and evaluating causal foundation models that leverage partial graph knowledge for causal effect estimation.
 
-The configs for the linear-Gaussain experimetns are in: 
+---
 
-- /experiments/GraphConditioning/configs_50node
-- experiments/GraphConditioning/configs_50node_ancestor
-- experiments/GraphConditioning/configs_50node_idk
+## Table of Contents
 
-To train an evaluate a predictive model, use /experiments/Predictive/configs/predictive.yaml
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Project Structure](#project-structure)
+- [Experiments](#experiments)
+  - [Linear-Gaussian Experiments](#linear-gaussian-experiments)
+  - [Complex Mechanism Experiments](#complex-mechanism-experiments)
+  - [Predictive Model](#predictive-model)
 
+---
 
-The configs to train the models for the complexmech experiments are in: experiments/complexmech/configs
+## Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/ArikReuter/CausalPriorFitting.git
+cd CausalPriorFitting
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+---
+
+## Quick Start
+
+All experiments can be run using a unified interface:
+
+```bash
+python3 run.py --config "path/to/config.yaml"
+```
+
+---
+
+## Project Structure
+
+```
+CausalPriorFitting/
+├── src/                          # Source code
+│   ├── models/                   # Model architectures
+│   ├── priors/                   # Causal prior definitions
+│   ├── priordata_processing/     # Data processing utilities
+│   ├── training/                 # Training loops and utilities
+│   ├── benchmarking/             # Evaluation and benchmarking
+│   ├── Losses/                   # Loss functions
+│   └── utils/                    # General utilities
+├── experiments/                  # Experiment configurations
+│   ├── GraphConditioning/        # Linear-Gaussian experiments
+│   ├── complexmech/              # Complex mechanism experiments
+│   └── Predictive/               # Predictive model experiments
+├── RealCauseEval/                # Real-world causal evaluation
+└── requirements.txt              # Python dependencies
+```
+
+---
+
+## Experiments
+
+### Linear-Gaussian Experiments
+
+Experiments on linear-Gaussian structural causal models with varying graph knowledge:
+
+| Experiment | Config Directory |
+|------------|------------------|
+| 50-node graphs | `experiments/GraphConditioning/configs_50node` |
+| 50-node with ancestor info | `experiments/GraphConditioning/configs_50node_ancestor` |
+| 50-node with IDK (partial knowledge) | `experiments/GraphConditioning/configs_50node_idk` |
+
+**Example:**
+```bash
+python3 run.py --config experiments/GraphConditioning/configs_50node/your_config.yaml
+```
+
+### Complex Mechanism Experiments
+
+Experiments with non-linear causal mechanisms:
+
+```bash
+python3 run.py --config experiments/complexmech/configs/your_config.yaml
+```
+
+### Predictive Model
+
+Train and evaluate a predictive model:
+
+```bash
+python3 run.py --config experiments/Predictive/configs/predictive.yaml
+```
+
+---

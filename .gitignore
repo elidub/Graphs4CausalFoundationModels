@@ -12,6 +12,7 @@ src/CausalPriorFitting.egg-info/top_level.txt
 *.out
 __pycache__
 
+
 src/training/checks/Results/
 src/training/checks/Results/**
 src/training/checks/ResultsDataloaderSamples
