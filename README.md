@@ -65,7 +65,7 @@ This repository contains the code for a natively causal prior that yields a tabu
 
 This prior directly supports sampling of observational data, interventional data, as well as the corresponding SCM. 
 
-![Model Performance Comparison (MSE)](assets/predictive_performance.png)
+![Model Performance Comparison (MSE)](img/model_comparison_mse.png)
 
 On datasets up to 1000 samples, a predictive model trained on this prior achieves competitive performance with untuned tabular baselines. 
 
