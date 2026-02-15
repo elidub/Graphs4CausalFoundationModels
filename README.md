@@ -18,8 +18,8 @@ This repository contains the code for training and evaluating causal foundation 
 
 ```bash
 # Clone the repository
-git clone https://anonymous.4open.science/r/Graphs4CFMs-D608
-cd CausalPriorFitting
+git clone https://github.com/ArikReuter/Graphs4CausalFoundationModels.git
+cd Graphs4CausalFoundationModels
 
 # Install dependencies
 pip install -r requirements.txt
