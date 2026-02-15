@@ -1,7 +1,5 @@
 # Causal Foundation Models with Partial Graphs
 
-> **ICML 2026 Submission:** *"Use What You Know: Causal Foundation Models with Partial Graphs"*
-
 This repository contains the code for training and evaluating causal foundation models that leverage partial graph knowledge for causal effect estimation.
 
 ---
@@ -60,6 +58,60 @@ CausalPriorFitting/
 ```
 
 ---
+
+## Prior
+
+This repository contains the code for a natively causal prior that yields a tabular foundation model with competitive predictive performance on small datasets. 
+
+This prior directly supports sampling of observational data, interventional data, as well as the corresponding SCM. 
+
+![Model Performance Comparison (MSE)](assets/predictive_performance.png)
+
+On datasets up to 1000 samples, a predictive model trained on this prior achieves competitive performance with untuned tabular baselines. 
+
+Please see the README in `src/prior` for more details on the prior.
+
+## Model
+
+### Checkpoints
+
+Pre-trained model checkpoints are available in `experiments/checkpoints/`:
+
+This includes (a) a model trained in the linear-Gaussian case (`lingaus/`) to predict $p(y \mid \text{do}(t), D)$, where $y$ is an outcome, $t$ a treatment, and $D$ an observational dataset, (b) a model to predict $p(y \mid \text{do}(t), D)$ trained on complex mechanisms (`model/`), as well as (c) a model to predict the conditional interventional distribution $p(y \mid \text{do}(t), x, D)$ (`full_conditioned_model/`).
+
+### Inference with the Sklearn-like Wrapper
+
+The `GraphConditionedInterventionalPFNSklearn` wrapper provides a simple interface for inference:
+
+```python
+from src.models.GraphConditionedInterventionalPFN_sklearn import GraphConditionedInterventionalPFNSklearn
+
+# Load model
+wrapper = GraphConditionedInterventionalPFNSklearn(
+    config_path="experiments/checkpoints/full_conditioned_model/config.yaml",
+    checkpoint_path="experiments/checkpoints/full_conditioned_model/model.pt",
+)
+wrapper.load()
+
+# Predict interventional outcomes
+# adjacency_matrix shape: (L+2, L+2) with ordering [T, Y, X_0, ..., X_{L-1}]
+# A[i,j] = 1 means directed edge i → j
+preds = wrapper.predict(
+    X_obs, T_obs, Y_obs,     # Observational data
+    X_intv, T_intv,           # Interventional query
+    adjacency_matrix,         # Causal graph structure
+    prediction_type="mean",   # "mode", "mean", or "sample"
+)
+
+# Compute log-likelihood of interventional outcomes
+log_probs = wrapper.predict_log_likelihood(
+    X_obs, T_obs, Y_obs,
+    X_intv, T_intv, Y_intv,
+    adjacency_matrix,
+)
+```
+
+The wrapper auto-detects the model architecture from the config and automatically selects GPU if available. See the docstring of `GraphConditionedInterventionalPFNSklearn` for the full adjacency matrix format specification.
 
 ## Experiments
 
