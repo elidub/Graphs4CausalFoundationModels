@@ -27,16 +27,6 @@ pip install -r requirements.txt
 
 ---
 
-## Quick Start
-
-All experiments can be run using a unified interface:
-
-```bash
-python3 run.py --config "path/to/config.yaml"
-```
-
----
-
 ## Project Structure
 
 ```
@@ -113,7 +103,68 @@ log_probs = wrapper.predict_log_likelihood(
 
 The wrapper auto-detects the model architecture from the config and automatically selects GPU if available. See the docstring of `GraphConditionedInterventionalPFNSklearn` for the full adjacency matrix format specification.
 
+## Model Architecture
+
+The architecture for the model that conditions on partial (ancestral) information can be found in `src/models/PartialGraphConditionedInterventionalPFN.py`.
+
+The model is a Prior-Data Fitted Network (PFN) that takes as input an observational dataset $D$, an interventional query $(x, t)$, and a (partial) causal graph, and outputs a predictive distribution over the interventional outcome $y$.
+
+### Graph Conditioning Mechanisms
+
+The model supports three complementary ways to condition on partial graph knowledge, which can be combined flexibly:
+
+1. **Soft Attention Bias** — Learnable per-head biases are added to the feature-wise attention logits based on the edge state:
+   - Edge exists ($A_{ij} = 1$): a positive bias $b_{\text{edge}}$ is added
+   - No edge ($A_{ij} = -1$): a negative bias $b_{\text{no\_edge}}$ is subtracted
+   - Unknown ($A_{ij} = 0$): no bias applied
+
+   This allows the model to softly encourage or discourage attention between features based on the known graph structure, while remaining flexible for uncertain edges.
+
+2. **GCN Graph Encoder** — A GCN-style message-passing encoder processes the partial adjacency matrix to produce per-node graph embeddings. Unknown edges receive a learnable weight $\alpha \in (0, 1)$, allowing the model to adaptively propagate information through uncertain connections:
+$$M = \mathbf{1}[A = 1] + \alpha \cdot \mathbf{1}[A = 0], \quad M[A = -1] = 0$$
+   The message matrix $M$ is symmetrically normalized ($D^{-1/2} M D^{-1/2}$) with self-loops added before message passing.
+
+3. **Adaptive Layer Normalization (AdaLN)** — The graph embeddings from the GCN encoder are used to predict per-feature scale and shift parameters for layer normalization, allowing different features to be normalized differently based on their position in the causal graph.
+
+### Partial Graph Format
+
+The adjacency matrix uses a ternary encoding to represent partial causal knowledge:
+
+| Value | Meaning |
+|-------|---------|
+| $1$   | Edge exists ($i \to j$) |
+| $0$   | Unknown (edge status uncertain) |
+| $-1$  | No edge ($i \not\to j$) |
+
+This supports any level of graph knowledge — from fully known ($\{-1, 1\}$) to fully unknown (all $0$s) — within a single model.
+
+### Two-Way Attention
+
+Each transformer block performs two types of attention:
+- **Feature attention**: Attends across features (columns) within each sample, conditioned on the causal graph via masking, soft biases, and/or AdaLN.
+- **Sample attention**: Attends across samples (rows) within each feature. Train samples use self-attention, while test samples use cross-attention to the train set.
+
+Additional architecture details include SwiGLU activations, pre-layer normalization, and optional attention sinks for stability.
+
+### Other Model Variants
+
+The repository also includes several other model variants in `src/models/`:
+
+| Model | File | Description |
+|-------|------|-------------|
+| `GraphConditionedInterventionalPFN` | `GraphConditionedInterventionalPFN.py` | Hard attention masking only (binary graphs) |
+| `UltimateGraphConditionedInterventionalPFN` | `UltimateGraphConditionedInterventionalPFN.py` | Flexible graph conditioning (GCN, AdaLN, soft attention) for binary graphs |
+| `FlatGraphConditionedInterventionalPFN` | `FlatGraphConditionedInterventionalPFN.py` | Flat adjacency matrix appended to input |
+| `InterventionalPFN` | `InterventionalPFN.py` | Base model without graph conditioning |
+
 ## Experiments
+
+
+All experiments can be run using a unified interface:
+
+```bash
+python3 run.py --config "path/to/config.yaml"
+```
 
 ### Linear-Gaussian Experiments
 
