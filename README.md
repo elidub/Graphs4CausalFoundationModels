@@ -67,7 +67,7 @@ Please see the README in `src/prior` for more details on the prior.
 
 Pre-trained model checkpoints are available in `experiments/checkpoints/`:
 
-This includes (a) a model trained in the linear-Gaussian case (`lingaus/`) to predict $p(y \mid \text{do}(t), D)$, where $y$ is an outcome, $t$ a treatment, and $D$ an observational dataset, (b) a model to predict $p(y \mid \text{do}(t), D)$ trained on complex mechanisms (`model/`), as well as (c) a model to predict the conditional interventional distribution $p(y \mid \text{do}(t), x, D)$ (`full_conditioned_model/`).
+This includes (a) a model trained in the linear-Gaussian case (`lingaus/`) to predict $p(y \mid \text{do}(t), D)$ , where $y$ is an outcome, $t$ a treatment, and $D$ an observational dataset, (b) a model to predict $p(y \mid \text{do}(t), D)$ trained on complex mechanisms (`model/`), as well as (c) a model to predict the conditional interventional distribution $p(y \mid \text{do}(t), x, D)$ (`full_conditioned_model/`).
 
 ### Inference with the Sklearn-like Wrapper
 
@@ -114,9 +114,9 @@ The model is a Prior-Data Fitted Network (PFN) that takes as input an observatio
 The model supports three complementary ways to condition on partial graph knowledge, which can be combined flexibly:
 
 1. **Soft Attention Bias** — Learnable per-head biases are added to the feature-wise attention logits based on the edge state:
-   - Edge exists ($A_{ij} = 1$): a positive bias $b_{\text{edge}}$ is added
-   - No edge ($A_{ij} = -1$): a negative bias $b_{\text{no\_edge}}$ is subtracted
-   - Unknown ($A_{ij} = 0$): no bias applied
+   - Edge exists ( $A_{ij} = 1$ ): a positive bias $b_\text{edge}$ is added
+   - No edge ( $A_{ij} = -1$ ): a negative bias $b_\text{no-edge}$ is subtracted
+   - Unknown ( $A_{ij} = 0$ ): no bias applied
 
    This allows the model to softly encourage or discourage attention between features based on the known graph structure, while remaining flexible for uncertain edges.
 
@@ -132,9 +132,9 @@ The adjacency matrix uses a ternary encoding to represent partial causal knowled
 
 | Value | Meaning |
 |-------|---------|
-| $1$   | Edge exists ($i \to j$) |
+| $1$   | Edge exists ( $i \to j$ ) |
 | $0$   | Unknown (edge status uncertain) |
-| $-1$  | No edge ($i \not\to j$) |
+| $-1$  | No edge ( $i \nrightarrow j$ ) |
 
 This supports any level of graph knowledge — from fully known ($\{-1, 1\}$) to fully unknown (all $0$s) — within a single model.
 
