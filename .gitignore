@@ -101,3 +101,4 @@ experiments/GraphConditioning/aggregate_results/complexmech_idk_ntest/plots/
 PlantEval/CID_10_ints_10_reals_four_std_uniform.pkl
 experiments/GraphConditioning/Benchmarks/ComplexMechNTest/data_cache_ComplexMechNTest.zip
 PlantEval/CID_10_ints_10_reals_four_std_uniform.pkl
+src/gcfm.egg-info/**
