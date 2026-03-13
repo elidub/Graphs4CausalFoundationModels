@@ -366,7 +366,7 @@ model_config:
   hidden_mult: # hidden dimension multiplier in the feedforward layers (usually between 1 and 4)
     value: 2
   num_features:
-    value: 50  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
+    value: 49  # MUST be max_number_features - 1 (50 - 1 = 49 inputs when one is target)
   normalize_features:  # whether to apply quantile transform + standard normalization internally
     value: true
   
