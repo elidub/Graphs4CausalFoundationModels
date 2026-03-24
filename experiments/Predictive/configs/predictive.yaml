@@ -24,7 +24,11 @@ scm_config:
     distribution: "beta"
     distribution_parameters:
       alpha: 2.0
-      beta: 3.0
+      beta: 5.0
+    # distribution: "gamma"
+    # distribution_parameters:
+    #   alpha: 2.0
+    #   beta: 10.
   graph_seed:
     distribution: "discrete_uniform"
     distribution_parameters:

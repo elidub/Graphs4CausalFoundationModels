@@ -447,14 +447,15 @@ class ObservationalDataset(Dataset):
         last_X_train = last_Y_train = last_X_test = last_Y_test = None
         while True:
             # Sample an SCM
-            scm = self.scm_sampler.sample(seed=seed + attempt)
+            scm = self.scm_sampler.sample(seed=None)
 
             if not nx.is_weakly_connected(scm.dag.g):
                 # If the graph is not weakly connected, we may end up with isolated nodes that have zero variance.
                 # To prevent this, we can either resample or add a small random edge. Here we choose to resample.
                 attempt += 1
                 if attempt >= self.max_resample_attempts:
-                    raise RuntimeError(f"Failed to sample a weakly connected SCM after {self.max_resample_attempts} attempts.")
+                    print('\n\n\nfailing!\n\n\n')
+                    break # Giving up
                 continue
             
             # Total samples needed

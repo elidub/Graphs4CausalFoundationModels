@@ -304,7 +304,7 @@ class SCMSampler:
                 params["endo_std_std"] = None
         
         # Step 1: Create the causal DAG
-        graph_sampler = GraphSampler(seed=params["graph_seed"])
+        graph_sampler = GraphSampler(seed=params["graph_seed"], graph_type="erdos_renyi")
         graph = graph_sampler.sample_dag(num_nodes=params["num_nodes"], p=params["graph_edge_prob"])
         graph.graph['edge_prob'] = params["graph_edge_prob"]  # Store edge probability in graph attributes for reference
         graph.graph['num_nodes'] = params["num_nodes"]  # Store number of nodes in graph attributes for reference
