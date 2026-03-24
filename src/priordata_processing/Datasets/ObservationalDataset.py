@@ -5,6 +5,7 @@ import torch
 import torch.distributions as dist
 import sys
 import os
+import networkx as nx
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -447,6 +448,14 @@ class ObservationalDataset(Dataset):
         while True:
             # Sample an SCM
             scm = self.scm_sampler.sample(seed=seed + attempt)
+
+            if not nx.is_weakly_connected(scm.dag.g):
+                # If the graph is not weakly connected, we may end up with isolated nodes that have zero variance.
+                # To prevent this, we can either resample or add a small random edge. Here we choose to resample.
+                attempt += 1
+                if attempt >= self.max_resample_attempts:
+                    raise RuntimeError(f"Failed to sample a weakly connected SCM after {self.max_resample_attempts} attempts.")
+                continue
             
             # Total samples needed
             total_samples = number_train_samples + number_test_samples
@@ -581,6 +590,7 @@ class ObservationalDataset(Dataset):
             'adj_matrix_padded': adj_matrix_padded,
             "moral_density": calculate_density(moral_matrix),
             "adj_density": calculate_density(adj_matrix),
+            'ordered_nodes' : ordered_nodes,
         }
 
         dataset_info: dict[str, Any] = { # needed for TFM-Playground compatability
