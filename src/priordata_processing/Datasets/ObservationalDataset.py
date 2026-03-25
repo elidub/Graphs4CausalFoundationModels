@@ -449,7 +449,10 @@ class ObservationalDataset(Dataset):
             # Sample an SCM
             scm = self.scm_sampler.sample(seed=None)
 
-            if not nx.is_weakly_connected(scm.dag.g):
+            # graph_condition = nx.is_weakly_connected(scm.dag.g)
+            graph_condition = nx.number_weakly_connected_components(scm.dag.g) < 3
+
+            if not graph_condition:
                 # If the graph is not weakly connected, we may end up with isolated nodes that have zero variance.
                 # To prevent this, we can either resample or add a small random edge. Here we choose to resample.
                 attempt += 1
