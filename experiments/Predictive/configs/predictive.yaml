@@ -267,9 +267,14 @@ dataset_config:
   max_resample_attempts:
     value: 100
 
+  n_features:
+    distribution: "discrete_uniform"
+    distribution_parameters:
+      low: 4
+      high: 10
 
   max_number_features:
-    value: 50
+    value: 10
   seed:
     distribution: "discrete_uniform"
     distribution_parameters:

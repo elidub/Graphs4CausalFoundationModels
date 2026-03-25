@@ -70,6 +70,7 @@ class ObservationalDataset(Dataset):
     # Expected dataset configuration parameters
     EXPECTED_DATASET_HYPERPARAMETERS = {
         "dataset_size": int,
+        'n_features': (torch.distributions.Distribution, int),  # Allow n_features to be sampled per item
         "max_number_features": int,
         # New config scheme: caps and total per dataset
         "max_number_samples_per_dataset": int,
@@ -336,6 +337,7 @@ class ObservationalDataset(Dataset):
         """
         Pads the graph matrix to match the target size and reorders it to place the target node at the end.
         """
+        raise NotImplementedError("This method is not fully implemented yet. Please test extensively before using.")
         target_size = last_X_train.shape[1] + 1 # +1 for the target
         if graph_matrix.shape[0] < target_size:
             padded_matrix = torch.zeros((target_size, target_size),
@@ -368,6 +370,8 @@ class ObservationalDataset(Dataset):
         )
         if preprocessing_params['dropout_prob'] != 0.:
             raise NotImplementedError("dropout_prob > 0 is not implemented yet for ObservationalDataset. Please set dropout_prob to 0 in the preprocessing_config. Should be tested extensively, including marginalization of the adjaceny matrix.")
+        # if not preprocessing_params['dropout_prob'] > 0.:
+        #     raise NotImplementedError("Instead, we should have a positive dropout_prob, this forces the model to learn to marginalize over missing features and should improve generalization. Please test this extensively, including the impact on the adjacency matrix if return_adjacency_matrix=True.")
         
         # Sample dataset parameters for this item (except size and max values which are fixed)
         dataset_params = self._sample_parameters(
@@ -385,10 +389,18 @@ class ObservationalDataset(Dataset):
             dataset_params["number_test_samples_per_dataset"] = test_dist
         
         # Extract sample counts from dataset params
+        n_features = dataset_params["n_features"]
         train_dist = dataset_params["number_train_samples_per_dataset"]
         test_dist = dataset_params["number_test_samples_per_dataset"]
 
         # Sample train and test sample counts
+        if isinstance(n_features, torch.distributions.Distribution):
+            n_features = int(n_features.sample().item())
+        elif isinstance(n_features, int):
+            n_features = n_features
+        else:
+            n_features = int(n_features.sample(item_generator) if hasattr(n_features, 'sample') else n_features)
+
         if isinstance(train_dist, torch.distributions.Distribution):
             number_train_samples = int(train_dist.sample().item())
         elif isinstance(train_dist, int):
@@ -413,7 +425,7 @@ class ObservationalDataset(Dataset):
                                                  preprocessing_params.get("negative_one_one_scaling", True))
 
         processor = BasicProcessing(
-            n_features=self.max_number_features,
+            n_features=n_features,
             max_n_features=self.max_number_features,
             n_train_samples=number_train_samples,
             max_n_train_samples=self.max_number_train_samples,
@@ -490,6 +502,7 @@ class ObservationalDataset(Dataset):
 
             # Optionally add adjacency or ancestor matrix with proper node ordering
             if self.return_adjacency_matrix or self.return_moralized_matrix:
+                raise NotImplementedError("Currently working with positive dropout prob, so adjacency and moralized matrices are not implemented yet.")
                 # Copied from InterventionalDataset._get_item_internal. See comments there for details.
                 # Of course, only implemented without has_treatment logic since this is purely observational.
                 # NB: The node ordering logic has been adapted! Do not use this for this CFM, only use the data generation for external models.
@@ -526,6 +539,12 @@ class ObservationalDataset(Dataset):
                 
                 adj_matrix_padded = self._pad_and_reorder_matrix(adj_matrix, ordered_nodes, target_node, last_X_train)
                 moral_matrix_padded = self._pad_and_reorder_matrix(moral_matrix, ordered_nodes, target_node, last_X_train)
+            else:
+                target_node = processor.selected_target_feature
+                kept_features = processor.kept_feature_indices  # Node names after dropout AND shuffling
+                ordered_nodes = []
+                ordered_nodes.extend(kept_features)
+                ordered_nodes.append(target_node)
             
             # --- Check 1: Variance threshold ---
             var_threshold_ok = True
@@ -585,15 +604,19 @@ class ObservationalDataset(Dataset):
                 # Give up and return the last sampled data to avoid infinite loop
                 break
 
+        if n_features != len(ordered_nodes)-1:
+            raise ValueError(f"Number of features in data ({n_features}) does not match the number of nodes in the graph ({len(ordered_nodes)-1}). Please check the SCM sampling and preprocessing steps to ensure they are consistent with the expected number of features.")
+
         graph_info: dict[str, Any] = {
             'scm': scm,
             'processor': processor,
-            'moral_matrix' : moral_matrix,
-            'adj_matrix' : adj_matrix,
-            'moral_matrix_padded': moral_matrix_padded,
-            'adj_matrix_padded': adj_matrix_padded,
-            "moral_density": calculate_density(moral_matrix),
-            "adj_density": calculate_density(adj_matrix),
+
+            # 'moral_matrix' : moral_matrix,
+            # 'adj_matrix' : adj_matrix,
+            # 'moral_matrix_padded': moral_matrix_padded,
+            # 'adj_matrix_padded': adj_matrix_padded,
+            # "moral_density": calculate_density(moral_matrix),
+            # "adj_density": calculate_density(adj_matrix),
             'ordered_nodes' : ordered_nodes,
         }
 
