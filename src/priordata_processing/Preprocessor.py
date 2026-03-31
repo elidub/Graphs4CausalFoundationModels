@@ -333,6 +333,7 @@ class Preprocessor:
                 raise ValueError("y_clip_quantile should be in (0.5, 1.0].")
             qs = torch.tensor([1.0 - q, q], device=Ytr.device, dtype=Ytr.dtype)
             Q = torch.quantile(Ytr, qs, dim=1, keepdim=True)  # [B,2,1] effectively
+            Q = Q.transpose(0, 1)  # [B,2,1] effectively, linecomment above has a mistke
             lo = Q[:, 0:1, :]
             hi = Q[:, 1:2, :]
             Ytr = Ytr.clamp(min=lo.squeeze(-1), max=hi.squeeze(-1))
