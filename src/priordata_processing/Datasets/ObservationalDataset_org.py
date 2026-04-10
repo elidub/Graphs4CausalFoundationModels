@@ -5,17 +5,13 @@ import torch
 import torch.distributions as dist
 import sys
 import os
-import networkx as nx
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from gtfm.graph.torch_moral import calculate_density, moralize_graph
 from priors.causal_prior.scm.SCMSampler import SCMSampler
 from priordata_processing.BasicProcessing import BasicProcessing
 from utils import FixedSampler, TorchDistributionSampler, CategoricalSampler, DiscreteUniformSampler
-
-from gtfm.utils.adj import move_axis
 
 
 class ObservationalDataset(Dataset):
@@ -70,7 +66,6 @@ class ObservationalDataset(Dataset):
     # Expected dataset configuration parameters
     EXPECTED_DATASET_HYPERPARAMETERS = {
         "dataset_size": int,
-        'n_features': (torch.distributions.Distribution, int),  # Allow n_features to be sampled per item
         "max_number_features": int,
         # New config scheme: caps and total per dataset
         "max_number_samples_per_dataset": int,
@@ -153,17 +148,6 @@ class ObservationalDataset(Dataset):
         self.min_unique_target_fraction = _get_cfg_value(self.dataset_config, "min_unique_target_fraction", None)
         # Prevent infinite loops: cap the number of re-sampling attempts
         self.max_resample_attempts = int(_get_cfg_value(self.dataset_config, "max_resample_attempts", 10) or 10)
-
-        # Options to return graph matrices (adjacency or moralized adjacency)
-        self.return_adjacency_matrix = _get_cfg_value(self.dataset_config, "return_adjacency_matrix", False)
-        self.return_moralized_matrix = _get_cfg_value(self.dataset_config, "return_moralized_matrix", False)
-
-        # Validate that both flags are not True simultaneously
-        if self.return_adjacency_matrix and self.return_moralized_matrix:
-            raise ValueError(
-                "Cannot return both adjacency matrix and moralized matrix. "
-                "Please set only one of 'return_adjacency_matrix' or 'return_moralized_matrix' to True."
-            )
         
         # Build samplers for preprocessing and dataset parameters
         self.preprocessing_samplers = self._build_samplers(
@@ -332,25 +316,6 @@ class ObservationalDataset(Dataset):
     def __len__(self):
         return self.size
     
-
-    @staticmethod
-    def _pad_and_reorder_matrix(graph_matrix, ordered_nodes, target_node, last_X_train):
-        """
-        Pads the graph matrix to match the target size and reorders it to place the target node at the end.
-        """
-        raise NotImplementedError("This method is not fully implemented yet. Please test extensively before using.")
-        target_size = last_X_train.shape[1] + 1 # +1 for the target
-        if graph_matrix.shape[0] < target_size:
-            padded_matrix = torch.zeros((target_size, target_size),
-                                    dtype=graph_matrix.dtype, 
-                                    device=graph_matrix.device)
-            padded_matrix[:graph_matrix.shape[0], :graph_matrix.shape[1]] = graph_matrix
-            graph_matrix = padded_matrix
-
-        # move the target node to the end (for compatibility with downstream models expecting target at the end)
-        graph_matrix = move_axis(graph_matrix, dst=target_size-1, src=target_node)
-        return graph_matrix
-    
     def __getitem__(self, idx):
         if idx < 0 or idx >= self.size:
             raise IndexError(f"Index {idx} out of range for dataset of size {self.size}")
@@ -369,10 +334,6 @@ class ObservationalDataset(Dataset):
             "preprocessing",
             item_generator
         )
-        if preprocessing_params['dropout_prob'] != 0.:
-            raise NotImplementedError("dropout_prob > 0 is not implemented yet for ObservationalDataset. Please set dropout_prob to 0 in the preprocessing_config. Should be tested extensively, including marginalization of the adjaceny matrix.")
-        # if not preprocessing_params['dropout_prob'] > 0.:
-        #     raise NotImplementedError("Instead, we should have a positive dropout_prob, this forces the model to learn to marginalize over missing features and should improve generalization. Please test this extensively, including the impact on the adjacency matrix if return_adjacency_matrix=True.")
         
         # Sample dataset parameters for this item (except size and max values which are fixed)
         dataset_params = self._sample_parameters(
@@ -390,18 +351,10 @@ class ObservationalDataset(Dataset):
             dataset_params["number_test_samples_per_dataset"] = test_dist
         
         # Extract sample counts from dataset params
-        n_features = dataset_params["n_features"]
         train_dist = dataset_params["number_train_samples_per_dataset"]
         test_dist = dataset_params["number_test_samples_per_dataset"]
-
+        
         # Sample train and test sample counts
-        if isinstance(n_features, torch.distributions.Distribution):
-            n_features = int(n_features.sample().item())
-        elif isinstance(n_features, int):
-            n_features = n_features
-        else:
-            n_features = int(n_features.sample(item_generator) if hasattr(n_features, 'sample') else n_features)
-
         if isinstance(train_dist, torch.distributions.Distribution):
             number_train_samples = int(train_dist.sample().item())
         elif isinstance(train_dist, int):
@@ -426,7 +379,7 @@ class ObservationalDataset(Dataset):
                                                  preprocessing_params.get("negative_one_one_scaling", True))
 
         processor = BasicProcessing(
-            n_features=n_features,
+            n_features=self.max_number_features,
             max_n_features=self.max_number_features,
             n_train_samples=number_train_samples,
             max_n_train_samples=self.max_number_train_samples,
@@ -460,19 +413,7 @@ class ObservationalDataset(Dataset):
         last_X_train = last_Y_train = last_X_test = last_Y_test = None
         while True:
             # Sample an SCM
-            scm = self.scm_sampler.sample(seed=None)
-
-            # graph_condition = nx.is_weakly_connected(scm.dag.g)
-            graph_condition = nx.number_weakly_connected_components(scm.dag.g) < 3
-
-            if not graph_condition:
-                # If the graph is not weakly connected, we may end up with isolated nodes that have zero variance.
-                # To prevent this, we can either resample or add a small random edge. Here we choose to resample.
-                attempt += 1
-                if attempt >= self.max_resample_attempts:
-                    print('\n\n\nfailing!\n\n\n')
-                    break # Giving up
-                continue
+            scm = self.scm_sampler.sample(seed=seed + attempt)
             
             # Total samples needed
             total_samples = number_train_samples + number_test_samples
@@ -500,52 +441,6 @@ class ObservationalDataset(Dataset):
             # If no thresholds provided, accept immediately
             if self.min_target_variance is None and self.min_unique_target_fraction is None:
                 break
-
-            # Optionally add adjacency or ancestor matrix with proper node ordering
-            if self.return_adjacency_matrix or self.return_moralized_matrix:
-                raise NotImplementedError("Currently working with positive dropout prob, so adjacency and moralized matrices are not implemented yet.")
-                # Copied from InterventionalDataset._get_item_internal. See comments there for details.
-                # Of course, only implemented without has_treatment logic since this is purely observational.
-                # NB: The node ordering logic has been adapted! Do not use this for this CFM, only use the data generation for external models.
-
-                # Custom node ordering starts here
-                # Get the target feature and kept features from BasicProcessing
-                target_node = processor.selected_target_feature
-                kept_features = processor.kept_feature_indices  # Node names after dropout AND shuffling
-                
-                # Build ordered list to match model's feature ordering: [features, padding..., target]
-                # Downstream external models have : [X_0, X_1, ..., X_{L-1}, padding..., Y]
-                # So adjacency matrix must use the same ordering
-                # 
-                # IMPORTANT: kept_features now correctly reflects the POST-SHUFFLE column order!
-                # If shuffle_features=True was used in BasicProcessing, the Preprocessor
-                # tracks the permutation and BasicProcessing updates kept_feature_indices
-                # to match the actual column order in X. This ensures perfect alignment:
-                # - X[:, i] contains data from node kept_features[i]
-                # - adjacency[i, j] describes the edge between kept_features[i] and kept_features[j]
-                #
-                # Do NOT sort kept_features - use the exact order from the processor!
-                ordered_nodes = []
-                
-                # Add kept features in the SAME order as they appear in X
-                # (kept_features already reflects any shuffling that was applied)
-                ordered_nodes.extend(kept_features)
-                
-                # Add target last
-                ordered_nodes.append(target_node)
-                # Custom node ordering ends here
-
-                adj_matrix = scm.get_adjacency_matrix(node_order=ordered_nodes)
-                moral_matrix = moralize_graph(adj_matrix)
-                
-                adj_matrix_padded = self._pad_and_reorder_matrix(adj_matrix, ordered_nodes, target_node, last_X_train)
-                moral_matrix_padded = self._pad_and_reorder_matrix(moral_matrix, ordered_nodes, target_node, last_X_train)
-            else:
-                target_node = processor.selected_target_feature
-                kept_features = processor.kept_feature_indices  # Node names after dropout AND shuffling
-                ordered_nodes = []
-                ordered_nodes.extend(kept_features)
-                ordered_nodes.append(target_node)
             
             # --- Check 1: Variance threshold ---
             var_threshold_ok = True
@@ -604,27 +499,5 @@ class ObservationalDataset(Dataset):
             if attempt >= self.max_resample_attempts:
                 # Give up and return the last sampled data to avoid infinite loop
                 break
-
-        # if n_features != len(ordered_nodes)-1:
-        #     raise ValueError(f"Number of features in data ({n_features}) does not match the number of nodes in the graph ({len(ordered_nodes)-1}). Please check the SCM sampling and preprocessing steps to ensure they are consistent with the expected number of features.")
-
-        graph_info: dict[str, Any] = {
-            'scm': scm,
-            'processor': processor,
-
-            # 'moral_matrix' : moral_matrix,
-            # 'adj_matrix' : adj_matrix,
-            # 'moral_matrix_padded': moral_matrix_padded,
-            # 'adj_matrix_padded': adj_matrix_padded,
-            # "moral_density": calculate_density(moral_matrix),
-            # "adj_density": calculate_density(adj_matrix),
-            'ordered_nodes' : ordered_nodes,
-        }
-
-        dataset_info: dict[str, Any] = { # needed for TFM-Playground compatability
-            'number_train_samples' : number_train_samples
-        }
-
-
         
-        return last_X_train, last_Y_train, last_X_test, last_Y_test, graph_info, dataset_info
+        return last_X_train, last_Y_train, last_X_test, last_Y_test
