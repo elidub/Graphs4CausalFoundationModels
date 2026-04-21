@@ -16,6 +16,7 @@ from priordata_processing.BasicProcessing import BasicProcessing
 from utils import FixedSampler, TorchDistributionSampler, CategoricalSampler, DiscreteUniformSampler
 
 from gtfm.utils.adj import move_axis
+from gcfm.priordata_processing.Reg2ClsProcessor import Reg2ClsProcessor
 
 
 class ObservationalDataset(Dataset):
@@ -507,7 +508,15 @@ class ObservationalDataset(Dataset):
                 dataset[key] = value.reshape(total_samples, -1)
             
             # Process the data
-            X_train, Y_train, X_test, Y_test, adj_matrix = processor.process(dataset, scm=scm)
+            if isinstance(processor, BasicProcessing):
+                # BasicProcessing returns tensors directly
+                X_train, Y_train, X_test, Y_test = processor.process(dataset)
+                p = X_train.shape[1]+1
+                adj_matrix = torch.zeros((p, p))
+            elif isinstance(processor, Reg2ClsProcessor):
+                X_train, Y_train, X_test, Y_test, adj_matrix = processor.process(dataset, scm=scm)
+            else:
+                raise ValueError("Processor class must be either BasicProcessing or Reg2ClsProcessor for ObservationalDataset.")
             
             # Save latest outputs so we can return even if rejection keeps failing
             last_X_train, last_Y_train = X_train, Y_train
