@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Type, Union
 from torch.utils.data import Dataset
 import torch
 import torch.distributions as dist
@@ -120,24 +120,36 @@ class ObservationalDataset(Dataset):
         "beta": lambda params: dist.Beta(concentration1=params["alpha"], concentration0=params["beta"]),
     }
 
-    def __init__(self, 
+    def __init__(self,
                  scm_config: Dict[str, Any],
-                 preprocessing_config: Dict[str, Any],
+                 preprocessing_config: Optional[Dict[str, Any]],
                  dataset_config: Dict[str, Any],
-                 seed: Optional[int] = None):
+                 seed: Optional[int] = None,
+                 processor_class: Optional[Type] = None,
+                 processor_kwargs: Optional[Dict[str, Any]] = None):
         """
         Initialize the dataset with configuration dictionaries.
-        
+
         Args:
             scm_config: SCM hyperparameter configuration
-            preprocessing_config: Preprocessing hyperparameter configuration
+            preprocessing_config: Preprocessing hyperparameter configuration.
+                Pass ``None`` when using a custom ``processor_class`` that does
+                not rely on BasicProcessing-style preprocessing params.
             dataset_config: Dataset configuration (size, max samples, etc.)
             seed: Random seed for reproducibility
+            processor_class: Processor class to use instead of BasicProcessing.
+                Must expose ``.process(dataset_dict)`` and set
+                ``selected_target_feature`` / ``kept_feature_indices`` after the
+                call.  Defaults to BasicProcessing when None.
+            processor_kwargs: Extra kwargs forwarded to the processor constructor
+                (e.g. ``{"tabicl_hp": {...}}`` for Reg2ClsProcessor).
         """
         self.scm_config = scm_config
         self.preprocessing_config = preprocessing_config
         self.dataset_config = dataset_config
         self.seed = seed
+        self.processor_class = processor_class if processor_class is not None else BasicProcessing
+        self.processor_kwargs = processor_kwargs or {}
         
         # Helper to extract value from config entries that may be plain or dicts with {'value': ...}
         def _get_cfg_value(cfg: Dict[str, Any], key: str, default: Any):
@@ -166,11 +178,14 @@ class ObservationalDataset(Dataset):
             )
         
         # Build samplers for preprocessing and dataset parameters
-        self.preprocessing_samplers = self._build_samplers(
-            self.preprocessing_config, 
-            self.EXPECTED_PREPROCESSING_HYPERPARAMETERS, 
-            "preprocessing"
-        )
+        if self.preprocessing_config is not None:
+            self.preprocessing_samplers = self._build_samplers(
+                self.preprocessing_config,
+                self.EXPECTED_PREPROCESSING_HYPERPARAMETERS,
+                "preprocessing"
+            )
+        else:
+            self.preprocessing_samplers = None
         
         # Filter out 'seed' from dataset_config since we handle it as a constructor parameter
         dataset_config_filtered = {k: v for k, v in self.dataset_config.items() if k != 'seed'}
@@ -362,18 +377,6 @@ class ObservationalDataset(Dataset):
         item_generator = torch.Generator()
         item_generator.manual_seed(seed)
         
-        # Sample preprocessing parameters for this item
-        preprocessing_params = self._sample_parameters(
-            self.preprocessing_samplers,
-            self.EXPECTED_PREPROCESSING_HYPERPARAMETERS,
-            "preprocessing",
-            item_generator
-        )
-        if preprocessing_params['dropout_prob'] != 0.:
-            raise NotImplementedError("dropout_prob > 0 is not implemented yet for ObservationalDataset. Please set dropout_prob to 0 in the preprocessing_config. Should be tested extensively, including marginalization of the adjaceny matrix.")
-        # if not preprocessing_params['dropout_prob'] > 0.:
-        #     raise NotImplementedError("Instead, we should have a positive dropout_prob, this forces the model to learn to marginalize over missing features and should improve generalization. Please test this extensively, including the impact on the adjacency matrix if return_adjacency_matrix=True.")
-        
         # Sample dataset parameters for this item (except size and max values which are fixed)
         dataset_params = self._sample_parameters(
             self.dataset_samplers,
@@ -416,44 +419,57 @@ class ObservationalDataset(Dataset):
         else:
             number_test_samples = int(test_dist.sample(item_generator) if hasattr(test_dist, 'sample') else test_dist)
         
-        # Create BasicProcessing instance with sampled preprocessing parameters
-        # Map legacy combined flags to new split flags with sensible defaults
-        _feature_standardize = preprocessing_params.get("feature_standardize",
-                                                       preprocessing_params.get("standardize", True))
-        _feature_neg11 = preprocessing_params.get("feature_negative_one_one_scaling",
-                                                  False if _feature_standardize else preprocessing_params.get("negative_one_one_scaling", True))
-        _target_neg11 = preprocessing_params.get("target_negative_one_one_scaling",
-                                                 preprocessing_params.get("negative_one_one_scaling", True))
-
-        processor = BasicProcessing(
+        # Build processor — either BasicProcessing (with preprocessing_config) or injected class
+        base_processor_kwargs = dict(
             n_features=n_features,
             max_n_features=self.max_number_features,
             n_train_samples=number_train_samples,
             max_n_train_samples=self.max_number_train_samples,
             n_test_samples=number_test_samples,
             max_n_test_samples=self.max_number_test_samples,
-            dropout_prob=preprocessing_params["dropout_prob"],
-            target_feature=preprocessing_params["target_feature"],
-            random_seed=preprocessing_params["random_seed"],
-            test_feature_mask_fraction=preprocessing_params.get("test_feature_mask_fraction", 0.0),
-            # Legacy flags retained, but split flags take precedence internally
-            negative_one_one_scaling=preprocessing_params.get("negative_one_one_scaling", True),
-            standardize=preprocessing_params.get("standardize", True),
-            # New split flags
-            feature_standardize=_feature_standardize,
-            feature_negative_one_one_scaling=_feature_neg11,
-            target_negative_one_one_scaling=_target_neg11,
-            yeo_johnson=preprocessing_params["yeo_johnson"],
-            remove_outliers=preprocessing_params["remove_outliers"],
-            outlier_quantile=preprocessing_params["outlier_quantile"],
-            shuffle_samples=preprocessing_params["shuffle_data"],
-            shuffle_features=True,  # Default
-            y_clip_quantile=preprocessing_params.get("y_clip_quantile"),
-            eps=preprocessing_params.get("eps", 1e-8),
-            device=None,  # Default
-            dtype=None,  # Default
         )
-        
+        if self.preprocessing_config is not None:
+            preprocessing_params = self._sample_parameters(
+                self.preprocessing_samplers,
+                self.EXPECTED_PREPROCESSING_HYPERPARAMETERS,
+                "preprocessing",
+                item_generator
+            )
+            if preprocessing_params['dropout_prob'] != 0.:
+                raise NotImplementedError("dropout_prob > 0 is not implemented yet for ObservationalDataset.")
+            _feature_standardize = preprocessing_params.get("feature_standardize",
+                                                            preprocessing_params.get("standardize", True))
+            _feature_neg11 = preprocessing_params.get("feature_negative_one_one_scaling",
+                                                      False if _feature_standardize else preprocessing_params.get("negative_one_one_scaling", True))
+            _target_neg11 = preprocessing_params.get("target_negative_one_one_scaling",
+                                                     preprocessing_params.get("negative_one_one_scaling", True))
+            base_processor_kwargs.update(dict(
+                dropout_prob=preprocessing_params["dropout_prob"],
+                target_feature=preprocessing_params["target_feature"],
+                random_seed=preprocessing_params["random_seed"],
+                test_feature_mask_fraction=preprocessing_params.get("test_feature_mask_fraction", 0.0),
+                # Legacy flags retained, but split flags take precedence internally
+                negative_one_one_scaling=preprocessing_params.get("negative_one_one_scaling", True),
+                standardize=preprocessing_params.get("standardize", True),
+                # New split flags
+                feature_standardize=_feature_standardize,
+                feature_negative_one_one_scaling=_feature_neg11,
+                target_negative_one_one_scaling=_target_neg11,
+                yeo_johnson=preprocessing_params["yeo_johnson"],
+                remove_outliers=preprocessing_params["remove_outliers"],
+                outlier_quantile=preprocessing_params["outlier_quantile"],
+                shuffle_samples=preprocessing_params["shuffle_data"],
+                shuffle_features=True,  # Default
+                y_clip_quantile=preprocessing_params.get("y_clip_quantile"),
+                eps=preprocessing_params.get("eps", 1e-8),
+                device=None,  # Default
+                dtype=None,  # Default
+            ))
+        else:
+            base_processor_kwargs["seed"] = seed
+
+        processor = self.processor_class(**base_processor_kwargs, **self.processor_kwargs)
+
         # Rejection strategy: resample if target variances are too small
         # We re-run SCM sampling up to max_resample_attempts
         attempt = 0
@@ -463,16 +479,16 @@ class ObservationalDataset(Dataset):
             scm = self.scm_sampler.sample(seed=None)
 
             # graph_condition = nx.is_weakly_connected(scm.dag.g)
-            graph_condition = nx.number_weakly_connected_components(scm.dag.g) < 3
+            # graph_condition = nx.number_weakly_connected_components(scm.dag.g) < 3
 
-            if not graph_condition:
-                # If the graph is not weakly connected, we may end up with isolated nodes that have zero variance.
-                # To prevent this, we can either resample or add a small random edge. Here we choose to resample.
-                attempt += 1
-                if attempt >= self.max_resample_attempts:
-                    print('\n\n\nfailing!\n\n\n')
-                    break # Giving up
-                continue
+            # if not graph_condition:
+            #     # If the graph is not weakly connected, we may end up with isolated nodes that have zero variance.
+            #     # To prevent this, we can either resample or add a small random edge. Here we choose to resample.
+            #     attempt += 1
+            #     if attempt >= self.max_resample_attempts:
+            #         print('\n\n\nfailing!\n\n\n')
+            #         break # Giving up
+            #     continue
             
             # Total samples needed
             total_samples = number_train_samples + number_test_samples
@@ -491,15 +507,11 @@ class ObservationalDataset(Dataset):
                 dataset[key] = value.reshape(total_samples, -1)
             
             # Process the data
-            X_train, Y_train, X_test, Y_test = processor.process(dataset)
+            X_train, Y_train, X_test, Y_test, adj_matrix = processor.process(dataset, scm=scm)
             
             # Save latest outputs so we can return even if rejection keeps failing
             last_X_train, last_Y_train = X_train, Y_train
             last_X_test, last_Y_test = X_test, Y_test
-            
-            # If no thresholds provided, accept immediately
-            if self.min_target_variance is None and self.min_unique_target_fraction is None:
-                break
 
             # Optionally add adjacency or ancestor matrix with proper node ordering
             if self.return_adjacency_matrix or self.return_moralized_matrix:
@@ -546,7 +558,11 @@ class ObservationalDataset(Dataset):
                 ordered_nodes = []
                 ordered_nodes.extend(kept_features)
                 ordered_nodes.append(target_node)
-            
+
+            # If no thresholds provided, accept immediately
+            if self.min_target_variance is None and self.min_unique_target_fraction is None:
+                break
+
             # --- Check 1: Variance threshold ---
             var_threshold_ok = True
             if self.min_target_variance is not None:
@@ -608,12 +624,12 @@ class ObservationalDataset(Dataset):
         # if n_features != len(ordered_nodes)-1:
         #     raise ValueError(f"Number of features in data ({n_features}) does not match the number of nodes in the graph ({len(ordered_nodes)-1}). Please check the SCM sampling and preprocessing steps to ensure they are consistent with the expected number of features.")
 
+
         graph_info: dict[str, Any] = {
             'scm': scm,
             'processor': processor,
-
-            # 'moral_matrix' : moral_matrix,
-            # 'adj_matrix' : adj_matrix,
+            'adj': adj_matrix,      # raw (num_nodes × num_nodes), ordering matches ordered_nodes / nodes_include directly
+            'density': 0.5,
             # 'moral_matrix_padded': moral_matrix_padded,
             # 'adj_matrix_padded': adj_matrix_padded,
             # "moral_density": calculate_density(moral_matrix),
