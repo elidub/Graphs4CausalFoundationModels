@@ -47,7 +47,7 @@ class Reg2ClsProcessor:
         self.n_test = n_test_samples
         self.max_test = max_n_test_samples
         self.tabicl_hp = tabicl_hp
-        print(f'{self.tabicl_hp = }')
+        # print(f'{self.tabicl_hp = }')
 
         self._gen = torch.Generator()
         if seed is not None:
@@ -97,6 +97,8 @@ class Reg2ClsProcessor:
         # to adj — so self.adj is always consistent with the final X column order.
         hp = {**self.tabicl_hp, "max_features": self.max_n_features}
         X_norm, y_norm, adj = Reg2Cls(hp)(X_all, y_all, adj)
+
+        X_norm = X_norm[:, :self.max_n_features]  # in case Reg2Cls doesn't already truncate to max_features
 
         pad_train = self.max_train - self.n_train
         pad_test  = self.max_test  - self.n_test
