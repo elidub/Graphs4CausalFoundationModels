@@ -6,7 +6,7 @@ import torch.distributions as dist
 import sys
 import os
 import networkx as nx
-
+import numpy as np
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
@@ -469,7 +469,6 @@ class ObservationalDataset(Dataset):
         else:
             base_processor_kwargs["seed"] = seed
 
-        processor = self.processor_class(**base_processor_kwargs, **self.processor_kwargs)
 
         # Rejection strategy: resample if target variances are too small
         # We re-run SCM sampling up to max_resample_attempts
@@ -478,6 +477,23 @@ class ObservationalDataset(Dataset):
         while True:
             # Sample an SCM
             scm = self.scm_sampler.sample(seed=None)
+
+            if n_features == -1:
+                n_features = scm.dag.g.number_of_nodes() - 1  # All nodes except target
+                base_processor_kwargs["n_features"] = n_features
+            processor = self.processor_class(**base_processor_kwargs, **self.processor_kwargs)
+
+            # n_nodes = scm.dag.g.number_of_nodes()
+            # print(f"{n_nodes = }, {n_features = }")
+            # if n_nodes < (n_features+1):
+            #     # If the sampled graph has fewer nodes than n_features, we cannot proceed.
+            #     # This can happen if num_nodes is sampled from a distribution that allows small values.
+            #     # To prevent this, we can either resample or skip this item. Here we choose to resample.
+            #     attempt += 1
+            #     if attempt >= self.max_resample_attempts:
+            #         print('\n\n\nfailing due to insufficient nodes!\n\n\n')
+            #         break # Giving up
+            #     continue
 
             # graph_condition = nx.is_weakly_connected(scm.dag.g)
             # graph_condition = nx.number_weakly_connected_components(scm.dag.g) < 3
@@ -514,7 +530,7 @@ class ObservationalDataset(Dataset):
                 p = X_train.shape[1]+1
                 adj_matrix = torch.zeros((p, p))
             elif isinstance(processor, Reg2ClsProcessor):
-                X_train, Y_train, X_test, Y_test, adj_matrix = processor.process(dataset, scm=scm)
+                X_train, Y_train, X_test, Y_test, graph_moral, graph_moma, adj_moma = processor.process(dataset, scm=scm)
             else:
                 raise ValueError("Processor class must be either BasicProcessing or Reg2ClsProcessor for ObservationalDataset.")
             
@@ -635,10 +651,14 @@ class ObservationalDataset(Dataset):
 
 
         graph_info: dict[str, Any] = {
-            'scm': scm,
+            # 'scm': scm,
             'processor': processor,
-            'adj': adj_matrix,      # raw (num_nodes × num_nodes), ordering matches ordered_nodes / nodes_include directly
-            'density': 0.5,
+            'graph_full': scm.dag.g,
+            'adj_full': scm.get_adjacency_matrix(node_order=np.arange(scm.dag.g.number_of_nodes())),
+            'graph_moral': graph_moral,
+            'graph_moma': graph_moma,
+            'adj_moma': adj_moma,
+            'density_moma': calculate_density(adj_moma),
             # 'moral_matrix_padded': moral_matrix_padded,
             # 'adj_matrix_padded': adj_matrix_padded,
             # "moral_density": calculate_density(moral_matrix),
