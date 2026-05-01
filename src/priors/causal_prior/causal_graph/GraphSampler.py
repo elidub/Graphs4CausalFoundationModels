@@ -17,14 +17,14 @@ class GraphSampler:
     def __init__(
         self,
         seed: Optional[int] = None,
-        graph_type: Literal["erdos_renyi", "gnr", "cauchy_logit"] = "erdos_renyi",
+        graph_type: Literal["erdos_renyi", "gnr", "cauchy"] = "erdos_renyi",
     ) -> None:
         """
         Parameters
         ----------
         seed : int, optional
             Seed used for reproducibility.
-        graph_type : Literal["erdos_renyi", "gnr", "cauchy_logit"],
+        graph_type : Literal["erdos_renyi", "gnr", "cauchy"],
                      default "erdos_renyi"
             The type of graph to generate.
 
@@ -44,7 +44,7 @@ class GraphSampler:
         Acyclicity is guaranteed by construction: every new node only creates
         an edge pointing to an *older* node.
 
-        *cauchy_logit*
+        *cauchy*
         For node indices i < j in a random topological order, an edge is
         placed with probability p_ij = sigmoid(A + B_i + C_j), where A, B_i,
         C_j are independent standard Cauchy random variables. A controls the
@@ -57,7 +57,7 @@ class GraphSampler:
         self.sample_dag = {
             "erdos_renyi": self.sample_erdos_renyi,
             "gnr": self.sample_gnr,
-            "cauchy_logit": self.sample_cauchy_logit,
+            "cauchy": self.sample_cauchy,
         }[graph_type]
 
     def sample_erdos_renyi(
@@ -155,46 +155,32 @@ class GraphSampler:
             perm[i] is the final label of the node that arrived at step *i*
             (only returned when ``return_order=True``).
         """
-        n = int(num_nodes)
-        if n < 0:
+        if num_nodes < 0:
             raise ValueError("num_nodes must be non-negative.")
         if not (0.0 <= p <= 1.0):
             raise ValueError("p must be in [0, 1].")
 
-        G = nx.DiGraph()
-        G.add_nodes_from(range(n))
-
-        if n <= 1:
-            perm = np.arange(n)
+        if num_nodes <= 1:
+            G = nx.DiGraph()
+            G.add_nodes_from(range(num_nodes))
+            perm = np.arange(num_nodes)
             return (G, perm) if return_order else G
 
-        # ----- GNR growth process (arrival-order labels 0 … n-1) ---------
-        # parent[t] stores the single out-neighbour of node t (or -1 if none)
-        parent = np.full(n, -1, dtype=np.intp)
-        edges: list[tuple[int, int]] = []
+        seed = int(self.rng.integers(0, 2**31))
+        G_raw = nx.gnr_graph(num_nodes, p, seed=seed)
 
-        for t in range(1, n):
-            # Step 1: pick a random existing node
-            v = int(self.rng.integers(0, t))
+        # Extract and add edges mapped through the random permutation
+        # perm[i] = label assigned to arrival-order position i,
+        perm = self.rng.permutation(num_nodes)
 
-            # Step 2: with probability p, redirect to v's parent
-            if self.rng.random() < p and parent[v] != -1:
-                target = parent[v]
-            else:
-                target = v
-
-            # Step 3: edge from new node t → target (always newer → older)
-            parent[t] = target
-            edges.append((t, target))
-
-        # ----- Random relabelling so topology isn't obvious from IDs ------
-        perm = self.rng.permutation(n)  # perm[arrival_order] = final_label
-        relabelled_edges = [(int(perm[s]), int(perm[d])) for s, d in edges]
-        G.add_edges_from(relabelled_edges)
+        G = nx.DiGraph()
+        G.add_nodes_from(range(num_nodes))
+        for u, v in G_raw.edges():
+            G.add_edge(perm[u], perm[v])
 
         return (G, perm) if return_order else G
 
-    def sample_cauchy_logit(
+    def sample_cauchy(
         self,
         num_nodes: int,
         p: float,
@@ -236,7 +222,7 @@ class GraphSampler:
         perm : np.ndarray, optional
             The permutation used (only if ``return_perm=True``).
         """
-        assert p == -1, "The Cauchy-logit model does not use a single edge probability parameter, so p should be -1."
+        assert p == -1., f"The Cauchy-logit model does not use a single edge probability parameter, so p should be -1., but got {p = }."
         n = int(num_nodes)
         if n < 0:
             raise ValueError("num_nodes must be non-negative.")

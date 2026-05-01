@@ -48,7 +48,7 @@ from priors.causal_prior.mechanisms.SampleXGBoostMechanism import SampleXGBoostM
 from priors.causal_prior.noise_distributions.MixedDist import MixedDist
 from priors.causal_prior.noise_distributions.MixedDist_RandomSTD import MixedDistRandomStd
 from priors.causal_prior.noise_distributions.Sample_STD import GammaMeanStd, ParetoMeanStd
-from utils import FixedSampler, TorchDistributionSampler, CategoricalSampler, DiscreteUniformSampler, DistributionSampler
+from utils import FixedSampler, TorchDistributionSampler, CategoricalSampler, DiscreteUniformSampler, DistributionSampler, DiscreteLogUniformSampler
 
 
 class SCMSampler:
@@ -125,6 +125,7 @@ class SCMSampler:
         "num_nodes": int,
         "graph_edge_prob": float,
         "graph_seed": int,
+        "graph_type": str,
         
         # Optional parameters with defaults
         "xgboost_prob": float,
@@ -161,7 +162,7 @@ class SCMSampler:
     DISTRIBUTION_FACTORIES = {
         "fixed": lambda params: FixedSampler(params["value"]),
         "uniform": lambda params: TorchDistributionSampler(
-            dist.Uniform(low=params["low"], high=params["high"])
+            dist.Uniform(low=params["low"], high=params["high"], validate_args=False)
         ),
         "normal": lambda params: TorchDistributionSampler(
             dist.Normal(loc=params["mean"], scale=params["std"])
@@ -182,6 +183,14 @@ class SCMSampler:
             params["choices"], params.get("probabilities")
         ),
         "discrete_uniform": lambda params: DiscreteUniformSampler(params["low"], params["high"]),
+        # "discrete_loguniform": lambda params: DiscreteLogUniformSampler(params["low"], params["high"], params.get("base", 10.0), params.get("cutoff_low"), params.get("cutoff_high")),
+        "discrete_loguniform": lambda params: DiscreteLogUniformSampler(
+            params["low"],
+            params["high"],
+            params.get("cutoff_low", None),
+            params.get("cutoff_high", None),
+            params.get("normalize_over_full_range", False),
+        ),
     }
     
     def __init__(
@@ -304,7 +313,7 @@ class SCMSampler:
                 params["endo_std_std"] = None
         
         # Step 1: Create the causal DAG
-        graph_sampler = GraphSampler(seed=params["graph_seed"], graph_type="erdos_renyi")
+        graph_sampler = GraphSampler(seed=params["graph_seed"], graph_type=params['graph_type'])
         graph = graph_sampler.sample_dag(num_nodes=params["num_nodes"], p=params["graph_edge_prob"])
         graph.graph['edge_prob'] = params["graph_edge_prob"]  # Store edge probability in graph attributes for reference
         graph.graph['num_nodes'] = params["num_nodes"]  # Store number of nodes in graph attributes for reference

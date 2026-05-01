@@ -7,6 +7,7 @@ import sys
 import os
 import networkx as nx
 import numpy as np
+import copy
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
@@ -188,8 +189,8 @@ class ObservationalDataset(Dataset):
         else:
             self.preprocessing_samplers = None
         
-        # Filter out 'seed' from dataset_config since we handle it as a constructor parameter
-        dataset_config_filtered = {k: v for k, v in self.dataset_config.items() if k != 'seed'}
+        # Filter out 'seed' and 'n_features' from dataset_config since we handle them as constructor parameters
+        dataset_config_filtered = {k: v for k, v in self.dataset_config.items() if k not in ['seed', 'n_features']}
         self.dataset_samplers = self._build_samplers(
             dataset_config_filtered, 
             self.EXPECTED_DATASET_HYPERPARAMETERS, 
@@ -207,7 +208,8 @@ class ObservationalDataset(Dataset):
         generator = torch.Generator()
         if seed is not None:
             generator.manual_seed(seed)
-        
+        self.generator = generator
+
         dataset_params = self._sample_parameters(
             self.dataset_samplers,
             self.EXPECTED_DATASET_HYPERPARAMETERS,
@@ -243,7 +245,7 @@ class ObservationalDataset(Dataset):
         samplers = {}
         
         for param_name, param_config in config.items():
-            # Handle shorthand fixed value notation
+            # Handle shorthand fixed value notation 
             if "value" in param_config and "distribution" not in param_config:
                 if param_name in ["number_train_samples_per_dataset", "number_test_samples_per_dataset"]:
                     sampler = FixedSampler(param_config["value"])
@@ -367,6 +369,33 @@ class ObservationalDataset(Dataset):
         graph_matrix = move_axis(graph_matrix, dst=target_size-1, src=target_node)
         return graph_matrix
     
+    def sample_n_features(self, n_features_config, n_nodes: int) -> Dict[str, int]:
+        
+        if 'distribution_parameters' in n_features_config:
+            # deep copy to avoid mutating the original config which may be reused for multiple samples
+            n_features_config = copy.deepcopy(n_features_config)
+            high = n_features_config['distribution_parameters']['high']
+            truncated_high = min(high, n_nodes - 1)
+            n_features_config['distribution_parameters']['high'] = truncated_high
+
+        dataset_samplers = self._build_samplers(
+            {"n_features": n_features_config}, 
+            self.EXPECTED_DATASET_HYPERPARAMETERS, 
+            "dataset"
+        )
+        
+        dataset_params = self._sample_parameters(
+            dataset_samplers,
+            self.EXPECTED_DATASET_HYPERPARAMETERS,
+            "dataset",
+            self.generator
+        )
+
+        if dataset_params["n_features"] == -1:
+            dataset_params["n_features"] = n_nodes - 1  # All nodes except target
+
+        return dataset_params
+
     def __getitem__(self, idx):
         if idx < 0 or idx >= self.size:
             raise IndexError(f"Index {idx} out of range for dataset of size {self.size}")
@@ -394,17 +423,17 @@ class ObservationalDataset(Dataset):
             dataset_params["number_test_samples_per_dataset"] = test_dist
         
         # Extract sample counts from dataset params
-        n_features = dataset_params["n_features"]
+        # n_features = dataset_params["n_features"]
         train_dist = dataset_params["number_train_samples_per_dataset"]
         test_dist = dataset_params["number_test_samples_per_dataset"]
 
         # Sample train and test sample counts
-        if isinstance(n_features, torch.distributions.Distribution):
-            n_features = int(n_features.sample().item())
-        elif isinstance(n_features, int):
-            n_features = n_features
-        else:
-            n_features = int(n_features.sample(item_generator) if hasattr(n_features, 'sample') else n_features)
+        # if isinstance(n_features, torch.distributions.Distribution):
+        #     n_features = int(n_features.sample().item())
+        # elif isinstance(n_features, int):
+        #     n_features = n_features
+        # else:
+        #     n_features = int(n_features.sample(item_generator) if hasattr(n_features, 'sample') else n_features)
 
         if isinstance(train_dist, torch.distributions.Distribution):
             number_train_samples = int(train_dist.sample().item())
@@ -422,7 +451,7 @@ class ObservationalDataset(Dataset):
         
         # Build processor — either BasicProcessing (with preprocessing_config) or injected class
         base_processor_kwargs = dict(
-            n_features=n_features,
+            # n_features=n_features,
             max_n_features=self.max_number_features,
             n_train_samples=number_train_samples,
             max_n_train_samples=self.max_number_train_samples,
@@ -477,14 +506,18 @@ class ObservationalDataset(Dataset):
         while True:
             # Sample an SCM
             scm = self.scm_sampler.sample(seed=None)
+            n_nodes = scm.dag.g.number_of_nodes()
 
-            if n_features == -1:
-                n_features = scm.dag.g.number_of_nodes() - 1  # All nodes except target
-                base_processor_kwargs["n_features"] = n_features
-            processor = self.processor_class(**base_processor_kwargs, **self.processor_kwargs)
+            n_features_kwargs = self.sample_n_features(
+                n_features_config = self.dataset_config["n_features"],
+                n_nodes = n_nodes,
+            )
+            assert set(n_features_kwargs.keys()) == {"n_features"}, f"Expected n_features in sampled kwargs, got {n_features_kwargs.keys()}"
 
-            # n_nodes = scm.dag.g.number_of_nodes()
-            # print(f"{n_nodes = }, {n_features = }")
+            # if n_features == -1:
+            #     n_features = scm.dag.g.number_of_nodes() - 1  # All nodes except target
+            #     base_processor_kwargs["n_features"] = n_features
+
             # if n_nodes < (n_features+1):
             #     # If the sampled graph has fewer nodes than n_features, we cannot proceed.
             #     # This can happen if num_nodes is sampled from a distribution that allows small values.
@@ -494,6 +527,8 @@ class ObservationalDataset(Dataset):
             #         print('\n\n\nfailing due to insufficient nodes!\n\n\n')
             #         break # Giving up
             #     continue
+
+            processor = self.processor_class(**base_processor_kwargs, **self.processor_kwargs, **n_features_kwargs)
 
             # graph_condition = nx.is_weakly_connected(scm.dag.g)
             # graph_condition = nx.number_weakly_connected_components(scm.dag.g) < 3

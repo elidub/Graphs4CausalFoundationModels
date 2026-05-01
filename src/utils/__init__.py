@@ -21,11 +21,13 @@ FixedSampler = utils_module.FixedSampler
 TorchDistributionSampler = utils_module.TorchDistributionSampler
 CategoricalSampler = utils_module.CategoricalSampler
 DiscreteUniformSampler = utils_module.DiscreteUniformSampler
+DiscreteLogUniformSampler = utils_module.DiscreteLogUniformSampler
 
 __all__ = [
     'DistributionSampler',
     'FixedSampler',
     'TorchDistributionSampler',
     'CategoricalSampler',
-    'DiscreteUniformSampler'
+    'DiscreteUniformSampler',
+    'DiscreteLogUniformSampler',
 ]

@@ -104,8 +104,8 @@ class Reg2ClsProcessor:
         # max_n_features controls how many feature columns are kept (difficulty knob).
         perm = torch.randperm(len(all_nodes), generator=self._gen)
 
-        assert (self.n_features + 1) <= len(all_nodes)
-        assert self.n_features <= self.max_n_features
+        assert (self.n_features + 1) <= len(all_nodes), f"{self.n_features = }, {len(all_nodes) = }"
+        assert self.n_features <= self.max_n_features, f"{self.n_features = }, {self.max_n_features = }, {len(all_nodes) = }"
 
         self.selected_target_feature   = perm[0].item()
         self.kept_feature_indices = perm[1 : self.n_features+1].tolist()
