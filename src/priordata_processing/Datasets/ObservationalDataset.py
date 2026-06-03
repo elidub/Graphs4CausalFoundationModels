@@ -402,7 +402,10 @@ class ObservationalDataset(Dataset):
         
         seed = self.seed + idx if self.seed is not None else idx
         torch.manual_seed(seed)
-        
+        # Some mechanisms/activations (e.g. TabICL RandomFunctionActivation) draw from NumPy's
+        # global RNG, which torch.manual_seed does not control. Seed it too for reproducibility.
+        np.random.seed(seed % (2**32))
+
         # Create a generator for this specific item
         item_generator = torch.Generator()
         item_generator.manual_seed(seed)
