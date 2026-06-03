@@ -17,7 +17,7 @@ from priordata_processing.BasicProcessing import BasicProcessing
 from utils import FixedSampler, TorchDistributionSampler, CategoricalSampler, DiscreteUniformSampler
 
 from gtfm.utils.adj import move_axis
-from gcfm.priordata_processing.Reg2ClsProcessor import Reg2ClsProcessor
+from gcfm.priordata_processing.Reg2ClsProcessor import Reg2ClsProcessor, EmptyEligiblePool
 
 
 class ObservationalDataset(Dataset):
@@ -502,6 +502,7 @@ class ObservationalDataset(Dataset):
         # Rejection strategy: resample if target variances are too small
         # We re-run SCM sampling up to max_resample_attempts
         attempt = 0
+        n_rejections = 0  # SCMs skipped because the target-selection rule had an empty eligible pool
         last_X_train = last_Y_train = last_X_test = last_Y_test = None
         while True:
             # Sample an SCM
@@ -565,7 +566,20 @@ class ObservationalDataset(Dataset):
                 p = X_train.shape[1]+1
                 adj_matrix = torch.zeros((p, p))
             elif isinstance(processor, Reg2ClsProcessor):
-                X_train, Y_train, X_test, Y_test, graph_moral, graph_moma, adj_moma = processor.process(dataset, scm=scm)
+                try:
+                    X_train, Y_train, X_test, Y_test, graph_moral, graph_moma, adj_moma = processor.process(dataset, scm=scm)
+                except EmptyEligiblePool:
+                    # The target-selection rule found no eligible node on this SCM.
+                    # Reject and resample so compute stays comparable across rules.
+                    n_rejections += 1
+                    attempt += 1
+                    if attempt >= self.max_resample_attempts:
+                        raise RuntimeError(
+                            f"Exceeded max_resample_attempts ({self.max_resample_attempts}) for "
+                            f"target_selection_rule={processor.target_selection_rule!r}: eligible pool "
+                            f"kept coming up empty. Check graph size vs. the rule's filter."
+                        )
+                    continue
             else:
                 raise ValueError("Processor class must be either BasicProcessing or Reg2ClsProcessor for ObservationalDataset.")
             
@@ -699,6 +713,14 @@ class ObservationalDataset(Dataset):
             # "moral_density": calculate_density(moral_matrix),
             # "adj_density": calculate_density(adj_matrix),
             'ordered_nodes' : ordered_nodes,
+            # Target-selection diagnostics (None for BasicProcessing). Logged to the dump.
+            'node_variances': getattr(processor, 'node_variances', None),
+            'node_depths': getattr(processor, 'node_depths', None),
+            'target_node': getattr(processor, 'selected_target_feature', None),
+            'target_depth': getattr(processor, 'target_depth', None),
+            'target_variance': getattr(processor, 'target_variance', None),
+            'eligible_pool_size': getattr(processor, 'eligible_pool_size', None),
+            'n_rejections': n_rejections,
         }
 
         dataset_info: dict[str, Any] = { # needed for TFM-Playground compatability
