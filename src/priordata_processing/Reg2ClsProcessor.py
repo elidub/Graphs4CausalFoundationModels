@@ -15,8 +15,8 @@ if TYPE_CHECKING:
     from priors.causal_prior.scm import SCM
 
 
-# Target-selection rules compared in the thesis target-selection ablation.
-# Ordered most-anticausal -> most-causal training distribution.
+# Target-selection rules
+# Ordered most-anticausal -> most-causal training distribution
 TARGET_SELECTION_RULES = (
     "shallow_oracle",     # min topological depth (root-leaning)
     "uniform_non_leaf",   # uniform over nodes with >= 1 child
@@ -88,21 +88,21 @@ class Reg2ClsProcessor:
         self.variance_quantile = variance_quantile     # top-quantile cutoff for variance_biased
         self.variance_bias_prob = variance_bias_prob   # prob of drawing from the high-variance subset
 
-        # Two independent RNG streams so the only quantity varying across rules is
+        # Two independent sets of random numbers so the only quantity varying across rules is
         # the target draw itself: target selection and feature-subset sampling are decoupled.
         self._gen = torch.Generator()        # target-selection draws
         self._gen_feat = torch.Generator()   # feature-subset draws
         if seed is not None:
             self._gen.manual_seed(seed)
-            self._gen_feat.manual_seed(seed + 1_000_003)
+            self._gen_feat.manual_seed(seed + 1000000)
 
         self.selected_target_feature = None
         self.kept_feature_indices = None
         self.adj = None
 
         # Per-dataset diagnostics populated by _select_target (logged to the dump).
-        self.node_variances = None      # list[float], per node, raw SCM emission (pre-standardisation)
-        self.node_depths = None         # list[int], per node, topological layer
+        self.node_variances = None      # list[float], per node raw SCM variances (before standardisation)
+        self.node_depths = None         # list[int], per node topological layer
         self.target_depth = None        # int, depth of the chosen target
         self.target_variance = None     # float, raw variance of the chosen target
         self.eligible_pool_size = None  # int, size of the rule's eligible pool on this SCM
@@ -122,10 +122,9 @@ class Reg2ClsProcessor:
 
     @staticmethod
     def _topological_depths(graph: "DiGraph", all_nodes: list[int]) -> list[int]:
-        """Topological depth (layer) of every node, aligned to ``all_nodes`` order.
-
-        Depth is NOT available on the SCM graph at process time (it is added later
-        downstream), so it is computed here directly from the DAG.
+        """
+        Topological depth (layer) of every node, aligned to ``all_nodes`` order.
+        Computed here directly from the DAG.
         """
         depth: Dict[int, int] = {}
         for layer, nodes in enumerate(nx.topological_generations(graph)):
@@ -134,7 +133,7 @@ class Reg2ClsProcessor:
         return [depth[n] for n in all_nodes]
 
     def _choice(self, candidates: list[int]) -> int:
-        """Uniform pick from ``candidates`` using the target RNG stream."""
+        """Uniform pick from ``candidates`` using the target set of random numbers."""
         i = int(torch.randint(len(candidates), (1,), generator=self._gen).item())
         return candidates[i]
 
@@ -211,7 +210,7 @@ class Reg2ClsProcessor:
         assert (self.n_features + 1) <= len(all_nodes), f"{self.n_features = }, {len(all_nodes) = }"
         assert self.n_features <= self.max_n_features, f"{self.n_features = }, {self.max_n_features = }, {len(all_nodes) = }"
 
-        # --- Target selection (configurable rule, own RNG stream) ---
+        # --- Target selection (configurable rule, own draw of random numsers from generator) ---
         target = self._select_target(scm, X_all, all_nodes)
         if target is None:
             # No node satisfies the rule's eligibility filter -> reject this SCM.
@@ -220,7 +219,7 @@ class Reg2ClsProcessor:
             )
         self.selected_target_feature = target
 
-        # --- Feature subset (independent RNG stream so only the target rule varies) ---
+        # --- Feature subset (independent set of random numers so only the target rule varies) ---
         # Decoupled from target selection: features are drawn from the remaining nodes
         # with a separate generator, instead of sharing one permutation with the target.
         remaining = [n for n in all_nodes if n != target]
