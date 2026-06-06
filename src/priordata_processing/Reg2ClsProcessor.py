@@ -75,6 +75,7 @@ class Reg2ClsProcessor:
         depth_temperature: float = 1.0,
         depth_coupling_clean_at: Optional[float] = None,
         feature_selection: str = "random",
+        noise_feature_fraction: float = 0.0,
         **_ignored,
     ):
         # print(f'{max_n_features = }')
@@ -110,6 +111,11 @@ class Reg2ClsProcessor:
         #                 depth to learnability through real causal structure (see _select_features).
         assert feature_selection in ("random", "ancestors"), f"unknown feature_selection {feature_selection!r}"
         self.feature_selection = feature_selection
+        # Realism: always reserve this fraction of feature slots for non-descendant
+        # distractors (so even deep targets get a realistic signal+noise mix, not 100%
+        # clean ancestors). 0.0 = off. Only applies to feature_selection='ancestors'.
+        assert 0.0 <= noise_feature_fraction < 1.0, f"noise_feature_fraction must be in [0,1), got {noise_feature_fraction}"
+        self.noise_feature_fraction = noise_feature_fraction
         self.n_ancestor_features = None  # diagnostic: how many kept features are true ancestors
 
         # Two independent sets of random numbers so the only quantity varying across rules is
@@ -241,11 +247,13 @@ class Reg2ClsProcessor:
         """Choose the feature subset per ``self.feature_selection``.
 
         'random'    : a random subset of the non-target nodes (natural prior).
-        'ancestors' : the target's causal ancestors, nearest-first, padded to
-                      ``n_features`` with non-descendant distractors. Deep targets get
-                      mostly informative (ancestral) features -> learnable; shallow/root
-                      targets get mostly distractors -> hard. Couples depth to learnability
-                      through causal structure, at (near-)fixed feature count.
+        'ancestors' : the target's causal ancestors, nearest-first, mixed with
+                      non-descendant distractors. ``noise_feature_fraction`` of the slots
+                      are always reserved for distractors (realistic signal+noise mix);
+                      ancestors fill the rest up to availability. Deep targets get more
+                      informative (ancestral) features -> learnable; shallow/root targets
+                      get mostly distractors -> hard. Couples depth to learnability through
+                      causal structure, at (near-)fixed feature count.
         """
         g = scm.dag.g
         remaining = [n for n in all_nodes if n != target]
@@ -262,12 +270,17 @@ class Reg2ClsProcessor:
         # order ancestors nearest-first (shortest path length TO target, ascending)
         dist_to_target = dict(nx.single_target_shortest_path_length(g, target))  # {source: dist}
         anc_sorted = sorted(anc, key=lambda n: dist_to_target.get(n, 1_000_000))
-        kept = anc_sorted[: self.n_features]
+
+        # Reserve noise slots so even deep targets keep a realistic signal+noise mix.
+        n_noise = round(self.noise_feature_fraction * self.n_features)
+        n_informative = self.n_features - n_noise
+        kept = anc_sorted[: n_informative]
         self.n_ancestor_features = len(kept)
 
         if len(kept) < self.n_features:
-            # pad with NON-descendant, non-ancestor distractors (uninformative; never effects,
-            # so shallow targets cannot be predicted anticausally from them).
+            # fill the reserved-noise slots (and any unfilled informative slots) with
+            # NON-descendant, non-ancestor distractors — uninformative, and never effects,
+            # so shallow targets cannot be predicted anticausally from them.
             distractors = [n for n in remaining if n not in anc and n not in desc]
             perm = torch.randperm(len(distractors), generator=self._gen_feat)
             distractors = [distractors[i] for i in perm.tolist()]
