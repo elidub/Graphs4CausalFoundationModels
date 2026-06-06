@@ -24,6 +24,11 @@ TARGET_SELECTION_RULES = (
     "uniform_non_root",   # uniform over nodes with >= 1 parent
     "variance_biased",    # 0.9 from top-variance quantile, 0.1 from full valid pool
     "depth_oracle",       # max topological depth (deepest node)
+    # --- graded / continuous rules (v2): less degenerate than the single-node oracles ---
+    "shallow_band_10",    # uniform over the shallowest band_fraction of valid nodes
+    "deep_band_10",       # uniform over the deepest band_fraction of valid nodes
+    "mid_band",           # uniform over the middle depth tercile of valid nodes
+    "depth_weighted",     # P(node) proportional to softmax(depth / depth_temperature)
 )
 
 
@@ -66,6 +71,10 @@ class Reg2ClsProcessor:
         variance_floor: float = 1e-4,
         variance_quantile: float = 0.9,
         variance_bias_prob: float = 0.9,
+        band_fraction: float = 0.10,
+        depth_temperature: float = 1.0,
+        depth_coupling_clean_at: Optional[float] = None,
+        feature_selection: str = "random",
         **_ignored,
     ):
         # print(f'{max_n_features = }')
@@ -87,6 +96,21 @@ class Reg2ClsProcessor:
         self.variance_floor = variance_floor          # nodes below this are never valid targets
         self.variance_quantile = variance_quantile     # top-quantile cutoff for variance_biased
         self.variance_bias_prob = variance_bias_prob   # prob of drawing from the high-variance subset
+        self.band_fraction = band_fraction             # fraction of pool for shallow/deep band rules
+        self.depth_temperature = depth_temperature     # temperature for depth_weighted (>0 deep, <0 shallow)
+        # Positive-control coupling: when set, label noise decreases with target depth so that
+        # Bayes-optimal accuracy rises with depth by construction (None = off, natural prior).
+        # flip_prob(depth) = 0.5 * clamp(1 - depth/depth_coupling_clean_at, 0, 1):
+        # depth 0 -> 0.5 (labels random, unlearnable); depth >= clean_at -> 0 (clean, learnable).
+        self.depth_coupling_clean_at = depth_coupling_clean_at
+        # Feature-selection mode:
+        #   'random'    : features = random subset of non-target nodes (default, natural prior)
+        #   'ancestors' : features = target's ancestors (causal direction), nearest-first,
+        #                 padded to n_features with non-descendant distractors. Couples target
+        #                 depth to learnability through real causal structure (see _select_features).
+        assert feature_selection in ("random", "ancestors"), f"unknown feature_selection {feature_selection!r}"
+        self.feature_selection = feature_selection
+        self.n_ancestor_features = None  # diagnostic: how many kept features are true ancestors
 
         # Two independent sets of random numbers so the only quantity varying across rules is
         # the target draw itself: target selection and feature-subset sampling are decoupled.
@@ -182,12 +206,75 @@ class Reg2ClsProcessor:
             high = [n for n in pool if variances[n].item() > cutoff]
             u = torch.rand(1, generator=self._gen).item()
             target = self._choice(high) if (u < self.variance_bias_prob and len(high) > 0) else self._choice(pool)
+        elif rule == "shallow_band_10":
+            # uniform over the shallowest band_fraction of the pool (graded shallow_oracle)
+            k = max(1, int(np.ceil(self.band_fraction * len(pool))))
+            ordered = sorted(pool, key=lambda n: depths[n])
+            target = self._choice(ordered[:k])
+        elif rule == "deep_band_10":
+            # uniform over the deepest band_fraction of the pool (graded depth_oracle)
+            k = max(1, int(np.ceil(self.band_fraction * len(pool))))
+            ordered = sorted(pool, key=lambda n: depths[n])
+            target = self._choice(ordered[-k:])
+        elif rule == "mid_band":
+            # uniform over the middle depth tercile of the pool
+            ordered = sorted(pool, key=lambda n: depths[n])
+            n = len(ordered)
+            lo = n // 3
+            hi = max(lo + 1, (2 * n) // 3)
+            target = self._choice(ordered[lo:hi])
+        elif rule == "depth_weighted":
+            # continuous: P(node) proportional to softmax(depth / T).
+            # T>0 favors deep, T<0 favors shallow, |T|->inf -> uniform.
+            d = torch.tensor([float(depths[n]) for n in pool])
+            probs = torch.softmax(d / self.depth_temperature, dim=0)
+            i = int(torch.multinomial(probs, 1, generator=self._gen).item())
+            target = pool[i]
         else:  # uniform, uniform_non_leaf, uniform_non_root
             target = self._choice(pool)
 
         self.target_depth = depths[target]
         self.target_variance = variances[target].item()
         return target
+
+    def _select_features(self, scm: SCM, target: int, all_nodes: list[int]) -> list[int]:
+        """Choose the feature subset per ``self.feature_selection``.
+
+        'random'    : a random subset of the non-target nodes (natural prior).
+        'ancestors' : the target's causal ancestors, nearest-first, padded to
+                      ``n_features`` with non-descendant distractors. Deep targets get
+                      mostly informative (ancestral) features -> learnable; shallow/root
+                      targets get mostly distractors -> hard. Couples depth to learnability
+                      through causal structure, at (near-)fixed feature count.
+        """
+        g = scm.dag.g
+        remaining = [n for n in all_nodes if n != target]
+
+        if self.feature_selection == "random":
+            feat_perm = torch.randperm(len(remaining), generator=self._gen_feat)
+            kept = [remaining[i] for i in feat_perm[: self.n_features].tolist()]
+            self.n_ancestor_features = None
+            return kept
+
+        # --- ancestors mode ---
+        anc = nx.ancestors(g, target)
+        desc = nx.descendants(g, target)
+        # order ancestors nearest-first (shortest path length TO target, ascending)
+        dist_to_target = dict(nx.single_target_shortest_path_length(g, target))  # {source: dist}
+        anc_sorted = sorted(anc, key=lambda n: dist_to_target.get(n, 1_000_000))
+        kept = anc_sorted[: self.n_features]
+        self.n_ancestor_features = len(kept)
+
+        if len(kept) < self.n_features:
+            # pad with NON-descendant, non-ancestor distractors (uninformative; never effects,
+            # so shallow targets cannot be predicted anticausally from them).
+            distractors = [n for n in remaining if n not in anc and n not in desc]
+            perm = torch.randperm(len(distractors), generator=self._gen_feat)
+            distractors = [distractors[i] for i in perm.tolist()]
+            kept = kept + distractors[: self.n_features - len(kept)]
+        # if still short (tiny graph dominated by descendants), the task simply has fewer
+        # features — acceptable edge case for shallow/root targets.
+        return kept
 
     def process(self, dataset: Dict[Any, torch.Tensor], scm: SCM):
         """Process a raw SCM dataset dict into train/test tensors.
@@ -219,12 +306,10 @@ class Reg2ClsProcessor:
             )
         self.selected_target_feature = target
 
-        # --- Feature subset (independent set of random numers so only the target rule varies) ---
-        # Decoupled from target selection: features are drawn from the remaining nodes
-        # with a separate generator, instead of sharing one permutation with the target.
-        remaining = [n for n in all_nodes if n != target]
-        feat_perm = torch.randperm(len(remaining), generator=self._gen_feat)
-        self.kept_feature_indices = [remaining[i] for i in feat_perm[: self.n_features].tolist()]
+        # --- Feature subset (independent set of random numbers so only the target rule varies) ---
+        # Decoupled from target selection via a separate generator. 'random' = subset of the
+        # remaining nodes; 'ancestors' = causal ancestors padded with non-descendant distractors.
+        self.kept_feature_indices = self._select_features(scm, target, all_nodes)
 
         ordered_nodes = self.kept_feature_indices + [self.selected_target_feature]
         nodes_include = ordered_nodes
@@ -254,6 +339,26 @@ class Reg2ClsProcessor:
         X_norm, y_norm, adj_new = Reg2Cls(hp)(X_all, y_all, adj_moma)
         # X_norm, y_norm, adj = X_all, y_all, adj
         assert torch.allclose(adj_new, adj_moma), "Reg2Cls should not permute features when permute_features=False"
+
+        # --- Depth-coupled label noise (positive control; off when depth_coupling_clean_at is None) ---
+        # Flip each label with prob that decreases with the target's depth, so deeper targets
+        # yield more-learnable tasks. Applied to both train and test rows identically.
+        if self.depth_coupling_clean_at:
+            d = float(self.target_depth)
+            flip_prob = 0.5 * max(0.0, min(1.0, 1.0 - d / self.depth_coupling_clean_at))
+            self.label_flip_prob = flip_prob  # diagnostic
+            if flip_prob > 0:
+                n_classes = int(self.tabicl_hp.get("num_classes", 2))
+                flips = torch.rand(y_norm.shape, generator=self._gen_feat) < flip_prob
+                if n_classes == 2:
+                    y_flipped = 1.0 - y_norm
+                else:
+                    # random different class for multiclass
+                    rand_cls = torch.randint(0, n_classes, y_norm.shape, generator=self._gen_feat).to(y_norm.dtype)
+                    y_flipped = torch.where(rand_cls == y_norm, (rand_cls + 1) % n_classes, rand_cls)
+                y_norm = torch.where(flips, y_flipped, y_norm)
+        else:
+            self.label_flip_prob = 0.0
 
         # print(X_norm.shape, self.max_n_features)
 
