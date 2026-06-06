@@ -29,6 +29,10 @@ TARGET_SELECTION_RULES = (
     "deep_band_10",       # uniform over the deepest band_fraction of valid nodes
     "mid_band",           # uniform over the middle depth tercile of valid nodes
     "depth_weighted",     # P(node) proportional to softmax(depth / depth_temperature)
+    # --- causal endpoint (v3): pure-causal target = sink with causes present ---
+    "leaf_oracle",        # uniform over leaves (out_degree==0, in_degree>=1): predicted from
+                          #   its causes only -> the pure CAUSAL endpoint (vs shallow_oracle ~
+                          #   roots = pure ANTICAUSAL). See all-covariates regime.
 )
 
 
@@ -190,7 +194,10 @@ class Reg2ClsProcessor:
             pool = [n for n in valid if g.out_degree(n) >= 1]
         elif rule == "uniform_non_root":
             pool = [n for n in valid if g.in_degree(n) >= 1]
-        else:  # uniform, shallow_oracle, depth_oracle, variance_biased
+        elif rule == "leaf_oracle":
+            # pure-causal endpoint: sinks (no children) that have causes (>=1 parent)
+            pool = [n for n in valid if g.out_degree(n) == 0 and g.in_degree(n) >= 1]
+        else:  # uniform, shallow_oracle, depth_oracle, variance_biased, band_*, depth_weighted
             pool = list(valid)
 
         self.eligible_pool_size = len(pool)
